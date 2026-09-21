@@ -36,7 +36,8 @@ export interface ApiCharge {
 export interface MerchantSummary {
   merchant: string;
   activeMandates: number;
-  totalCollected: string;
+  /** null when served from chain fallback: charge history lives only in the indexer. */
+  totalCollected: string | null;
   chargeCount: number;
   mrr: string;
 }

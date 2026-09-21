@@ -18,7 +18,7 @@ const PERIOD_OPTIONS = [
 ];
 
 export default function MerchantPage() {
-  const { address, networkMismatch, walletNetwork, signXdr } = useWallet();
+  const { address, networkMismatch, signXdr } = useWallet();
   const [plans, setPlans] = useState<ApiPlan[] | null>(null);
   const [mandates, setMandates] = useState<ApiMandate[] | null>(null);
   const [summary, setSummary] = useState<MerchantSummary | null>(null);
@@ -59,7 +59,7 @@ export default function MerchantPage() {
     setMandates(rows);
 
     // Revenue totals come from charge history, which only the indexer has.
-    setSummary(s ?? (chainMerchantSummary(address, rows) as unknown as MerchantSummary));
+    setSummary(s ?? chainMerchantSummary(address, rows));
   }, [address]);
 
   useEffect(() => {
@@ -100,14 +100,6 @@ export default function MerchantPage() {
         <Stat label="Charges settled" value={summary?.chargeCount ?? "…"} />
       </div>
 
-      {networkMismatch && (
-        <Notice tone="error">
-          <strong>Network mismatch:</strong> Your wallet is on{" "}
-          <strong>{walletNetwork ?? "an unknown network"}</strong>, but this app
-          requires <strong>{config.networkPassphrase}</strong>. Switch your wallet
-          to the correct network to manage plans and charges.
-        </Notice>
-      )}
       {error && <Notice tone="error">{error}</Notice>}
       {done && (
         <Notice tone="ok">

@@ -1,5 +1,5 @@
 import { payflow, type Mandate, type Plan } from "./payflow";
-import type { ApiMandate, ApiPlan } from "./api";
+import type { ApiMandate, ApiPlan, MerchantSummary } from "./api";
 
 /**
  * Contract-only fallbacks for the lists the indexer normally serves.
@@ -86,7 +86,10 @@ export async function chainMandatesFor(
 }
 
 /** Merchant totals derived from mandates alone. Charge history needs the indexer. */
-export function chainMerchantSummary(address: string, mandates: ApiMandate[]) {
+export function chainMerchantSummary(
+  address: string,
+  mandates: ApiMandate[],
+): MerchantSummary {
   const active = mandates.filter((m) => m.status === "Active");
   const mrr = active.reduce(
     (sum, m) => sum + (BigInt(m.amount) * 2_592_000n) / BigInt(m.period || 1),
