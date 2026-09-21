@@ -5,16 +5,16 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/titilope12/payflow-frontend/actions/workflows/ci.yml">
-    <img alt="CI" src="https://github.com/titilope12/payflow-frontend/actions/workflows/ci.yml/badge.svg"/>
+  <a href="https://github.com/MMM-pay/payflow-frontend/actions/workflows/ci.yml">
+    <img alt="CI" src="https://github.com/MMM-pay/payflow-frontend/actions/workflows/ci.yml/badge.svg"/>
   </a>
   <img alt="Next.js" src="https://img.shields.io/badge/next.js-15-black"/>
   <img alt="React" src="https://img.shields.io/badge/react-19-blue"/>
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-green"/>
 </p>
 
-> **Live demo:** https://titilope12.github.io/payflow-frontend/ ·
-> **Docs:** https://titilope12.github.io/payflow-docs/
+> **Live demo:** https://mmm-pay.github.io/payflow-frontend/ ·
+> **Docs:** https://mmm-pay.github.io/payflow-docs/
 
 ---
 
@@ -61,7 +61,7 @@ npm run dev
 Open http://localhost:3000 and connect Freighter (or any wallet the
 Stellar Wallets Kit supports) set to **Testnet**.
 
-To see plans and history, run [payflow-backend](https://github.com/titilope12/payflow-backend)
+To see plans and history, run [payflow-backend](https://github.com/MMM-pay/payflow-backend)
 alongside it on port 8080.
 
 ## Environment
@@ -110,9 +110,9 @@ codes into sentences a user can act on.
 
 | Repo | Role |
 |---|---|
-| [payflow-contract](https://github.com/titilope12/payflow-contract) | Soroban contracts this app calls |
-| [payflow-backend](https://github.com/titilope12/payflow-backend) | Indexer and API this app reads |
-| [payflow-frontend](https://github.com/titilope12/payflow-frontend) | This repo |
+| [payflow-contract](https://github.com/MMM-pay/payflow-contract) | Soroban contracts this app calls |
+| [payflow-backend](https://github.com/MMM-pay/payflow-backend) | Indexer and API this app reads |
+| [payflow-frontend](https://github.com/MMM-pay/payflow-frontend) | This repo |
 
 ## Contributing
 
@@ -130,8 +130,8 @@ See [SECURITY.md](SECURITY.md). Unaudited, testnet only.
 
 ## Contributors
 
-<a href="https://github.com/titilope12/payflow-frontend/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=titilope12/payflow-frontend"/>
+<a href="https://github.com/MMM-pay/payflow-frontend/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=MMM-pay/payflow-frontend"/>
 </a>
 
 ## License
