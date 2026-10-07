@@ -25,7 +25,8 @@ describe("toStroops", () => {
   it("converts decimals at full precision", () => {
     expect(toStroops("2.5")).toBe(25_000_000n);
     expect(toStroops("0.99")).toBe(9_900_000n);
-    expect(toStroops("0.0000001")).toBe(1n, "one stroop is the smallest unit");
+    // One stroop is the smallest representable unit.
+    expect(toStroops("0.0000001")).toBe(1n);
   });
 
   it("tolerates surrounding whitespace", () => {

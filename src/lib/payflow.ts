@@ -142,7 +142,11 @@ const ERRORS: Record<string, Record<number, string>> = {
 const REGISTRY_METHODS = new Set(["create_plan", "set_plan_active", "get_plan"]);
 const VAULT_METHODS = new Set(["deposit", "withdraw", "debit", "balance"]);
 
-function decodeContractError(error: unknown, method: string): string {
+/**
+ * Exported for tests: a wrong code-to-message mapping shows a user the wrong
+ * reason their payment failed, which is a correctness bug rather than copy.
+ */
+export function decodeContractError(error: unknown, method: string): string {
   const text =
     typeof error === "string" ? error : ((error as Error)?.message ?? String(error));
   const match = /Error\(Contract, #(\d+)\)/.exec(text);
@@ -160,7 +164,14 @@ function decodeContractError(error: unknown, method: string): string {
   if (/account not found/i.test(text)) {
     return "That account does not exist on testnet yet. Fund it with Friendbot first.";
   }
-  return text;
+  // An empty or non-descriptive message must never reach the UI: pages render
+  // errors with `{error && ...}`, so returning "" would fail the operation
+  // silently and leave the user with no feedback at all.
+  const trimmed = text.trim();
+  if (!trimmed || trimmed === "[object Object]" || trimmed === "undefined") {
+    return `${method} failed for an unknown reason. Check your wallet and try again.`;
+  }
+  return trimmed;
 }
 
 // ---------------------------------------------------------------------------
