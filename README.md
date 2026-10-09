@@ -28,7 +28,7 @@ Four pages:
 | `/` | everyone | Explains the mandate model, shows protocol counters and live contract IDs |
 | `/subscribe` | subscribers | Browse published plans and open a mandate |
 | `/account` | subscribers | Fund and withdraw from the vault, pause or cancel subscriptions |
-| `/merchant` | merchants | Publish plans, track revenue, settle due mandates manually |
+| `/merchant` | merchants | Publish plans, track revenue, settle due mandates manually, end a subscriber's mandate |
 
 ## Two data paths, on purpose
 
@@ -78,7 +78,8 @@ reason a deployed frontend keeps calling `localhost`.
 | `NEXT_PUBLIC_VAULT_ID` | Deployed vault contract |
 | `NEXT_PUBLIC_SUBSCRIPTION_ID` | Deployed subscription contract |
 | `NEXT_PUBLIC_TOKEN_ID` | SEP-41 token used for plans (native XLM SAC by default) |
-| `NEXT_PUBLIC_API_URL` | payflow-backend base URL |
+| `NEXT_PUBLIC_API_URL` | payflow-backend base URL. Empty means read contract state directly |
+| `NEXT_PUBLIC_READ_SOURCE` | Any existing account, used as the source for read-only simulations before a wallet connects |
 
 ## Deploying to Vercel
 
@@ -113,10 +114,12 @@ codes into sentences a user can act on.
 | [payflow-contract](https://github.com/MMM-pay/payflow-contract) | Soroban contracts this app calls |
 | [payflow-backend](https://github.com/MMM-pay/payflow-backend) | Indexer and API this app reads |
 | [payflow-frontend](https://github.com/MMM-pay/payflow-frontend) | This repo |
+| [payflow-docs](https://github.com/MMM-pay/payflow-docs) | Protocol documentation |
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). CI runs `typecheck` and `build`.
+See [CONTRIBUTING.md](CONTRIBUTING.md). CI runs `lint`, `typecheck`, `test` and
+`build`. Changes are recorded in [CHANGELOG.md](CHANGELOG.md).
 
 ## Security
 
