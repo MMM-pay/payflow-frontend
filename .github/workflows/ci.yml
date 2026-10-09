@@ -7,6 +7,18 @@ on:
     branches: [main]
 
 jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+
   typecheck:
     name: typecheck
     runs-on: ubuntu-latest
@@ -45,8 +57,8 @@ jobs:
         env:
           NEXT_PUBLIC_SOROBAN_RPC_URL: https://soroban-testnet.stellar.org
           NEXT_PUBLIC_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
-          NEXT_PUBLIC_PLAN_REGISTRY_ID: CAW6NLCTOHINSEGCKZDKLNWIQHXB5E6XKY7C5FSK7PRKNOEYT5PPI26K
-          NEXT_PUBLIC_VAULT_ID: CCCRRJHVT5ILHRM72E7Y73IUHBMW5N7GF6KEMRVY3BE4RCSYWTIW57YZ
-          NEXT_PUBLIC_SUBSCRIPTION_ID: CC5PF5RPV6B4SZH4D2JSEZWRZHN3MHOD5BXQJEGDH6E2UUY26X5TBS7N
+          NEXT_PUBLIC_PLAN_REGISTRY_ID: CDQ5EJTVXXX2CBMHWP3BGGUDHSK6D4I25IF5XXH3QGL2TNTBMJUOFKDB
+          NEXT_PUBLIC_VAULT_ID: CBNQEWSYYQOKNX5KB62OFT6ID5TCVSWN4PS4AXAJK6IWUEXOLVN6DXII
+          NEXT_PUBLIC_SUBSCRIPTION_ID: CD5YZUJU6WLFIHGAV4J2BV42GCVZE5ZGDUGSW5CBRIA47TQHSZZW3XMM
           NEXT_PUBLIC_TOKEN_ID: CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC
           NEXT_PUBLIC_API_URL: http://localhost:8080
