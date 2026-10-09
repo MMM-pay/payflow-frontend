@@ -26,7 +26,7 @@ export const config = {
    */
   readSource:
     process.env.NEXT_PUBLIC_READ_SOURCE ??
-    "GAEWDXVDI3WI35TWTZXNQ4NTRYIG6J34XPRSNKX655LBA377M5ZOCBY5",
+    "GAKOHW5FUKSF3SXQQWLD647RQJPOR5RZOS4ITSMWC5NPC67DEXXYU43H",
   contracts: {
     planRegistry: process.env.NEXT_PUBLIC_PLAN_REGISTRY_ID ?? "",
     vault: process.env.NEXT_PUBLIC_VAULT_ID ?? "",
