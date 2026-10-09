@@ -146,6 +146,9 @@ export default function AccountPage() {
                       <div className="flex items-center gap-2">
                         <span className="font-medium">Mandate #{m.id}</span>
                         <Badge status={m.status} />
+                        {m.ended_by === "merchant" && (
+                          <span className="text-xs text-muted">ended by the merchant</span>
+                        )}
                       </div>
                       <div className="mt-1 text-sm text-muted">
                         {fromStroops(m.amount)} XLM {formatPeriod(m.period)} · to{" "}

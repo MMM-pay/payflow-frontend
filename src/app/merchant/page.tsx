@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, type ApiMandate, type ApiPlan, type MerchantSummary } from "@/lib/api";
-import { chainMandatesFor, chainMerchantSummary, chainPlansOf } from "@/lib/chain";
+import { chainMandatesFor, chainMerchantSummary, chainPlansOf, endable } from "@/lib/chain";
 import { config } from "@/lib/config";
 import { MAX_NAME_LEN, nameByteLength, payflow } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
@@ -27,6 +27,8 @@ export default function MerchantPage() {
   const [price, setPrice] = useState("");
   const [period, setPeriod] = useState(2_592_000);
   const [busy, setBusy] = useState<string | null>(null);
+  // Ending is permanent, so the End button asks for a second click.
+  const [confirmEnd, setConfirmEnd] = useState<number | null>(null);
   // The contract rejects a name over MAX_NAME_LEN bytes, so catch it here
   // rather than letting the user pay for a transaction that will fail.
   const nameTooLong = nameByteLength(name.trim()) > MAX_NAME_LEN;
@@ -246,6 +248,9 @@ export default function MerchantPage() {
                       <span className="font-medium">#{m.id}</span>
                       <AddressLink value={m.subscriber} />
                       <Badge status={m.status} />
+                      {m.ended_by === "merchant" && (
+                        <span className="text-xs text-muted">ended by you</span>
+                      )}
                     </div>
                     <div className="mt-1 text-xs text-muted">
                       {fromStroops(m.amount)} XLM {formatPeriod(m.period)} ·{" "}
@@ -253,20 +258,57 @@ export default function MerchantPage() {
                       {m.status === "Active" ? formatWhen(m.next_charge) : "—"}
                     </div>
                   </div>
-                  {due && (
-                    <button
-                      type="button"
-                      className="btn-primary"
-                      disabled={busy !== null || networkMismatch}
-                      onClick={() =>
-                        void run(`charge-${m.id}`, () =>
-                          payflow.charge(address, signXdr, m.id),
-                        )
-                      }
-                    >
-                      {busy === `charge-${m.id}` ? "Charging…" : "Charge now"}
-                    </button>
-                  )}
+                  <div className="flex flex-wrap gap-2">
+                    {due && (
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        disabled={busy !== null || networkMismatch}
+                        onClick={() =>
+                          void run(`charge-${m.id}`, () =>
+                            payflow.charge(address, signXdr, m.id),
+                          )
+                        }
+                      >
+                        {busy === `charge-${m.id}` ? "Charging…" : "Charge now"}
+                      </button>
+                    )}
+                    {endable(m) &&
+                      (confirmEnd === m.id ? (
+                        <>
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            disabled={busy !== null}
+                            onClick={() => setConfirmEnd(null)}
+                          >
+                            Keep
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-danger"
+                            disabled={busy !== null || networkMismatch}
+                            onClick={() =>
+                              void run(`end-${m.id}`, () =>
+                                payflow.endMandate(address, signXdr, m.id),
+                              ).then(() => setConfirmEnd(null))
+                            }
+                          >
+                            {busy === `end-${m.id}` ? "Ending…" : "Confirm: end for good"}
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          disabled={busy !== null || networkMismatch}
+                          onClick={() => setConfirmEnd(m.id)}
+                          aria-label={`End subscription #${m.id}`}
+                        >
+                          End
+                        </button>
+                      ))}
+                  </div>
                 </div>
               );
             })}
