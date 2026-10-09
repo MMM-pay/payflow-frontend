@@ -1,4 +1,4 @@
-import { payflow, type Mandate, type Plan } from "./payflow";
+import { MAX_PAGE, mandateStatus, payflow, type Mandate, type Plan } from "./payflow";
 import type { ApiMandate, ApiPlan, MerchantSummary } from "./api";
 
 /**
@@ -11,8 +11,11 @@ import type { ApiMandate, ApiPlan, MerchantSummary } from "./api";
  * and the indexer is only ever a cache of it.
  */
 
-/** Plan ids are assigned sequentially from 1, so a bounded probe enumerates them. */
+/** How many of the newest plans the contract-only fallback lists. */
 const MAX_PLAN_PROBE = 24;
+
+/** How many of the newest entries of an index the fallback reads. */
+const MAX_INDEX_READ = 2 * MAX_PAGE;
 
 function planToApi(plan: Plan): ApiPlan {
   return {
@@ -27,7 +30,8 @@ function planToApi(plan: Plan): ApiPlan {
   };
 }
 
-function mandateToApi(mandate: Mandate): ApiMandate {
+/** Exported for tests. */
+export function mandateToApi(mandate: Mandate): ApiMandate {
   return {
     id: Number(mandate.id),
     subscriber: mandate.subscriber,
@@ -40,7 +44,9 @@ function mandateToApi(mandate: Mandate): ApiMandate {
     charges_made: mandate.charges_made,
     max_charges: mandate.max_charges,
     fee_bps: mandate.fee_bps,
-    status: mandate.status,
+    status: mandateStatus(mandate.status),
+    // Contract state does not record who cancelled; only the indexer knows.
+    ended_by: null,
   };
 }
 
@@ -50,21 +56,47 @@ async function settledValues<T>(promises: Promise<T>[]): Promise<T[]> {
 }
 
 /**
- * Enumerate plans by probing sequential ids.
+ * Page positions that cover the newest `want` of `count` index entries, as
+ * [start, limit] pairs of at most `pageSize`. Exported for tests.
+ */
+export function newestPages(count: number, want: number, pageSize = MAX_PAGE): [number, number][] {
+  const from = Math.max(0, count - want);
+  const pages: [number, number][] = [];
+  for (let start = from; start < count; start += pageSize) {
+    pages.push([start, Math.min(pageSize, count - start)]);
+  }
+  return pages;
+}
+
+/** Read the newest ids from a paged contract index. */
+async function newestIds(
+  count: number,
+  page: (start: number, limit: number) => Promise<bigint[]>,
+): Promise<bigint[]> {
+  const pages = await Promise.all(
+    newestPages(count, MAX_INDEX_READ).map(([start, limit]) => page(start, limit)),
+  );
+  return pages.flat();
+}
+
+/**
+ * The newest plans, read by id.
  *
- * The registry has no "list all" function — that is exactly the gap the indexer
- * fills — so this walks ids until it stops finding plans. Bounded deliberately:
- * a demo has a handful of plans, and an unbounded probe would hammer RPC.
+ * The registry has no "list all" function (that is the gap the indexer fills),
+ * but ids are sequential and `next_plan_id` says where they end, so this reads
+ * the newest few. Bounded deliberately: an unbounded read would hammer RPC.
  */
 export async function chainPlans(source: string): Promise<ApiPlan[]> {
-  const found = await settledValues(
-    Array.from({ length: MAX_PLAN_PROBE }, (_, i) => payflow.getPlan(source, i + 1)),
-  );
+  const next = Number(await payflow.nextPlanId(source));
+  const newest = Math.min(MAX_PLAN_PROBE, Math.max(0, next - 1));
+  const ids = Array.from({ length: newest }, (_, i) => next - 1 - i);
+  const found = await settledValues(ids.map((id) => payflow.getPlan(source, id)));
   return found.map(planToApi).sort((a, b) => b.id - a.id);
 }
 
 export async function chainPlansOf(source: string, merchant: string): Promise<ApiPlan[]> {
-  const ids = await payflow.merchantPlans(source, merchant);
+  const count = await payflow.merchantPlanCount(source, merchant);
+  const ids = await newestIds(count, (s, l) => payflow.merchantPlans(source, merchant, s, l));
   const plans = await settledValues(ids.map((id) => payflow.getPlan(source, id)));
   return plans.map(planToApi).sort((a, b) => b.id - a.id);
 }
@@ -73,7 +105,10 @@ export async function chainMandatesOf(
   source: string,
   subscriber: string,
 ): Promise<ApiMandate[]> {
-  const ids = await payflow.subscriberMandates(source, subscriber);
+  const count = await payflow.subscriberMandateCount(source, subscriber);
+  const ids = await newestIds(count, (s, l) =>
+    payflow.subscriberMandates(source, subscriber, s, l),
+  );
   const mandates = await settledValues(ids.map((id) => payflow.getMandate(source, id)));
   return mandates.map(mandateToApi).sort((a, b) => b.id - a.id);
 }
@@ -82,9 +117,15 @@ export async function chainMandatesFor(
   source: string,
   merchant: string,
 ): Promise<ApiMandate[]> {
-  const ids = await payflow.merchantMandates(source, merchant);
+  const count = await payflow.merchantMandateCount(source, merchant);
+  const ids = await newestIds(count, (s, l) => payflow.merchantMandates(source, merchant, s, l));
   const mandates = await settledValues(ids.map((id) => payflow.getMandate(source, id)));
   return mandates.map(mandateToApi).sort((a, b) => b.id - a.id);
+}
+
+/** A merchant can end a mandate that could still be charged. */
+export function endable(m: Pick<ApiMandate, "status">): boolean {
+  return m.status === "Active" || m.status === "Paused";
 }
 
 /** Merchant totals derived from mandates alone. Charge history needs the indexer. */

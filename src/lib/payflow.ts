@@ -138,6 +138,23 @@ const ERRORS: Record<string, Record<number, string>> = {
     6: "This subscription is not due yet.",
     7: "That plan is no longer accepting subscribers.",
     9: "This subscription has reached its charge limit.",
+    11: "Only the merchant on this subscription can end it.",
+  },
+};
+
+/**
+ * Codes raised by a contract that the called method invokes. An error in a
+ * cross-contract call reaches the caller with the callee's number, so
+ * `charge` failing in the vault reports the vault's #4 (not enough balance),
+ * which the subscription table would misread as "not the subscriber". These
+ * entries cover the codes a method can only get from its callee.
+ */
+const CALLEE_ERRORS: Record<string, Record<number, string>> = {
+  charge: {
+    4: "The subscriber's vault does not hold enough to cover this charge.",
+  },
+  subscribe: {
+    3: "That plan does not exist.",
   },
 };
 
@@ -154,6 +171,8 @@ export function decodeContractError(error: unknown, method: string): string {
   const match = /Error\(Contract, #(\d+)\)/.exec(text);
   if (match?.[1]) {
     const code = Number(match[1]);
+    const fromCallee = CALLEE_ERRORS[method]?.[code];
+    if (fromCallee) return fromCallee;
     const scope = REGISTRY_METHODS.has(method)
       ? "plan_registry"
       : VAULT_METHODS.has(method)
@@ -202,6 +221,9 @@ export interface Plan {
   active: boolean;
 }
 
+/** Mirrors MAX_PAGE in the contracts: the most ids one index call returns. */
+export const MAX_PAGE = 50;
+
 export interface Mandate {
   id: bigint;
   subscriber: string;
@@ -215,7 +237,22 @@ export interface Mandate {
   charges_made: number;
   max_charges: number;
   fee_bps: number;
-  status: string;
+  /**
+   * A `#[contracttype]` enum variant without data is encoded as a vector
+   * holding its name, so this decodes as `["Active"]`, not `"Active"`. Use
+   * `mandateStatus` to read it.
+   */
+  status: string | string[];
+}
+
+/**
+ * The status name from a decoded `MandateStatus`. Comparing the raw value
+ * with `=== "Active"` is always false, which on the contract-only path hid
+ * "Charge now" and made Pause send a resume.
+ */
+export function mandateStatus(raw: unknown): string {
+  if (Array.isArray(raw)) return String(raw[0] ?? "");
+  return String(raw ?? "");
 }
 
 export const payflow = {
@@ -277,25 +314,53 @@ export const payflow = {
       arg.u64(mandateId),
     ]),
 
-  merchantPlans: (source: string, merchant: string) =>
-    readContract<bigint[]>(config.contracts.planRegistry, "merchant_plans", source, [
+  // Index getters are paged: at most MAX_PAGE ids per call, oldest first.
+  merchantPlanCount: (source: string, merchant: string) =>
+    readContract<number>(config.contracts.planRegistry, "merchant_plan_count", source, [
       arg.address(merchant),
     ]),
 
-  subscriberMandates: (source: string, subscriber: string) =>
-    readContract<bigint[]>(
+  merchantPlans: (source: string, merchant: string, start: number, limit: number) =>
+    readContract<bigint[]>(config.contracts.planRegistry, "merchant_plans", source, [
+      arg.address(merchant),
+      arg.u32(start),
+      arg.u32(limit),
+    ]),
+
+  /** Plans are numbered from 1, so this minus one is how many exist. */
+  nextPlanId: (source: string) =>
+    readContract<bigint>(config.contracts.planRegistry, "next_plan_id", source),
+
+  subscriberMandateCount: (source: string, subscriber: string) =>
+    readContract<number>(
       config.contracts.subscription,
-      "subscriber_mandates",
+      "subscriber_mandate_count",
       source,
       [arg.address(subscriber)],
     ),
 
-  merchantMandates: (source: string, merchant: string) =>
+  subscriberMandates: (source: string, subscriber: string, start: number, limit: number) =>
+    readContract<bigint[]>(
+      config.contracts.subscription,
+      "subscriber_mandates",
+      source,
+      [arg.address(subscriber), arg.u32(start), arg.u32(limit)],
+    ),
+
+  merchantMandateCount: (source: string, merchant: string) =>
+    readContract<number>(
+      config.contracts.subscription,
+      "merchant_mandate_count",
+      source,
+      [arg.address(merchant)],
+    ),
+
+  merchantMandates: (source: string, merchant: string, start: number, limit: number) =>
     readContract<bigint[]>(
       config.contracts.subscription,
       "merchant_mandates",
       source,
-      [arg.address(merchant)],
+      [arg.address(merchant), arg.u32(start), arg.u32(limit)],
     ),
 
   isDue: (source: string, mandateId: number | bigint) =>
@@ -317,6 +382,13 @@ export const payflow = {
 
   cancel: (source: string, sign: SignXdr, mandateId: number | bigint) =>
     writeContract(config.contracts.subscription, "cancel", source, sign, [
+      arg.address(source),
+      arg.u64(mandateId),
+    ]),
+
+  /** Merchant side: permanently stop billing one of the merchant's mandates. */
+  endMandate: (source: string, sign: SignXdr, mandateId: number | bigint) =>
+    writeContract(config.contracts.subscription, "end_mandate", source, sign, [
       arg.address(source),
       arg.u64(mandateId),
     ]),

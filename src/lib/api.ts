@@ -26,6 +26,8 @@ export interface ApiMandate {
   /** Fee rate frozen at subscribe time; an admin change cannot move it. */
   fee_bps: number;
   status: string;
+  /** Who cancelled the mandate: "subscriber", "merchant", or null. */
+  ended_by?: string | null;
 }
 
 export interface ApiCharge {

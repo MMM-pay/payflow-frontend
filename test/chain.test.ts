@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { chainMerchantSummary } from "@/lib/chain";
+import { chainMerchantSummary, endable, mandateToApi, newestPages } from "@/lib/chain";
+import { mandateStatus, type Mandate } from "@/lib/payflow";
 import type { ApiMandate } from "@/lib/api";
 
 /**
@@ -106,5 +107,69 @@ describe("chainMerchantSummary", () => {
       mandate({ amount: "10000000000000", period: MONTH }),
     ]);
     expect(s.mrr).toBe("10000000000000");
+  });
+});
+
+describe("newestPages", () => {
+  it("covers only the newest entries, in contract-sized pages", () => {
+    // 130 entries, want the newest 100, pages of 50: positions 30..129.
+    expect(newestPages(130, 100, 50)).toEqual([
+      [30, 50],
+      [80, 50],
+    ]);
+  });
+
+  it("reads everything when there are fewer entries than wanted", () => {
+    expect(newestPages(7, 100, 50)).toEqual([[0, 7]]);
+  });
+
+  it("returns no pages for an empty index", () => {
+    expect(newestPages(0, 100, 50)).toEqual([]);
+  });
+
+  it("never asks for more than one page holds", () => {
+    for (const [, limit] of newestPages(1_000, 300, 50)) {
+      expect(limit).toBeLessThanOrEqual(50);
+    }
+  });
+});
+
+describe("endable", () => {
+  it("lets a merchant end only mandates that could still be charged", () => {
+    expect(endable({ status: "Active" })).toBe(true);
+    expect(endable({ status: "Paused" })).toBe(true);
+    expect(endable({ status: "Cancelled" })).toBe(false);
+    expect(endable({ status: "Completed" })).toBe(false);
+  });
+});
+
+describe("mandate status from contract state", () => {
+  // What scValToNative returns for a MandateStatus read from the contract.
+  const raw: Mandate = {
+    id: 1n,
+    subscriber: "GAP6QFLXQD73URCC3EXU2WOQHIAREPCGMSIMKF5PFLLI5TR6HTMNDTIE",
+    plan_id: 1n,
+    merchant: MERCHANT,
+    token: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    amount: 10_000_000n,
+    period: 60n,
+    next_charge: 0n,
+    last_charge: 0n,
+    charges_made: 0,
+    max_charges: 0,
+    fee_bps: 100,
+    status: ["Active"],
+  };
+
+  it("unwraps the enum vector into a plain name", () => {
+    expect(mandateStatus(["Paused"])).toBe("Paused");
+    expect(mandateStatus("Cancelled")).toBe("Cancelled");
+    expect(mandateStatus(undefined)).toBe("");
+  });
+
+  it("gives the pages a status they can compare with ===", () => {
+    const m = mandateToApi(raw);
+    expect(m.status).toBe("Active");
+    expect(chainMerchantSummary(MERCHANT, [m]).activeMandates).toBe(1);
   });
 });

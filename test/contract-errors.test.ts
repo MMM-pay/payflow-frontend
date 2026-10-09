@@ -21,6 +21,20 @@ describe("decodeContractError", () => {
     expect(decodeContractError(err(4), "cancel")).toMatch(/not the subscriber/i);
   });
 
+  it("reads a vault failure inside charge as a balance problem", () => {
+    // charge never returns its own #4; a #4 there comes from vault.debit.
+    expect(decodeContractError(err(4), "charge")).toMatch(/does not hold enough/i);
+    expect(decodeContractError(err(4), "charge")).not.toMatch(/not the subscriber/i);
+  });
+
+  it("reads a registry failure inside subscribe as a missing plan", () => {
+    expect(decodeContractError(err(3), "subscribe")).toMatch(/plan does not exist/i);
+  });
+
+  it("explains a non-merchant trying to end a mandate", () => {
+    expect(decodeContractError(err(11), "end_mandate")).toMatch(/only the merchant/i);
+  });
+
   it("scopes code 4 to the registry for plan methods", () => {
     expect(decodeContractError(err(4), "set_plan_active")).toMatch(/do not own that plan/i);
   });
