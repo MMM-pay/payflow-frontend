@@ -105,7 +105,7 @@ export default function SubscribePage() {
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">
           {active.map((plan) => (
-            <Panel key={plan.id} title={`Plan #${plan.id}`}>
+            <Panel key={plan.id} title={plan.name || `Plan #${plan.id}`}>
               <div className="space-y-3">
                 <div>
                   <div className="text-2xl font-semibold tabular-nums">

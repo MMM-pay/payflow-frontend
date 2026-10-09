@@ -18,6 +18,7 @@ function planToApi(plan: Plan): ApiPlan {
   return {
     id: Number(plan.id),
     merchant: plan.merchant,
+    name: plan.name,
     token: plan.token,
     amount: plan.amount.toString(),
     period: Number(plan.period),
@@ -38,6 +39,7 @@ function mandateToApi(mandate: Mandate): ApiMandate {
     last_charge: Number(mandate.last_charge),
     charges_made: mandate.charges_made,
     max_charges: mandate.max_charges,
+    fee_bps: mandate.fee_bps,
     status: mandate.status,
   };
 }

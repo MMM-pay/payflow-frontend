@@ -23,6 +23,7 @@ export const arg = {
   u32: (v: number): xdr.ScVal => nativeToScVal(v, { type: "u32" }),
   i128: (v: bigint): xdr.ScVal => nativeToScVal(v, { type: "i128" }),
   bool: (v: boolean): xdr.ScVal => nativeToScVal(v, { type: "bool" }),
+  string: (v: string): xdr.ScVal => nativeToScVal(v, { type: "string" }),
 };
 
 /**
@@ -123,6 +124,7 @@ const ERRORS: Record<string, Record<number, string>> = {
     4: "You do not own that plan.",
     5: "Amount must be greater than zero.",
     6: "Billing period must be at least 60 seconds.",
+    7: "That plan name is too long.",
   },
   vault: {
     3: "Amount must be greater than zero.",
@@ -178,9 +180,22 @@ export function decodeContractError(error: unknown, method: string): string {
 // Typed wrappers. These mirror payflow-contract's public interface exactly.
 // ---------------------------------------------------------------------------
 
+/**
+ * Mirrors MAX_NAME_LEN in the plan-registry contract, which bounds the name in
+ * BYTES. UTF-8 means a name can be under this many characters and still over
+ * the limit, so callers must measure encoded length, not `String.length`.
+ */
+export const MAX_NAME_LEN = 64;
+
+/** Encoded byte length of a plan name, as the contract counts it. */
+export function nameByteLength(name: string): number {
+  return new TextEncoder().encode(name).length;
+}
+
 export interface Plan {
   id: bigint;
   merchant: string;
+  name: string;
   token: string;
   amount: bigint;
   period: bigint;
@@ -199,6 +214,7 @@ export interface Mandate {
   last_charge: bigint;
   charges_made: number;
   max_charges: number;
+  fee_bps: number;
   status: string;
 }
 
@@ -212,13 +228,14 @@ export const payflow = {
   createPlan: (
     source: string,
     sign: SignXdr,
-    params: { token: string; amount: bigint; period: number },
+    params: { token: string; amount: bigint; period: number; name: string },
   ) =>
     writeContract(config.contracts.planRegistry, "create_plan", source, sign, [
       arg.address(source),
       arg.address(params.token),
       arg.i128(params.amount),
       arg.u64(params.period),
+      arg.string(params.name),
     ]),
 
   setPlanActive: (

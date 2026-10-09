@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, type ApiMandate, type ApiPlan, type MerchantSummary } from "@/lib/api";
 import { chainMandatesFor, chainMerchantSummary, chainPlansOf } from "@/lib/chain";
 import { config } from "@/lib/config";
-import { payflow } from "@/lib/payflow";
+import { MAX_NAME_LEN, nameByteLength, payflow } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
 import { formatPeriod, formatWhen, fromStroops, toStroops } from "@/lib/format";
 import { AddressLink, Badge, Empty, Notice, Panel, Stat, TxLink } from "@/components/ui";
@@ -23,9 +23,13 @@ export default function MerchantPage() {
   const [mandates, setMandates] = useState<ApiMandate[] | null>(null);
   const [summary, setSummary] = useState<MerchantSummary | null>(null);
 
+  const [name, setName] = useState("");
   const [price, setPrice] = useState("");
   const [period, setPeriod] = useState(2_592_000);
   const [busy, setBusy] = useState<string | null>(null);
+  // The contract rejects a name over MAX_NAME_LEN bytes, so catch it here
+  // rather than letting the user pay for a transaction that will fail.
+  const nameTooLong = nameByteLength(name.trim()) > MAX_NAME_LEN;
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
@@ -125,6 +129,25 @@ export default function MerchantPage() {
               onChange={(e) => setPrice(e.target.value)}
             />
           </div>
+          <div className="min-w-[12rem] flex-1">
+            <label className="label" htmlFor="plan-name">
+              Plan name
+            </label>
+            <input
+              id="plan-name"
+              className="input"
+              placeholder="Pro Monthly"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              aria-invalid={nameTooLong}
+              aria-describedby={nameTooLong ? "plan-name-error" : undefined}
+            />
+            {nameTooLong && (
+              <p id="plan-name-error" className="mt-1 text-sm text-rose-200">
+                Too long — {MAX_NAME_LEN} bytes maximum.
+              </p>
+            )}
+          </div>
           <div className="min-w-[10rem] flex-1">
             <label className="label" htmlFor="period">
               Billing period
@@ -145,13 +168,14 @@ export default function MerchantPage() {
           <button
             type="button"
             className="btn-primary"
-            disabled={busy !== null || networkMismatch}
+            disabled={busy !== null || networkMismatch || nameTooLong}
             onClick={() =>
               void run("create", () =>
                 payflow.createPlan(address, signXdr, {
                   token: config.contracts.token,
                   amount: toStroops(price),
                   period,
+                  name: name.trim(),
                 }),
               )
             }
@@ -175,7 +199,7 @@ export default function MerchantPage() {
               >
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="font-medium">Plan #{p.id}</span>
+                    <span className="font-medium">{p.name || `Plan #${p.id}`}</span>
                     <Badge status={p.active ? "Active" : "Paused"} />
                   </div>
                   <div className="mt-1 text-sm text-muted">

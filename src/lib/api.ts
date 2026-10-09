@@ -3,6 +3,8 @@ import { config } from "./config";
 export interface ApiPlan {
   id: number;
   merchant: string;
+  /** Merchant-set label. Empty for plans created before names shipped. */
+  name: string;
   token: string;
   amount: string;
   period: number;
@@ -21,6 +23,8 @@ export interface ApiMandate {
   last_charge: number;
   charges_made: number;
   max_charges: number;
+  /** Fee rate frozen at subscribe time; an admin change cannot move it. */
+  fee_bps: number;
   status: string;
 }
 

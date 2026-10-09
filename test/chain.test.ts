@@ -24,6 +24,7 @@ function mandate(over: Partial<ApiMandate> = {}): ApiMandate {
     last_charge: 0,
     charges_made: 0,
     max_charges: 0,
+    fee_bps: 100,
     status: "Active",
     ...over,
   };

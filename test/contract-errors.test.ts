@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeContractError } from "@/lib/payflow";
+import { decodeContractError, nameByteLength } from "@/lib/payflow";
 
 /**
  * Soroban surfaces failures as `Error(Contract, #N)`, where N is scoped to the
@@ -63,5 +63,33 @@ describe("decodeContractError", () => {
     for (const input of [undefined, null, "", {}]) {
       expect(decodeContractError(input, "charge").length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("plan name validation", () => {
+  it("explains an over-long plan name", () => {
+    expect(decodeContractError(err(7), "create_plan")).toMatch(/name is too long/i);
+  });
+
+  it("does not confuse registry #7 with the subscription's #7", () => {
+    // Same code, different contract: inactive plan vs. name too long.
+    expect(decodeContractError(err(7), "subscribe")).toMatch(/no longer accepting/i);
+  });
+});
+
+describe("nameByteLength", () => {
+  it("counts ASCII as one byte per character", () => {
+    expect(nameByteLength("Pro Monthly")).toBe(11);
+  });
+
+  it("counts multi-byte characters by their encoded length", () => {
+    // The contract's limit is in bytes, so a 20-character name can exceed a
+    // 64-byte cap. Measuring with String.length would wrongly let it through.
+    expect(nameByteLength("日本語プラン")).toBe(18);
+    expect("日本語プラン".length).toBe(6);
+  });
+
+  it("treats an emoji as more than one byte", () => {
+    expect(nameByteLength("🚀")).toBeGreaterThan(1);
   });
 });
