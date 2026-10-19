@@ -1,7 +1,10 @@
+"use client";
+
 import type { ReactNode } from "react";
 import { CopyButton } from "@/components/CopyButton";
 import { explorerBase } from "@/lib/config";
-import { shortAddress } from "@/lib/format";
+import { formatExactTime, formatWhen, shortAddress } from "@/lib/format";
+import { useOrgName } from "@/lib/toml";
 
 export function Panel({
   title,
@@ -144,6 +147,45 @@ export function AddressLink({ value, kind = "account" }: { value: string; kind?:
         {shortAddress(value, 6)}
       </a>
       <CopyButton value={value} label={kind === "contract" ? "contract address" : "address"} />
+    </span>
+  );
+}
+
+/**
+ * A timestamp as relative text ("in 3 days") with the exact local time in the
+ * tooltip — and, unlike a bare `title`, in text a screen reader reads out too.
+ */
+export function TimeAgo({ value }: { value: number }) {
+  if (!value) return <span className="text-muted">—</span>;
+  const exact = formatExactTime(value);
+  return (
+    <time dateTime={new Date(value * 1000).toISOString()} title={exact}>
+      {formatWhen(value)}
+      <span className="sr-only"> ({exact})</span>
+    </time>
+  );
+}
+
+/**
+ * A merchant's address alongside the name they publish in their stellar.toml.
+ * The name is self-declared — the protocol cannot verify it — so that is said
+ * out loud in the tooltip and to screen readers, never implied to be vetted.
+ * When no name resolves, this is just the address, exactly as before.
+ */
+export function MerchantAccount({ value }: { value: string }) {
+  const name = useOrgName(value);
+  return (
+    <span className="inline-flex max-w-full flex-wrap items-center gap-x-1.5 align-middle">
+      {name && (
+        <span
+          className="max-w-full truncate font-medium"
+          title="Self-declared by the merchant in their stellar.toml"
+        >
+          {name}
+          <span className="sr-only"> (self-declared merchant name)</span>
+        </span>
+      )}
+      <AddressLink value={value} />
     </span>
   );
 }

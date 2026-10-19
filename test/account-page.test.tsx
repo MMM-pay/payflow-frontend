@@ -43,6 +43,9 @@ vi.mock("@/lib/wallet", () => ({ useWallet: () => wallet }));
 vi.mock("@/lib/api", () => ({ api: { mandatesOf: apiMock.mandatesOf } }));
 vi.mock("@/lib/payflow", () => ({ payflow: payflowMock, readContract: payflowMock.readContract }));
 vi.mock("@/lib/chain", () => ({ chainMandatesOf: chainMock.chainMandatesOf }));
+// Merchant names come from Horizon + stellar.toml; the page must render
+// without either, so the resolver is pinned to "no name published".
+vi.mock("@/lib/toml", () => ({ useOrgName: () => null }));
 
 // Pinned so the page has a token contract to ask about. Without it the token
 // id is "" in tests and every amount falls back to native XLM.

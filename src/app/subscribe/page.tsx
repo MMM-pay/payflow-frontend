@@ -9,7 +9,7 @@ import { payflow } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
 import { formatPeriod, fromStroops } from "@/lib/format";
 import { metaFor, useTokenMetas } from "@/lib/token";
-import { AddressLink, Empty, Notice, Panel, SkeletonPlanCards, TxLink } from "@/components/ui";
+import { Empty, MerchantAccount, Notice, Panel, SkeletonPlanCards, TxLink } from "@/components/ui";
 
 export default function SubscribePage() {
   const { address, networkMismatch, signXdr } = useWallet();
@@ -121,9 +121,9 @@ export default function SubscribePage() {
                   <div className="text-sm text-muted">{formatPeriod(plan.period)}</div>
                 </div>
 
-                <div className="flex items-center justify-between text-sm">
+                <div className="flex items-center justify-between gap-2 text-sm">
                   <span className="text-muted">Merchant</span>
-                  <AddressLink value={plan.merchant} />
+                  <MerchantAccount value={plan.merchant} />
                 </div>
 
                 <div>

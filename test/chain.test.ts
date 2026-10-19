@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { chainMerchantSummary, endable, mandateToApi, newestPages } from "@/lib/chain";
+import {
+  chainMerchantSummary,
+  endable,
+  mandateToApi,
+  merchantFromParam,
+  newestPages,
+} from "@/lib/chain";
 import { mandateStatus, type Mandate } from "@/lib/payflow";
 import type { ApiMandate } from "@/lib/api";
 
@@ -171,5 +177,33 @@ describe("mandate status from contract state", () => {
     const m = mandateToApi(raw);
     expect(m.status).toBe("Active");
     expect(chainMerchantSummary(MERCHANT, [m]).activeMandates).toBe(1);
+  });
+});
+
+describe("merchantFromParam", () => {
+  // The public merchant page reads /m/?address=G… from the query string.
+  // A bad link must land on "check your link", never on an RPC call that
+  // fails somewhere later.
+  it("accepts a valid account address, trimmed", () => {
+    expect(merchantFromParam(MERCHANT)).toBe(MERCHANT);
+    expect(merchantFromParam(`  ${MERCHANT}  `)).toBe(MERCHANT);
+  });
+
+  it("rejects a missing or empty parameter", () => {
+    expect(merchantFromParam(null)).toBeNull();
+    expect(merchantFromParam("")).toBeNull();
+    expect(merchantFromParam("   ")).toBeNull();
+  });
+
+  it("rejects a malformed address", () => {
+    for (const bad of [
+      "not-an-address",
+      // Valid prefix, wrong checksum.
+      `${MERCHANT.slice(0, -1)}A`,
+      // A contract id is not a merchant account.
+      "CDQ5EJTVXXX2CBMHWP3BGGUDHSK6D4I25IF5XXH3QGL2TNTBMJUOFKDB",
+    ]) {
+      expect(merchantFromParam(bad), `"${bad}" must be rejected`).toBeNull();
+    }
   });
 });

@@ -106,15 +106,125 @@ export function shortAddress(address: string, size = 4): string {
   return `${address.slice(0, size)}…${address.slice(-size)}`;
 }
 
-export function formatWhen(unixSeconds: number): string {
+function relativePhrase(count: number, unit: string, future: boolean): string {
+  const text = count === 1 ? `1 ${unit}` : `${count} ${unit}s`;
+  return future ? `in ${text}` : `${text} ago`;
+}
+
+/**
+ * A timestamp as plain-language relative time: "in 3 days", "2 hours ago".
+ * The old "in 3d" form is hard to read at a glance; the exact local time
+ * belongs in the tooltip, which `TimeAgo` in `src/components/ui.tsx` renders
+ * alongside this. `nowMs` exists so tests can pin the clock.
+ */
+export function formatWhen(unixSeconds: number, nowMs = Date.now()): string {
   if (!unixSeconds) return "—";
-  const delta = unixSeconds * 1000 - Date.now();
+  const delta = unixSeconds * 1000 - nowMs;
   const abs = Math.abs(delta);
   const mins = Math.round(abs / 60_000);
   if (mins < 1) return delta >= 0 ? "due now" : "just now";
-  if (mins < 60) return delta >= 0 ? `in ${mins}m` : `${mins}m ago`;
+  if (mins < 60) return relativePhrase(mins, "minute", delta >= 0);
   const hours = Math.round(mins / 60);
-  if (hours < 24) return delta >= 0 ? `in ${hours}h` : `${hours}h ago`;
+  if (hours < 24) return relativePhrase(hours, "hour", delta >= 0);
   const days = Math.round(hours / 24);
-  return delta >= 0 ? `in ${days}d` : `${days}d ago`;
+  return relativePhrase(days, "day", delta >= 0);
+}
+
+/**
+ * The same instant at its exact local time, e.g. "19 Oct 2026, 14:05", for
+ * the tooltip that accompanies a relative time.
+ */
+export function formatExactTime(unixSeconds: number): string {
+  if (!unixSeconds) return "—";
+  return new Date(unixSeconds * 1000).toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
+/**
+ * The `.`-decimal canonical form of a user-typed amount, or `null` when the
+ * input is not a single number.
+ *
+ * Users type the separators their own locale uses: "1,234.5" (dot decimal,
+ * comma grouping), "1.234,5" (comma decimal, dot grouping), or just "1,5".
+ * The last separator is the decimal mark unless the whole input matches the
+ * thousands-grouping pattern, so "1,234" and "1.234.567" are whole grouped
+ * numbers — the same disambiguation spreadsheet and banking software use.
+ * Earlier separators must then be valid grouping ("1.2.3" is rejected).
+ */
+export function canonicalAmount(input: string): string | null {
+  const stripped = input.replace(/[\s\u00a0\u202f]/g, "");
+  if (!stripped || !/^[\d.,]+$/.test(stripped)) return null;
+
+  // "1,234" / "1.234.567": every separator groups thousands, none is decimal.
+  if (/^\d{1,3}([.,]\d{3})+$/.test(stripped)) {
+    return stripped.replace(/[.,]/g, "");
+  }
+
+  const last = Math.max(stripped.lastIndexOf("."), stripped.lastIndexOf(","));
+  if (last === -1) return stripped;
+  const head = stripped.slice(0, last);
+  const tail = stripped.slice(last + 1);
+  // The part before the decimal mark may only group thousands.
+  if (!/^(?:\d{1,3}(?:[.,]\d{3})*|\d+)?$/.test(head) || !/^\d*$/.test(tail)) {
+    return null;
+  }
+  return `${head.replace(/[.,]/g, "") || "0"}.${tail}`;
+}
+
+/**
+ * Locale-aware sibling of `toStroops`: accepts the separators the user's
+ * locale uses and normalises them before the strict parser runs, so
+ * "1.234,5" and "1,234.5" both convert to the same bigint. Amounts must stay
+ * bigint end to end — no step here touches `Number`.
+ */
+export function parseAmount(input: string, decimals = DECIMALS): bigint {
+  const canonical = canonicalAmount(input);
+  if (canonical === null) {
+    throw new Error("Enter a positive number, for example 2.5");
+  }
+  return toStroops(canonical, decimals);
+}
+
+/**
+ * Restrict what an amount field displays: digits, at most one decimal mark
+ * (either character — users type what their keyboard has), and a fraction
+ * no longer than the token's decimals. Grouping separators typed before the
+ * last mark are kept verbatim so "1,234." stays "1,234." while the user
+ * keeps typing. Exported for `AmountInput` and its tests.
+ */
+export function normaliseAmountInput(raw: string, decimals = DECIMALS): string {
+  const stripped = raw.replace(/[\s\u00a0\u202f]/g, "");
+  const places = normalizeDecimals(decimals);
+  const last = Math.max(stripped.lastIndexOf("."), stripped.lastIndexOf(","));
+  if (last === -1) return stripped.replace(/\D/g, "");
+  const head = stripped.slice(0, last).replace(/[^\d.,]/g, "");
+  // A whole-number token takes no fraction: drop the mark and what follows
+  // rather than joining the digits into a different (larger) number.
+  if (places === 0) return head;
+  const mark = stripped[last];
+  const frac = stripped
+    .slice(last + 1)
+    .replace(/\D/g, "")
+    .slice(0, places);
+  return frac ? `${head}${mark}${frac}` : `${head}${mark}`;
+}
+
+/**
+ * Why an amount field cannot be submitted, or `null` when it can — including
+ * when it is empty or the user is mid-keystroke on a trailing separator.
+ */
+export function amountError(input: string, decimals = DECIMALS): string | null {
+  const stripped = input.replace(/[\s\u00a0\u202f]/g, "");
+  if (!stripped) return null;
+  // A bare trailing separator ("12.", ",") is someone still typing, not a
+  // mistake yet; anything else must parse cleanly before the form submits.
+  if (/^\d+[.,]$|^[.,]$/.test(stripped)) return null;
+  try {
+    parseAmount(stripped, decimals);
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
 }

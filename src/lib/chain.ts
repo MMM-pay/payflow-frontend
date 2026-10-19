@@ -1,3 +1,4 @@
+import { StrKey } from "@stellar/stellar-sdk";
 import { MAX_PAGE, mandateStatus, payflow, type Mandate, type Plan } from "./payflow";
 import type { ApiMandate, ApiPlan, MerchantSummary } from "./api";
 
@@ -127,6 +128,18 @@ export async function chainMandatesFor(
 /** A merchant can end a mandate that could still be charged. */
 export function endable(m: Pick<ApiMandate, "status">): boolean {
   return m.status === "Active" || m.status === "Paused";
+}
+
+/**
+ * The merchant address a shareable `/m/?address=G…` link points at, or null
+ * when the parameter is missing or is not a valid Stellar account. Exported
+ * for tests: a typo'd link must land on the "check your link" state, not on
+ * an RPC call that fails somewhere later.
+ */
+export function merchantFromParam(raw: string | null): string | null {
+  if (!raw) return null;
+  const value = raw.trim();
+  return StrKey.isValidEd25519PublicKey(value) ? value : null;
 }
 
 /** Merchant totals derived from mandates alone. Charge history needs the indexer. */

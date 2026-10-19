@@ -1,14 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { api, type ApiMandate, type ApiPlan, type MerchantSummary } from "@/lib/api";
 import { chainMandatesFor, chainMerchantSummary, chainPlansOf, endable } from "@/lib/chain";
 import { config } from "@/lib/config";
 import { MAX_NAME_LEN, nameByteLength, payflow } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
-import { formatPeriod, formatWhen, fromStroops, toStroops } from "@/lib/format";
+import { formatPeriod, fromStroops, parseAmount } from "@/lib/format";
 import { metaFor, useTokenMetas } from "@/lib/token";
-import { AddressLink, Badge, Empty, Notice, Panel, SkeletonRows, Stat, TxLink } from "@/components/ui";
+import { AmountInput } from "@/components/AmountInput";
+import { CopyButton } from "@/components/CopyButton";
+import { AddressLink, Badge, Empty, Notice, Panel, SkeletonRows, Stat, TimeAgo, TxLink } from "@/components/ui";
 
 const PERIOD_OPTIONS = [
   { label: "Every minute (demo)", value: 60 },
@@ -81,6 +84,16 @@ export default function MerchantPage() {
     void load();
   }, [load]);
 
+  // The shareable catalogue link, built after mount so the statically
+  // prerendered markup (no window) and the hydrated one cannot disagree.
+  const [publicUrl, setPublicUrl] = useState("");
+  useEffect(() => {
+    if (!address) return;
+    setPublicUrl(
+      `${window.location.origin}${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/m/?address=${address}`,
+    );
+  }, [address]);
+
   async function run(key: string, fn: () => Promise<string>) {
     setBusy(key);
     setError(null);
@@ -141,16 +154,14 @@ export default function MerchantPage() {
       >
         <div className="flex flex-wrap items-end gap-3">
           <div className="min-w-[10rem] flex-1">
-            <label className="label" htmlFor="price">
-              Price ({tokenMeta.symbol})
-            </label>
-            <input
+            <AmountInput
               id="price"
-              className="input"
-              inputMode="decimal"
-              placeholder="1.0"
+              label={`Price (${tokenMeta.symbol})`}
               value={price}
-              onChange={(e) => setPrice(e.target.value)}
+              onChange={setPrice}
+              decimals={tokenMeta.decimals}
+              placeholder="1.0"
+              disabled={busy !== null}
             />
           </div>
           <div className="min-w-[12rem] flex-1">
@@ -197,7 +208,7 @@ export default function MerchantPage() {
               void run("create", () =>
                 payflow.createPlan(address, signXdr, {
                   token: config.contracts.token,
-                  amount: toStroops(price, tokenMeta.decimals),
+                  amount: parseAmount(price, tokenMeta.decimals),
                   period,
                   name: name.trim(),
                 }),
@@ -209,7 +220,20 @@ export default function MerchantPage() {
         </div>
       </Panel>
 
-      <Panel title="My plans">
+      <Panel
+        title="My plans"
+        actions={
+          <div className="flex items-center gap-2">
+            <Link
+              href={`/m/?address=${address}`}
+              className="btn-ghost whitespace-nowrap"
+            >
+              Public page
+            </Link>
+            <CopyButton value={publicUrl} label="public page link" />
+          </div>
+        }
+      >
         {plans === null ? (
           <SkeletonRows rows={2} label="Loading plans" />
         ) : plans.length === 0 ? (
@@ -282,7 +306,7 @@ export default function MerchantPage() {
                     <div className="mt-1 text-xs text-muted">
                       {fromStroops(m.amount, 4, meta.decimals)} {meta.symbol}{" "}
                       {formatPeriod(m.period)} · {m.charges_made} settled · next{" "}
-                      {m.status === "Active" ? formatWhen(m.next_charge) : "—"}
+                      {m.status === "Active" ? <TimeAgo value={m.next_charge} /> : "—"}
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2">

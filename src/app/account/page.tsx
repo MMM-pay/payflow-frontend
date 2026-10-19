@@ -7,16 +7,18 @@ import { chainMandatesOf } from "@/lib/chain";
 import { config } from "@/lib/config";
 import { payflow } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
-import { formatPeriod, formatWhen, fromStroops, toStroops } from "@/lib/format";
+import { formatPeriod, fromStroops, parseAmount } from "@/lib/format";
 import { metaFor, useTokenMetas } from "@/lib/token";
+import { AmountInput } from "@/components/AmountInput";
 import {
-  AddressLink,
   Badge,
   Empty,
+  MerchantAccount,
   Notice,
   Panel,
   SkeletonRows,
   Stat,
+  TimeAgo,
   TxLink,
 } from "@/components/ui";
 
@@ -138,16 +140,15 @@ export default function AccountPage() {
       >
         <div className="flex flex-wrap items-end gap-3">
           <div className="min-w-[12rem] flex-1">
-            <label className="label" htmlFor="amount">
-              Amount ({vaultMeta.symbol})
-            </label>
-            <input
+            <AmountInput
               id="amount"
-              className="input"
-              inputMode="decimal"
-              placeholder="5.0"
+              label={`Amount (${vaultMeta.symbol})`}
               value={amount}
-              onChange={(e) => setAmount(e.target.value)}
+              onChange={setAmount}
+              decimals={vaultMeta.decimals}
+              placeholder="5.0"
+              disabled={busy !== null}
+              hint="Accepts 5, 5.0 — and 5,0 where commas are decimals."
             />
           </div>
           <button
@@ -160,7 +161,7 @@ export default function AccountPage() {
                   address,
                   signXdr,
                   config.contracts.token,
-                  toStroops(amount, vaultMeta.decimals),
+                  parseAmount(amount, vaultMeta.decimals),
                 ),
               )
             }
@@ -177,7 +178,7 @@ export default function AccountPage() {
                   address,
                   signXdr,
                   config.contracts.token,
-                  toStroops(amount, vaultMeta.decimals),
+                  parseAmount(amount, vaultMeta.decimals),
                 ),
               )
             }
@@ -228,13 +229,13 @@ export default function AccountPage() {
                       </div>
                       <div className="mt-1 text-sm text-muted">
                         {fromStroops(m.amount, 4, meta.decimals)} {meta.symbol}{" "}
-                        {formatPeriod(m.period)} · to <AddressLink value={m.merchant} />
+                        {formatPeriod(m.period)} · to <MerchantAccount value={m.merchant} />
                       </div>
                       <div className="mt-1 text-xs text-muted">
                         {m.charges_made} charge{m.charges_made === 1 ? "" : "s"} taken
                         {m.max_charges > 0 && ` of ${m.max_charges}`}
                         {" · next "}
-                        {m.status === "Active" ? formatWhen(m.next_charge) : "—"}
+                        {m.status === "Active" ? <TimeAgo value={m.next_charge} /> : "—"}
                       </div>
                     </div>
 

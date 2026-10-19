@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  amountError,
+  canonicalAmount,
   DECIMALS,
   formatAmount,
+  formatExactTime,
   formatPeriod,
   formatWhen,
   fromStroops,
+  normaliseAmountInput,
+  parseAmount,
   shortAddress,
   toStroops,
   XLM,
@@ -204,22 +209,142 @@ describe("shortAddress", () => {
 });
 
 describe("formatWhen", () => {
-  const now = Date.now();
+  // Pinned clock: the words must be stable regardless of when CI runs.
+  const now = Date.UTC(2026, 9, 19, 12, 0, 0);
   const at = (deltaMs: number) => Math.floor((now + deltaMs) / 1000);
 
   it("renders a missing timestamp as a dash", () => {
-    expect(formatWhen(0)).toBe("—");
+    expect(formatWhen(0, now)).toBe("—");
   });
 
   it("describes due and overdue charges distinctly", () => {
-    expect(formatWhen(at(0))).toMatch(/due now|just now/);
-    expect(formatWhen(at(-5 * 60_000))).toBe("5m ago");
-    expect(formatWhen(at(5 * 60_000))).toBe("in 5m");
+    expect(formatWhen(at(0), now)).toMatch(/due now|just now/);
+    expect(formatWhen(at(-5 * 60_000), now)).toBe("5 minutes ago");
+    expect(formatWhen(at(5 * 60_000), now)).toBe("in 5 minutes");
   });
 
-  it("scales units upward", () => {
-    expect(formatWhen(at(3 * 3_600_000))).toBe("in 3h");
-    expect(formatWhen(at(3 * 86_400_000))).toBe("in 3d");
-    expect(formatWhen(at(-2 * 86_400_000))).toBe("2d ago");
+  it("scales units upward, spelled out for reading at a glance", () => {
+    // Issue #45: "in 3d" was easy to misread; the exact time lives in the
+    // tooltip rendered by <TimeAgo>, not in this string.
+    expect(formatWhen(at(3 * 3_600_000), now)).toBe("in 3 hours");
+    expect(formatWhen(at(3 * 86_400_000), now)).toBe("in 3 days");
+    expect(formatWhen(at(-2 * 86_400_000), now)).toBe("2 days ago");
+  });
+
+  it("uses the singular", () => {
+    expect(formatWhen(at(60_000), now)).toBe("in 1 minute");
+    expect(formatWhen(at(3_600_000), now)).toBe("in 1 hour");
+    expect(formatWhen(at(-86_400_000), now)).toBe("1 day ago");
+  });
+});
+
+describe("formatExactTime", () => {
+  it("renders a missing timestamp as a dash", () => {
+    expect(formatExactTime(0)).toBe("—");
+  });
+
+  it("renders the exact local date and time, not a relative phrase", () => {
+    const ts = Math.floor(Date.UTC(2026, 9, 19, 12, 0, 0) / 1000);
+    const text = formatExactTime(ts);
+    expect(text).toContain("2026");
+    expect(text).toMatch(/\d{1,2}:\d{2}/);
+    expect(text).not.toMatch(/in \d|ago/);
+  });
+});
+
+describe("canonicalAmount / parseAmount (locale separators)", () => {
+  // Issue #46: both "1.234,5" and "1,234.5" must reach the contract as the
+  // same bigint. 1234.5 XLM at 7 decimals is 12_345_000_000 stroops.
+  it("parses dot-decimal and comma-decimal styles to the same amount", () => {
+    expect(parseAmount("1,234.5")).toBe(12_345_000_000n);
+    expect(parseAmount("1.234,5")).toBe(12_345_000_000n);
+    expect(parseAmount("1,5")).toBe(15_000_000n);
+    expect(parseAmount("1.5")).toBe(15_000_000n);
+  });
+
+  it("treats a lone separator followed by three digits as grouping", () => {
+    // "1,234" is one thousand two hundred thirty-four in both conventions.
+    expect(parseAmount("1,234")).toBe(12_340_000_000n);
+    expect(parseAmount("1.234.567")).toBe(12_345_670_000_000n);
+  });
+
+  it("accepts non-breaking space grouping", () => {
+    expect(parseAmount("1\u00a0234,5")).toBe(12_345_000_000n);
+    expect(parseAmount("1\u202f234.5")).toBe(12_345_000_000n);
+  });
+
+  it("keeps bigint precision at full length", () => {
+    expect(parseAmount("1000000000")).toBe(10_000_000_000_000_000n);
+    expect(parseAmount("0,0000001")).toBe(1n);
+  });
+
+  it("honours the token's decimals", () => {
+    expect(parseAmount("1,5", 6)).toBe(1_500_000n);
+    expect(() => parseAmount("1,00000001")).toThrow(/decimal places/);
+    expect(() => toStroops("1.0000001", 6)).toThrow(/at most 6/i);
+  });
+
+  it("rejects garbage exactly like toStroops does", () => {
+    for (const bad of ["", "   ", "abc", "-1", "1.2.3", "1,2,3", "1e5", "1,,"]) {
+      expect(() => parseAmount(bad), `"${bad}" must be rejected`).toThrow();
+      expect(canonicalAmount(bad), `"${bad}" must not canonicalise`).toBeNull();
+    }
+  });
+
+  it("canonicalises to plain dot-decimal form", () => {
+    expect(canonicalAmount("1,234.5")).toBe("1234.5");
+    expect(canonicalAmount("1.234,5")).toBe("1234.5");
+    expect(canonicalAmount("1,234")).toBe("1234");
+    expect(canonicalAmount(".5")).toBe("0.5");
+  });
+});
+
+describe("normaliseAmountInput", () => {
+  it("keeps what the user typed while the fraction fits the token", () => {
+    expect(normaliseAmountInput("1,234.5")).toBe("1,234.5");
+    expect(normaliseAmountInput("1.234,5")).toBe("1.234,5");
+    expect(normaliseAmountInput("1,234.56", 2)).toBe("1,234.56");
+  });
+
+  it("caps the fraction at the token's decimals", () => {
+    expect(normaliseAmountInput("1,234.567", 2)).toBe("1,234.56");
+    expect(normaliseAmountInput("1.234,567", 2)).toBe("1.234,56");
+  });
+
+  it("lets a mid-keystroke separator stand", () => {
+    expect(normaliseAmountInput("1,")).toBe("1,");
+    expect(normaliseAmountInput(",5")).toBe(",5");
+  });
+
+  it("drops letters and other junk", () => {
+    expect(normaliseAmountInput("12a3")).toBe("123");
+    expect(normaliseAmountInput("abc")).toBe("");
+  });
+
+  it("never joins digits across a dropped fraction on a whole-number token", () => {
+    // "5.5" becoming "55" would silently double the amount.
+    expect(normaliseAmountInput("5.5", 0)).toBe("5");
+    expect(normaliseAmountInput("12", 0)).toBe("12");
+  });
+});
+
+describe("amountError", () => {
+  it("accepts both separator styles and empty input", () => {
+    expect(amountError("")).toBeNull();
+    expect(amountError("1,234.5")).toBeNull();
+    expect(amountError("1.234,5")).toBeNull();
+    expect(amountError("1,5")).toBeNull();
+  });
+
+  it("treats a trailing separator as still being typed", () => {
+    // "12." and ",5" are mid-keystroke, not errors worth a red banner.
+    expect(amountError("12.")).toBeNull();
+    expect(amountError(",5")).toBeNull();
+  });
+
+  it("explains why a value cannot be submitted", () => {
+    expect(amountError("abc")).toMatch(/positive number/i);
+    expect(amountError("1,00000001")).toMatch(/decimal places/i);
+    expect(amountError("1,5", 0)).toMatch(/decimal places/i);
   });
 });
