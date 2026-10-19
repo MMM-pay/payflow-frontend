@@ -17,7 +17,7 @@ import {
   nextChargeAmount,
   remainingDiscountCharges,
 } from "@/lib/discount";
-import { mandatePauseUntil, payflow } from "@/lib/payflow";
+import { mandateIsPastDue, mandatePastDueUntil, mandatePauseUntil, payflow } from "@/lib/payflow";
 import { mandateStatus } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
 import {
@@ -462,101 +462,153 @@ export default function AccountPage() {
                 {busy !== null || networkMismatch ? "Cancelling…" : "Cancel all"}
               </button>
             </div>
-            {mandates.map((m) => {
-              const terminal = m.status === "Cancelled" || m.status === "Completed";
-              const meta = metaFor(metas, m.token ?? config.contracts.token);
-              const resumes = resumeDate(mandatePauseUntil(m));
-              const trial = describeTrialEnd(m);
-              // What the next charge costs while the merchant's discount runs.
-              const discounted = nextChargeAmount(m);
-              const badge = discountBadge(m);
-              const remaining = remainingDiscountCharges(m);
-              // Both of these read from data the page already has, so the
-              // timeline works in contract-only mode: the mandates may come
-              // from chain state and the balance from a vault read.
-              const schedule = buildChargeSchedule(m);
-              const nextAmount = schedule.charges[0]?.amount;
-              // `balance` is the configured token's vault balance. A mandate
-              // denominated in another token cannot be compared against it, so
-              // leave the warning out rather than reporting a false shortfall.
-              const sameToken =
-                (m.token ?? config.contracts.token) === config.contracts.token;
-              const shortfall =
-                nextAmount === undefined || !sameToken
-                  ? null
-                  : chargeShortfall(balance, nextAmount);
-              return (
-                <div key={m.id} className="rounded-lg border border-edge p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium">Mandate #{m.id}</span>
-                        <Badge status={m.status} />
-                        {resumes && (
-                          <span className="text-xs text-muted">resumes {resumes}</span>
-                        )}
-                        {trial && (
-                          <span className="rounded-full bg-accent/15 px-2 py-0.5 text-xs font-medium text-accent">
-                            Free trial
-                          </span>
-                        )}
-                        {badge && (
-                          <span className="rounded-full bg-accent/15 px-2 py-0.5 text-xs font-medium text-accent">
-                            {badge}
-                          </span>
-                        )}
-                        {m.ended_by === "merchant" && (
-                          <span className="text-xs text-muted">ended by the merchant</span>
-                        )}
-                      </div>
-                      <div className="mt-1 text-sm text-muted">
-                        {discounted !== null ? (
-                          <>
-                            <span className="font-medium text-fg">
-                              {fromStroops(discounted, 4, meta.decimals)} {meta.symbol}
-                            </span>{" "}
-                            <span className="text-xs line-through">
-                              {fromStroops(m.amount, 4, meta.decimals)} {meta.symbol}
-                            </span>{" "}
-                          </>
-                        ) : (
-                          <>
-                            {fromStroops(m.amount, 4, meta.decimals)} {meta.symbol}{" "}
-                          </>
-                        )}
-                        {formatPeriod(m.period)} · to <MerchantAccount value={m.merchant} />
-                      </div>
-                      {badge && (
-                        <div className="mt-1 text-xs text-accent">
-                          {discounted !== null ? (
-                            <>
-                              You pay {fromStroops(discounted, 4, meta.decimals)}{" "}
-                              {meta.symbol} for the next charge
-                              {remaining === null
-                                ? "."
-                                : remaining === 1
-                                  ? ", then the full price."
-                                  : `, then the full price. ${remaining} discounted charges left.`}
-                            </>
-                          ) : remaining === 0 ? (
-                            <>The discount has run out — you pay the full price now.</>
-                          ) : (
-                            <>The merchant set a discount on this subscription.</>
+{mandates.map((m) => {
+                const terminal = m.status === "Cancelled" || m.status === "Completed";
+                const meta = metaFor(metas, m.token ?? config.contracts.token);
+                const resumes = resumeDate(mandatePauseUntil(m));
+                const pastDueUntil = mandatePastDueUntil(m);
+                const isPastDue = mandateIsPastDue(m);
+                const trial = describeTrialEnd(m);
+                // What the next charge costs while the merchant's discount runs.
+                const discounted = nextChargeAmount(m);
+                const badge = discountBadge(m);
+                const remaining = remainingDiscountCharges(m);
+                // Both of these read from data the page already has, so the
+                // timeline works in contract-only mode: the mandates may come
+                // from chain state and the balance from a vault read.
+                const schedule = buildChargeSchedule(m);
+                const nextAmount = schedule.charges[0]?.amount;
+                // `balance` is the configured token's vault balance. A mandate
+                // denominated in another token cannot be compared against it, so
+                // leave the warning out rather than reporting a false shortfall.
+                const sameToken =
+                  (m.token ?? config.contracts.token) === config.contracts.token;
+                const shortfall =
+                  nextAmount === undefined || !sameToken
+                    ? null
+                    : chargeShortfall(balance, nextAmount);
+                // Past-due shortfall is the same as the next charge shortfall.
+                const pastDueShortfall = isPastDue && sameToken && nextAmount !== undefined
+                  ? chargeShortfall(balance, nextAmount)
+                  : null;
+                return (
+                  <div key={m.id} className="rounded-lg border border-edge p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-medium">Mandate #{m.id}</span>
+                          <Badge status={m.status} />
+                          {isPastDue && (
+                            <span className="rounded-full bg-danger/15 px-2 py-0.5 text-xs font-medium text-danger">
+                              Past due
+                            </span>
+                          )}
+                          {resumes && (
+                            <span className="text-xs text-muted">resumes {resumes}</span>
+                          )}
+                          {pastDueUntil && (
+                            <span className="text-xs text-muted">grace period ends {formatDate(pastDueUntil)}</span>
+                          )}
+                          {trial && (
+                            <span className="rounded-full bg-accent/15 px-2 py-0.5 text-xs font-medium text-accent">
+                              Free trial
+                            </span>
+                          )}
+                          {badge && (
+                            <span className="rounded-full bg-accent/15 px-2 py-0.5 text-xs font-medium text-accent">
+                              {badge}
+                            </span>
+                          )}
+                          {m.ended_by === "merchant" && (
+                            <span className="text-xs text-muted">ended by the merchant</span>
                           )}
                         </div>
-                      )}
-                      <div className="mt-1 text-xs text-muted">
-                        {m.charges_made} charge{m.charges_made === 1 ? "" : "s"} taken
-                        {m.max_charges > 0 && ` of ${m.max_charges}`}
-                        {" · next "}
-                        {m.status === "Active" ? <TimeAgo value={m.next_charge} /> : "—"}
-                      </div>
-                      {trial && (
-                        <div className="mt-1 text-xs text-accent">
-                          {trial}. Cancel before then and you pay nothing.
+                        <div className="mt-1 text-sm text-muted">
+                          {discounted !== null ? (
+                            <>
+                              <span className="font-medium text-fg">
+                                {fromStroops(discounted, 4, meta.decimals)} {meta.symbol}
+                              </span>{" "}
+                              <span className="text-xs line-through">
+                                {fromStroops(m.amount, 4, meta.decimals)} {meta.symbol}
+                              </span>{" "}
+                            </>
+                          ) : (
+                            <>
+                              {fromStroops(m.amount, 4, meta.decimals)} {meta.symbol}{" "}
+                            </>
+                          )}
+                          {formatPeriod(m.period)} · to <MerchantAccount value={m.merchant} />
                         </div>
-                      )}
-                    </div>
+                        {badge && (
+                          <div className="mt-1 text-xs text-accent">
+                            {discounted !== null ? (
+                              <>
+                                You pay {fromStroops(discounted, 4, meta.decimals)}{" "}
+                                {meta.symbol} for the next charge
+                                {remaining === null
+                                  ? "."
+                                  : remaining === 1
+                                    ? ", then the full price."
+                                    : `, then the full price. ${remaining} discounted charges left.`}
+                              </>
+                            ) : remaining === 0 ? (
+                              <>The discount has run out — you pay the full price now.</>
+                            ) : (
+                              <>The merchant set a discount on this subscription.</>
+                            )}
+                          </div>
+                        )}
+                        <div className="mt-1 text-xs text-muted">
+                          {m.charges_made} charge{m.charges_made === 1 ? "" : "s"} taken
+                          {m.max_charges > 0 && ` of ${m.max_charges}`}
+                          {" · next "}
+                          {m.status === "Active" ? <TimeAgo value={m.next_charge} /> : "—"}
+                        </div>
+                        {trial && (
+                          <div className="mt-1 text-xs text-accent">
+                            {trial}. Cancel before then and you pay nothing.
+                          </div>
+                        )}
+                        {isPastDue && pastDueShortfall !== null && (
+                          <Notice tone="error">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                <p className="font-medium">
+                                  This subscription is past due — your vault is short by{" "}
+                                  {formatAmount(pastDueShortfall, meta)} for the next charge.
+                                </p>
+                                {pastDueUntil && (
+                                  <p className="mt-1 text-xs text-muted">
+                                    The grace period ends {formatDate(pastDueUntil)}. After that, the
+                                    mandate may expire if the charge cannot be settled.
+                                  </p>
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                className="btn-primary whitespace-nowrap"
+                                disabled={busy !== null || networkMismatch}
+                                onClick={() =>
+                                  void run(`deposit-past-due-${m.id}`, () =>
+                                    payflow.deposit(
+                                      address,
+                                      signXdr,
+                                      config.contracts.token,
+                                      parseAmount(
+                                        fromStroops(pastDueShortfall + 1n, 4, meta.decimals),
+                                        meta.decimals,
+                                      ),
+                                    ),
+                                  )
+                                }
+                              >
+                                {busy === `deposit-past-due-${m.id}` ? "Depositing…" : "Deposit to fix"}
+                              </button>
+                            </div>
+                          </Notice>
+                        )}
+                      </div>
 
                     {!terminal && (
                       <div className="flex flex-wrap items-center gap-2">

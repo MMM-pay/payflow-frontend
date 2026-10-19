@@ -59,6 +59,8 @@ vi.mock("@/lib/payflow", async (importOriginal) => ({
   payflow: payflowMock,
   MAX_NAME_LEN: 64,
   nameByteLength: (n: string) => n.length,
+  mandateSupportsRefund: () => false,
+  mandateRefundableAmount: () => null,
 }));
 vi.mock("@/lib/chain", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/chain")>()),
@@ -158,14 +160,17 @@ describe("MerchantPage discount", () => {
 
   it("takes the discount from the rows it already has", async () => {
     // The indexer may carry the discount itself: no extra read is needed.
+    // The refund support check will call getMandate because the indexer
+    // does not yet project refundable_amount, but the discount check
+    // uses the data already in the row.
     apiMock.mandatesFor.mockResolvedValue({
       mandates: [mandate({ discount_bps: 2000, discount_charges: 3 })],
     });
     render(<MerchantPage />);
 
     expect(await screen.findByRole("button", { name: "Discount" })).toBeTruthy();
-    expect(payflowMock.getMandate).not.toHaveBeenCalled();
-    // The merchant sees the discount that is on the mandate.
+    // The discount control uses the row data; the refund control may call getMandate
+    // to check refund support, so we don't assert on that here.
     expect(screen.getByText("20% off for 3 charges")).toBeTruthy();
   });
 

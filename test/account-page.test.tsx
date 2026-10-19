@@ -38,7 +38,11 @@ const payflowMock = vi.hoisted(() => ({
   readContract: vi.fn(),
 }));
 
-const payflowHelpers = vi.hoisted(() => ({ mandatePauseUntil: vi.fn() }));
+const payflowHelpers = vi.hoisted(() => ({
+  mandatePauseUntil: vi.fn(),
+  mandateIsPastDue: vi.fn(() => false),
+  mandatePastDueUntil: vi.fn(() => null),
+}));
 
 const chainMock = vi.hoisted(() => ({
   chainMandatesOf: vi.fn(),

@@ -380,6 +380,16 @@ export interface Mandate {
    * rather than building a transaction the contract would reject.
    */
   pause_until?: bigint;
+  /**
+   * When a past-due mandate's grace period ends, from payflow-contract#34.
+   * Optional because the deployed contract predates it.
+   */
+  past_due_until?: bigint;
+  /**
+   * The net amount the merchant received that can be refunded to the subscriber,
+   * from payflow-contract#36. Optional because the deployed contract predates it.
+   */
+  refundable_amount?: bigint;
 }
 
 /**
@@ -411,6 +421,66 @@ export function mandatePauseUntil(mandate: unknown): number | null {
         ? value
         : Number.NaN;
   return Number.isFinite(seconds) ? seconds : null;
+}
+
+/**
+ * Whether a mandate is past due (vault could not cover a due charge).
+ *
+ * Proposed in payflow-contract#34. A contract built before that change decodes
+ * without the `PastDue` status variant, so this returns false — the UI hides
+ * the past-due badge and notice rather than guessing at support.
+ */
+export function mandateIsPastDue(mandate: unknown): boolean {
+  return mandateStatus(mandate) === "PastDue";
+}
+
+/**
+ * When the past-due grace period ends, or null when the contract does not
+ * report it or the mandate is not past due.
+ *
+ * Proposed in payflow-contract#34 as `past_due_until`. Absent means the
+ * contract cannot say, which the UI treats as "no grace period visible".
+ */
+export function mandatePastDueUntil(mandate: unknown): number | null {
+  const value = (mandate as { past_due_until?: unknown } | null | undefined)?.past_due_until;
+  const seconds =
+    typeof value === "bigint"
+      ? Number(value)
+      : typeof value === "number"
+        ? value
+        : Number.NaN;
+  return Number.isFinite(seconds) ? seconds : null;
+}
+
+/**
+ * Whether the deployed contract supports refunds on mandates.
+ *
+ * Proposed in payflow-contract#36. A contract built before that change does
+ * not have the `refund` method, so calling it would fail. The UI hides the
+ * refund button rather than building a transaction the contract would reject.
+ *
+ * Since there's no version probe, we check if the contract's `Mandate` type
+ * carries a `refundable_amount` field (proposed as part of the refund feature).
+ * If the field is absent, the contract cannot say, and the control stays hidden.
+ */
+export function mandateSupportsRefund(mandate: unknown): boolean {
+  const value = (mandate as { refundable_amount?: unknown } | null | undefined)?.refundable_amount;
+  return typeof value === "bigint" || typeof value === "number" || typeof value === "string";
+}
+
+/**
+ * The maximum amount that can be refunded on this mandate, in the token's
+ * smallest unit. Returns null when the contract cannot say.
+ *
+ * Proposed in payflow-contract#36 as `refundable_amount`. This represents the
+ * net amount the merchant received (after fees) that can be refunded to the
+ * subscriber.
+ */
+export function mandateRefundableAmount(mandate: unknown): bigint | null {
+  const value = (mandate as { refundable_amount?: unknown } | null | undefined)?.refundable_amount;
+  if (typeof value === "bigint") return value;
+  if (typeof value === "number") return BigInt(value);
+  return null;
 }
 
 export const payflow = {
@@ -629,5 +699,25 @@ export const payflow = {
   charge: (source: string, sign: SignXdr, mandateId: number | bigint) =>
     writeContract(config.contracts.subscription, "charge", source, sign, [
       arg.u64(mandateId),
+    ]),
+
+  /**
+   * Merchant side: issue a refund on one of the merchant's mandates.
+   *
+   * Built against the interface proposed in payflow-contract#36: the refund
+   * is linked to a mandate and specifies the amount to return to the
+   * subscriber. The amount is capped at what the merchant received (net of
+   * fees) for that mandate.
+   */
+  refund: (
+    source: string,
+    sign: SignXdr,
+    mandateId: number | bigint,
+    amount: bigint,
+  ) =>
+    writeContract(config.contracts.subscription, "refund", source, sign, [
+      arg.address(source),
+      arg.u64(mandateId),
+      arg.i128(amount),
     ]),
 };

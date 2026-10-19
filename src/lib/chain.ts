@@ -91,6 +91,16 @@ export function mandateToApi(mandate: Mandate): ApiMandate {
     ...(mandate.discount_charges_made !== undefined
       ? { discount_charges_made: Number(mandate.discount_charges_made) }
       : {}),
+    // Only present once payflow-contract#34 adds `past_due_until` to Mandate;
+    // a contract without it cannot say when the grace period ends.
+    ...(mandate.past_due_until !== undefined
+      ? { past_due_until: Number(mandate.past_due_until) }
+      : {}),
+    // Only present once payflow-contract#36 adds `refundable_amount` to Mandate;
+    // a contract without it cannot say how much can be refunded.
+    ...(mandate.refundable_amount !== undefined
+      ? { refundable_amount: mandate.refundable_amount.toString() }
+      : {}),
   };
 }
 

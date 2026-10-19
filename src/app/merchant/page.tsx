@@ -16,7 +16,7 @@ import {
   remainingDiscountCharges,
   supportsDiscounts,
 } from "@/lib/discount";
-import { MAX_NAME_LEN, nameByteLength, payflow, server } from "@/lib/payflow";
+import { MAX_NAME_LEN, mandateRefundableAmount, mandateSupportsRefund, nameByteLength, payflow, server } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
 import {
   checkAmount,
@@ -174,6 +174,87 @@ function DiscountForm({
   );
 }
 
+/**
+ * The refund a merchant can issue on one mandate.
+ *
+ * The amount is capped at what the merchant received (net of fees) for that
+ * mandate. The form shows the maximum refundable amount and confirms the
+ * action with a dialog stating the amount and recipient.
+ */
+function RefundForm({
+  maxRefund,
+  meta,
+  amount,
+  onAmountChange,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  maxRefund: bigint;
+  meta: TokenMeta;
+  amount: string;
+  onAmountChange: (value: string) => void;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: (amount: bigint) => void;
+}) {
+  const amountCheck = checkAmount(amount, meta.decimals);
+  const maxRefundStroops = maxRefund;
+  const usable = amountCheck.ok && amountCheck.stroops <= maxRefundStroops && amountCheck.stroops > 0n;
+
+  return (
+    <div className="mt-3 rounded-lg border border-edge p-3">
+      <p className="text-sm font-medium">Issue a refund</p>
+      <p className="mt-1 text-xs text-muted">
+        Refund up to {formatAmount(maxRefundStroops, meta)} (what you received net of fees).
+      </p>
+      <div className="mt-2 flex flex-wrap items-end gap-3">
+        <div className="min-w-[12rem] flex-1">
+          <label className="label" htmlFor="refund-amount">
+            Amount ({meta.symbol})
+          </label>
+          <input
+            id="refund-amount"
+            className="input"
+            inputMode="decimal"
+            placeholder={fromStroops(maxRefundStroops, 4, meta.decimals)}
+            value={amount}
+            onChange={(e) => onAmountChange(e.target.value)}
+            aria-invalid={!amountCheck.ok || amountCheck.stroops > maxRefundStroops}
+            aria-describedby={amountCheck.ok ? undefined : "refund-amount-error"}
+            disabled={busy}
+          />
+        </div>
+        <button
+          type="button"
+          className="btn-primary"
+          disabled={busy || !usable}
+          onClick={() => {
+            if (!amountCheck.ok) return;
+            onConfirm(amountCheck.stroops);
+          }}
+        >
+          {busy ? "Refunding…" : "Confirm refund"}
+        </button>
+        <button type="button" className="btn-ghost" disabled={busy} onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+
+      {!amountCheck.ok && (
+        <p id="refund-amount-error" className="mt-2 text-sm text-danger">
+          {amountCheck.message}
+        </p>
+      )}
+      {amountCheck.ok && amountCheck.stroops > maxRefundStroops && (
+        <p id="refund-amount-error" className="mt-2 text-sm text-danger">
+          Refund cannot exceed {formatAmount(maxRefundStroops, meta)}.
+        </p>
+      )}
+    </div>
+  );
+}
+
 export default function MerchantPage() {
   const { address, networkMismatch, signXdr, connect, connecting } = useWallet();
   const [plans, setPlans] = useState<ApiPlan[] | null>(null);
@@ -219,6 +300,12 @@ export default function MerchantPage() {
    * two fields, and a page full of them is unreadable.
    */
   const [discountFor, setDiscountFor] = useState<number | null>(null);
+  /**
+   * The mandate whose refund form is open. One at a time: the form carries
+   * an amount field, and a page full of them is unreadable.
+   */
+  const [refundFor, setRefundFor] = useState<number | null>(null);
+  const [refundAmount, setRefundAmount] = useState("");
   /**
    * Whether the deployed contract can carry a discount at all.
    *
@@ -356,6 +443,37 @@ export default function MerchantPage() {
       })
       .catch(() => {
         if (live) setDiscountSupport(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [address, mandates]);
+
+  /**
+   * Whether the deployed contract supports refunds on mandates.
+   *
+   * The indexer does not project the refundable_amount yet, so one mandate
+   * is read from the chain to answer the question the same way in both modes.
+   */
+  const [refundSupport, setRefundSupport] = useState(false);
+  useEffect(() => {
+    const row = mandates?.[0];
+    if (!address || !row) {
+      setRefundSupport(false);
+      return;
+    }
+    if (mandateSupportsRefund(row)) {
+      setRefundSupport(true);
+      return;
+    }
+    let live = true;
+    void payflow
+      .getMandate(address, row.id)
+      .then((mandate) => {
+        if (live) setRefundSupport(mandateSupportsRefund(mandate));
+      })
+      .catch(() => {
+        if (live) setRefundSupport(false);
       });
     return () => {
       live = false;
@@ -963,21 +1081,43 @@ export default function MerchantPage() {
                           )}
                         </>
                       )}
-                      {discountSupport && endable(m) && (
-                        <button
-                          type="button"
-                          className="btn-ghost"
-                          disabled={busy !== null || networkMismatch}
-                          aria-expanded={discountFor === m.id}
-                          onClick={() =>
-                            setDiscountFor(discountFor === m.id ? null : m.id)
-                          }
-                        >
-                          {discountFor === m.id ? "Close" : "Discount"}
-                        </button>
-                      )}
-                      {endable(m) &&
-                      (confirmEnd === m.id ? (
+{discountSupport && endable(m) && (
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            disabled={busy !== null || networkMismatch}
+                            aria-expanded={discountFor === m.id}
+                            onClick={() =>
+                              setDiscountFor(discountFor === m.id ? null : m.id)
+                            }
+                          >
+                            {discountFor === m.id ? "Close" : "Discount"}
+                          </button>
+                        )}
+                        {refundSupport && endable(m) && (
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            disabled={busy !== null || networkMismatch}
+                            aria-expanded={refundFor === m.id}
+                            onClick={() => {
+                              if (refundFor === m.id) {
+                                setRefundFor(null);
+                                setRefundAmount("");
+                              } else {
+                                const maxRefund = mandateRefundableAmount(m);
+                                if (maxRefund !== null) {
+                                  setRefundAmount(fromStroops(maxRefund, 4, meta.decimals).replace(/[^0-9.]/g, ""));
+                                }
+                                setRefundFor(m.id);
+                              }
+                            }}
+                          >
+                            {refundFor === m.id ? "Close" : "Refund"}
+                          </button>
+                        )}
+                        {endable(m) &&
+                        (confirmEnd === m.id ? (
                         <>
                           <button
                             type="button"
@@ -1024,6 +1164,27 @@ export default function MerchantPage() {
                         void run(`discount-${m.id}`, () =>
                           payflow.setDiscount(address, signXdr, m.id, bps, charges),
                         ).then(() => setDiscountFor(null))
+                      }
+                    />
+                  )}
+                  {refundFor === m.id && (
+                    <RefundForm
+                      maxRefund={mandateRefundableAmount(m) ?? 0n}
+                      meta={meta}
+                      amount={refundAmount}
+                      onAmountChange={setRefundAmount}
+                      busy={busy === `refund-${m.id}`}
+                      onCancel={() => {
+                        setRefundFor(null);
+                        setRefundAmount("");
+                      }}
+                      onConfirm={(amount) =>
+                        void run(`refund-${m.id}`, () =>
+                          payflow.refund(address, signXdr, m.id, amount),
+                        ).then(() => {
+                          setRefundFor(null);
+                          setRefundAmount("");
+                        })
                       }
                     />
                   )}

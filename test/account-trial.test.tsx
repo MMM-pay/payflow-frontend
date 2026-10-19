@@ -41,6 +41,9 @@ vi.mock("@/lib/payflow", () => ({
   payflow: payflowMock,
   // This page's tests predate payflow-contract#41; the dated pause stays off.
   mandatePauseUntil: () => null,
+  // payflow-contract#34 not shipped; past-due stays off.
+  mandateIsPastDue: () => false,
+  mandatePastDueUntil: () => null,
 }));
 vi.mock("@/lib/chain", () => ({ chainMandatesOf: chainMock.chainMandatesOf }));
 

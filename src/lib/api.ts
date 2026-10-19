@@ -65,6 +65,14 @@ export interface ApiMandate {
    */
   pause_until?: number;
   /**
+   * When a past-due mandate's grace period ends, as a Unix time, from
+   * payflow-contract#34.
+   *
+   * Optional because the field has not shipped: the contract only reports it
+   * once the mandate is past due. Absent means the source cannot say.
+   */
+  past_due_until?: number;
+  /**
    * The discount the merchant set on this mandate, in basis points, and how
    * many charges it covers.
    *
@@ -76,6 +84,14 @@ export interface ApiMandate {
   discount_charges?: number;
   /** How many of the discounted charges have been settled. */
   discount_charges_made?: number;
+  /**
+   * The maximum amount that can be refunded on this mandate, in the token's
+   * smallest unit as a decimal string. From payflow-contract#36.
+   *
+   * Optional because the field has not shipped: the contract only reports it
+   * once the refund feature is deployed. Absent means the source cannot say.
+   */
+  refundable_amount?: string;
 }
 
 export interface ApiCharge {
@@ -133,6 +149,15 @@ export interface ProtocolStats {
   lastIndexedLedger: number;
 }
 
+export interface RecentCharge {
+  tx_hash: string;
+  plan_name: string;
+  amount: string;
+  ledger: number;
+  timestamp: number;
+  plan_id: number;
+}
+
 /**
  * The indexer is a convenience, not a source of truth. Every call here is
  * allowed to fail: the UI falls back to reading contract state directly so the
@@ -188,4 +213,12 @@ export const api = {
    * endpoint — the UI must hide the stats section rather than show stale zeros.
    */
   planStats: (planId: number) => get<ApiPlanStats>(`/api/plans/${planId}/stats`),
+  /**
+   * Recent charges across the protocol, proposed by payflow-backend#30.
+   *
+   * Returns null when the backend is unreachable or does not yet serve this
+   * endpoint — the UI must hide the activity feed rather than show stale data.
+   */
+  recentCharges: (limit = 10) =>
+    get<{ charges: RecentCharge[] }>(`/api/recent?limit=${limit}`),
 };
