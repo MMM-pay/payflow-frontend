@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import MerchantPage from "@/app/merchant/page";
 
 /**
@@ -27,6 +27,7 @@ const apiMock = vi.hoisted(() => ({
   mandatesFor: vi.fn(),
   merchantSummary: vi.fn(),
   merchantRevenue: vi.fn(),
+  planStats: vi.fn(),
 }));
 
 const payflowMock = vi.hoisted(() => ({
@@ -41,6 +42,7 @@ const chainMock = vi.hoisted(() => ({
   chainMandatesFor: vi.fn(),
   chainMerchantSummary: vi.fn(),
   chainPlansOf: vi.fn(),
+  chainPlanSubscriberCount: vi.fn(),
   endable: vi.fn(() => false),
 }));
 
@@ -58,6 +60,8 @@ beforeEach(() => {
   apiMock.mandatesFor.mockResolvedValue({ mandates: [] });
   apiMock.merchantSummary.mockResolvedValue(null);
   apiMock.merchantRevenue.mockResolvedValue(null);
+  apiMock.planStats.mockResolvedValue(null);
+  chainMock.chainPlanSubscriberCount.mockResolvedValue(null);
   payflowMock.feeBps.mockResolvedValue(100); // 1%
   payflowMock.createPlan.mockResolvedValue("tx-hash");
   chainMock.chainMerchantSummary.mockReturnValue({
@@ -193,5 +197,102 @@ describe("MerchantPage publish form", () => {
     expect(screen.getByRole("button", { name: /publish plan/i }).hasAttribute("disabled")).toBe(
       false,
     );
+  });
+});
+
+function plan(over: Partial<import("@/lib/api").ApiPlan> = {}): import("@/lib/api").ApiPlan {
+  return {
+    id: 1,
+    merchant: MERCHANT,
+    name: "Pro Monthly",
+    token: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    amount: "10000000",
+    period: 2_592_000,
+    active: 1,
+    ledger: 1000,
+    ...over,
+  };
+}
+
+/** Find the plan card that contains the given plan name, scoped for queries. */
+async function planCardByName(name: string) {
+  const nameEl = await screen.findByText(name);
+  return within(nameEl.closest("div.border-edge") as HTMLElement);
+}
+
+describe("MerchantPage plan stats", () => {
+  it("shows subscriber count, collected, and cancellations from the API", async () => {
+    apiMock.plans.mockResolvedValue({ plans: [plan({ id: 3 })] });
+    apiMock.planStats.mockResolvedValue({
+      subscriber_count: 42,
+      total_collected: "420000000",
+      cancellations: 5,
+    });
+
+    render(<MerchantPage />);
+
+    const card = await planCardByName("Pro Monthly");
+    // Subscriber count, Collected (42 XLM = 420000000 stroops), Cancellations.
+    await waitFor(() => expect(card.getByText("42")).toBeTruthy());
+    expect(card.getByText(/Subscribers/)).toBeTruthy();
+    expect(card.getByText(/Collected/)).toBeTruthy();
+    expect(card.getByText(/42 XLM/)).toBeTruthy();
+    expect(card.getByText(/Cancellations/)).toBeTruthy();
+    expect(card.getByText("5")).toBeTruthy();
+  });
+
+  it("shows only subscriber count in contract-only mode when the contract supports it", async () => {
+    // API down for plans and for plan stats; contract fallback returns plans
+    // and a subscriber count.
+    apiMock.plans.mockResolvedValue(null);
+    chainMock.chainPlansOf.mockResolvedValue([plan({ id: 7 })]);
+    apiMock.planStats.mockResolvedValue(null);
+    chainMock.chainPlanSubscriberCount.mockResolvedValue(9);
+
+    render(<MerchantPage />);
+
+    const card = await planCardByName("Pro Monthly");
+    await waitFor(() => expect(card.getByText("9")).toBeTruthy());
+    expect(card.getByText(/Subscribers/)).toBeTruthy();
+    // total_collected and cancellations require the indexer; they must not
+    // appear when only the contract is available.
+    expect(card.queryByText(/Collected/)).toBeNull();
+    expect(card.queryByText(/Cancellations/)).toBeNull();
+  });
+
+  it("hides the stats block entirely when neither the API nor the contract can supply counts", async () => {
+    apiMock.plans.mockResolvedValue({ plans: [plan({ id: 2 })] });
+    apiMock.planStats.mockResolvedValue(null);
+    chainMock.chainPlanSubscriberCount.mockResolvedValue(null);
+
+    render(<MerchantPage />);
+
+    // Wait for the plan card itself to appear and for stats to settle.
+    const card = await planCardByName("Pro Monthly");
+    await waitFor(() => {
+      expect(card.queryByText(/Subscribers/)).toBeNull();
+      expect(card.queryByText(/Collected/)).toBeNull();
+      expect(card.queryByText(/Cancellations/)).toBeNull();
+    });
+  });
+
+  it("amounts formatted from strings with bigint, never floats", async () => {
+    // 50 million stroops = 5 XLM at 7 decimals. The total_collected string is
+    // parsed by fromStroops via BigInt(raw), so large amounts stay exact — a
+    // float conversion would lose precision beyond Number.MAX_SAFE_INTEGER.
+    // Using 5 XLM (not 1 XLM like the plan price) avoids a duplicate match.
+    apiMock.plans.mockResolvedValue({ plans: [plan({ id: 4 })] });
+    apiMock.planStats.mockResolvedValue({
+      subscriber_count: 1,
+      total_collected: "50000000",
+      cancellations: 0,
+    });
+
+    render(<MerchantPage />);
+
+    const card = await planCardByName("Pro Monthly");
+    // The Collected value must read "5 XLM" — exact, from a bigint path.
+    await waitFor(() => expect(card.getByText(/5 XLM/)).toBeTruthy());
+    expect(card.getByText(/Subscribers/)).toBeTruthy();
   });
 });

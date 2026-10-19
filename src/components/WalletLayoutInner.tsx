@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { WalletButton } from "@/components/WalletButton";
 import { NetworkMismatchBanner } from "@/components/ui";
 import {
@@ -12,9 +13,12 @@ import {
   formatVersion,
   getCommitUrl,
   getProtocolContractLinks,
+  buildDebugInfo,
+  formatDebugInfo,
 } from "@/lib/build-info";
 import { config } from "@/lib/config";
 import { useWallet } from "@/lib/wallet";
+import { copyToClipboard } from "@/lib/clipboard";
 
 const NAV = [
   { href: "/", label: "Overview" },
@@ -37,11 +41,35 @@ function isCurrent(pathname: string, href: string): boolean {
  * component so it can keep exporting `metadata`.
  */
 export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
-  const { networkMismatch, walletNetwork } = useWallet();
+  const { networkMismatch, walletNetwork, address } = useWallet();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLElement>(null);
+
+  const walletName = typeof window !== "undefined" ? window.localStorage.getItem("payflow.wallet") : null;
+  let walletDisplayName = "Unknown";
+  if (walletName) {
+    try {
+      const parsed = JSON.parse(walletName);
+      walletDisplayName = parsed.walletId || "Unknown";
+    } catch {
+      walletDisplayName = walletName;
+    }
+  }
+
+  const handleCopyDebugInfo = async () => {
+    const debugInfo = buildDebugInfo(
+      address ? { name: walletDisplayName, address } : null,
+    );
+    const text = formatDebugInfo(debugInfo);
+    const ok = await copyToClipboard(text);
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
 
   // Navigate to a new page: the menu is no longer needed.
   useEffect(() => {
@@ -96,8 +124,8 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
                     key={item.href}
                     href={item.href}
                     aria-current={isCurrent(pathname, item.href) ? "page" : undefined}
-                    className={`hover:text-slate-100 ${
-                      isCurrent(pathname, item.href) ? "text-slate-100" : ""
+                    className={`hover:text-fg ${
+                      isCurrent(pathname, item.href) ? "text-fg" : ""
                     }`}
                   >
                     {item.label}
@@ -107,6 +135,7 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
             </div>
 
             <div className="flex shrink-0 items-center gap-2">
+              <ThemeToggle />
               <WalletButton />
               <button
                 ref={toggleRef}
@@ -115,7 +144,7 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
                 aria-expanded={open}
                 aria-controls="mobile-nav"
                 aria-label={open ? "Close menu" : "Open menu"}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-edge text-muted transition hover:border-muted hover:bg-white/5 hover:text-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent md:hidden"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-edge text-muted transition hover:border-muted hover:bg-fg/5 hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent md:hidden"
               >
                 {open ? (
                   <svg
@@ -159,8 +188,8 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
                   <Link
                     href={item.href}
                     aria-current={isCurrent(pathname, item.href) ? "page" : undefined}
-                    className={`block rounded-lg px-2 py-2.5 text-sm text-muted hover:bg-white/5 hover:text-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
-                      isCurrent(pathname, item.href) ? "bg-white/5 text-slate-100" : ""
+                    className={`block rounded-lg px-2 py-2.5 text-sm text-muted hover:bg-fg/5 hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+                      isCurrent(pathname, item.href) ? "bg-fg/5 text-fg" : ""
                     }`}
                   >
                     {item.label}
@@ -186,7 +215,7 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
               className="flex flex-wrap items-center gap-x-4 gap-y-1.5"
               aria-label="Deployed protocol contracts"
             >
-              <span className="font-medium text-slate-300">Contracts:</span>
+              <span className="font-medium text-soft">Contracts:</span>
               {contractLinks.map((contract) => (
                 <span key={contract.name} className="inline-flex items-center gap-1">
                   <span>{contract.name}:</span>
@@ -202,13 +231,13 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
                       {contract.shortId}
                     </a>
                   ) : (
-                    <span className="text-muted/60">not configured</span>
+                    <span className="text-muted">not configured</span>
                   )}
                 </span>
               ))}
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-slate-500">
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-muted">
               <span>Stellar testnet · unaudited · do not use with real funds</span>
               <div className="flex items-center gap-2">
                 {(versionText || commitShort) && (
@@ -223,7 +252,7 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
                               href={commitUrl}
                               target="_blank"
                               rel="noreferrer"
-                              className="mono underline-offset-2 hover:text-slate-300 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
+                              className="mono underline-offset-2 hover:text-soft hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
                               title={`Git commit ${commitShort}`}
                               aria-label={`Git commit ${commitShort}`}
                             >
@@ -239,11 +268,32 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
                     <span aria-hidden="true">·</span>
                   </>
                 )}
+                <button
+                  type="button"
+                  onClick={handleCopyDebugInfo}
+                  className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs text-muted border border-edge hover:bg-fg/5 hover:text-fg hover:border-muted transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                  aria-label="Copy debug information for bug reports"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="h-4 w-4"
+                    aria-hidden="true"
+                  >
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                  </svg>
+                  {copied ? "Copied!" : "Copy debug info"}
+                </button>
                 <a
                   href="https://github.com/MMM-pay"
                   target="_blank"
                   rel="noreferrer"
-                  className="hover:text-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
+                  className="hover:text-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
                 >
                   GitHub
                 </a>

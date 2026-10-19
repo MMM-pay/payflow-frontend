@@ -39,10 +39,13 @@ export const arg = {
 };
 
 /**
- * Read contract state via simulation. Costs nothing and submits nothing.
+ * Read contract state via simulation with retry on rate limits and transient errors.
  *
  * `sourceAddress` only has to be an account that exists on the network — the
  * simulation never runs an operation against it.
+ *
+ * Retries up to 3 times (4 total attempts) on 429, 503, and network errors.
+ * Never retries writes — callers must use `writeContract` for state changes.
  */
 export async function readContract<T>(
   contractId: string,
@@ -50,25 +53,60 @@ export async function readContract<T>(
   sourceAddress: string,
   args: xdr.ScVal[] = [],
 ): Promise<T> {
-  const account = await server.getAccount(sourceAddress);
-  const tx = new TransactionBuilder(account, {
-    fee: BASE_FEE,
-    networkPassphrase: config.networkPassphrase,
-  })
-    .addOperation(new Contract(contractId).call(method, ...args))
-    .setTimeout(30)
-    .build();
+  let lastError: unknown;
+  const maxAttempts = 4; // 1 initial + 3 retries
 
-  const sim = await server.simulateTransaction(tx);
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    await readSemaphore.acquire();
+    try {
+      const account = await server.getAccount(sourceAddress);
+      const tx = new TransactionBuilder(account, {
+        fee: BASE_FEE,
+        networkPassphrase: config.networkPassphrase,
+      })
+        .addOperation(new Contract(contractId).call(method, ...args))
+        .setTimeout(30)
+        .build();
 
-  if (rpc.Api.isSimulationError(sim)) {
-    throw new Error(decodeContractError(sim.error, method));
+      const sim = await server.simulateTransaction(tx);
+
+      if (rpc.Api.isSimulationError(sim)) {
+        throw new Error(decodeContractError(sim.error, method));
+      }
+      if (!("result" in sim) || !sim.result) {
+        throw new Error(`${method}: simulation returned no result`);
+      }
+      return scValToNative(sim.result.retval) as T;
+    } catch (err) {
+      lastError = err;
+      // Release semaphore before checking retry or throwing
+      readSemaphore.release();
+
+      const isLastAttempt = attempt === maxAttempts - 1;
+      if (isLastAttempt || !isRetryableError(err)) {
+        throw err;
+      }
+      // Wait before retrying
+      await new Promise((r) => setTimeout(r, backoffDelay(attempt)));
+      // Loop continues, will re-acquire semaphore
+    }
   }
-  if (!("result" in sim) || !sim.result) {
-    throw new Error(`${method}: simulation returned no result`);
-  }
-  return scValToNative(sim.result.retval) as T;
+
+  // Should never reach here, but TypeScript needs it
+  throw lastError;
 }
+
+/** Signs a transaction XDR and returns the signed XDR. Supplied by the wallet. */
+export type SignXdr = (xdrString: string) => Promise<string>;
+
+export const arg = {
+  address: (v: string): xdr.ScVal => new Address(v).toScVal(),
+  u64: (v: number | bigint): xdr.ScVal => nativeToScVal(v, { type: "u64" }),
+  u32: (v: number): xdr.ScVal => nativeToScVal(v, { type: "u32" }),
+  i128: (v: bigint): xdr.ScVal => nativeToScVal(v, { type: "i128" }),
+  bool: (v: boolean): xdr.ScVal => nativeToScVal(v, { type: "bool" }),
+  string: (v: string): xdr.ScVal => nativeToScVal(v, { type: "string" }),
+};
 
 /**
  * Submit a state-changing call.
@@ -380,14 +418,72 @@ export const payflow = {
     paused: boolean,
   ) =>
     writeContract(config.contracts.subscription, "set_paused", source, sign, [
-      arg.address(source),
       arg.u64(mandateId),
       arg.bool(paused),
+    ]),
+
+  /**
+   * Subscriber side: pause billing until a point in time, from the interface
+   * proposed in payflow-contract#41. Only callable against a contract that
+   * carries `pause_until` — see `mandatePauseUntil`, which is how the UI
+   * decides whether to offer this at all.
+   */
+  pauseUntil: (
+    source: string,
+    sign: SignXdr,
+    mandateId: number | bigint,
+    untilUnixSeconds: number,
+  ) =>
+    writeContract(config.contracts.subscription, "pause_until", source, sign, [
+      arg.address(source),
+      arg.u64(mandateId),
+      arg.u64(untilUnixSeconds),
+    ]),
+
+  /**
+   * Merchant side: attach a discount to one of the merchant's mandates.
+   *
+   * Built against the interface proposed in payflow-contract#37: the
+   * discount is a rate in basis points and covers a number of charges. The
+   * contract charges the discounted amount for those charges and the full
+   * price afterwards; a discount can only lower the price.
+   */
+  setDiscount: (
+    source: string,
+    sign: SignXdr,
+    mandateId: number | bigint,
+    discountBps: number,
+    discountCharges: number,
+  ) =>
+    writeContract(config.contracts.subscription, "set_discount", source, sign, [
+      arg.u64(mandateId),
+      arg.u32(discountBps),
+      arg.u32(discountCharges),
     ]),
 
   /** Permissionless: anyone may settle a due mandate. */
   charge: (source: string, sign: SignXdr, mandateId: number | bigint) =>
     writeContract(config.contracts.subscription, "charge", source, sign, [
       arg.u64(mandateId),
+    ]),
+
+  /**
+   * Merchant side: issue a refund on one of the merchant's mandates.
+   *
+   * Built against the interface proposed in payflow-contract#36: the refund
+   * is linked to a mandate and specifies the amount to return to the
+   * subscriber. The amount is capped at what the merchant received (net of
+   * fees) for that mandate.
+   */
+  refund: (
+    source: string,
+    sign: SignXdr,
+    mandateId: number | bigint,
+    amount: bigint,
+  ) =>
+    writeContract(config.contracts.subscription, "refund", source, sign, [
+      arg.address(source),
+      arg.u64(mandateId),
+      arg.i128(amount),
     ]),
 };

@@ -15,6 +15,31 @@ All notable changes to payflow-frontend. The format follows
 
 ### Added
 
+- **Pause until a date on the account page.** A subscriber can choose the day
+  billing resumes, and a paused mandate shows that date. The control is hidden
+  unless the mandate data carries `pause_until`, so a deployed contract that
+  predates the field — including the current testnet deployment — never offers
+  a write it cannot service. Built against the interface proposed in
+  payflow-contract#41; the indexer must serve the field for the control to
+  appear when a backend is configured.
+- **Light theme with a system default.** Both palettes are exposed as CSS
+  variables, the page follows `prefers-color-scheme` unless the reader chooses
+  Light or Dark from the header, and the choice is saved in `localStorage`. A
+  pre-paint script applies a stored choice so the wrong theme never flashes.
+- **Upcoming charges timeline on the account page.** Each active mandate shows
+  its next six charges, the running total, the final charge date when capped,
+  and a warning when the vault cannot cover the next charge. Built from the
+  mandates and vault balance already on the page, so it also works in
+  contract-only mode.
+- **Merchant discounts on a mandate.** A merchant can attach a discount to one
+  of their mandates — a percentage and the number of charges it covers — and
+  the subscriber sees the discounted price and how many discounted charges are
+  left. The rate is a whole number of basis points, and the amount is computed
+  in the token's smallest unit, so the price shown is the price charged.
+  Built against the interface proposed in payflow-contract#37 and hidden
+  entirely — including the merchant's control — while the deployed contract
+  cannot carry the field.
+
 - Subscribe cards show optional availability cutoffs and remaining seats, and
   reject expired/full plans before signing. Unlimited/legacy plans stay unchanged.
   Built against payflow-contract#26 (`available_until`, Unix seconds; 0 forever)

@@ -29,6 +29,7 @@ const apiMock = vi.hoisted(() => ({
   mandatesFor: vi.fn(),
   merchantSummary: vi.fn(),
   merchantRevenue: vi.fn(),
+  planStats: vi.fn(),
 }));
 const payflowMock = vi.hoisted(() => ({
   feeBps: vi.fn(),
@@ -43,6 +44,7 @@ const chainMock = vi.hoisted(() => ({
   chainMandatesFor: vi.fn(),
   chainMerchantSummary: vi.fn(),
   chainPlansOf: vi.fn(),
+  chainPlanSubscriberCount: vi.fn(),
   endable: vi.fn(() => false),
 }));
 
@@ -81,6 +83,8 @@ beforeEach(() => {
   apiMock.merchantSummary.mockResolvedValue(null);
   apiMock.merchantRevenue.mockResolvedValue(null);
   apiMock.mandatesFor.mockResolvedValue({ mandates: [] });
+  apiMock.planStats.mockResolvedValue(null);
+  chainMock.chainPlanSubscriberCount.mockResolvedValue(null);
   chainMock.chainMerchantSummary.mockReturnValue({
     merchant: MERCHANT,
     activeMandates: 0,

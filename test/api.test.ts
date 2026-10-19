@@ -117,3 +117,39 @@ describe("api fail-soft behaviour", () => {
     expect(await api.merchantRevenue("GABC")).toBeNull();
   });
 });
+
+describe("api.planStats", () => {
+  it("returns the parsed body on success", async () => {
+    mockFetch(async (url) => {
+      expect(String(url)).toContain("/api/plans/5/stats");
+      return jsonResponse({ subscriber_count: 12, total_collected: "120000000", cancellations: 2 });
+    });
+    expect(await api.planStats(5)).toEqual({
+      subscriber_count: 12,
+      total_collected: "120000000",
+      cancellations: 2,
+    });
+  });
+
+  it("returns null when the backend does not yet serve this endpoint", async () => {
+    // payflow-backend#29 has not shipped yet; a 404 must be treated as
+    // "endpoint unavailable", not as a crash.
+    mockFetch(async () => jsonResponse({ error: "not found" }, 404, false));
+    expect(await api.planStats(1)).toBeNull();
+  });
+
+  it("returns null when the network request throws", async () => {
+    mockFetch(() => Promise.reject(new Error("ENETUNREACH")));
+    expect(await api.planStats(1)).toBeNull();
+  });
+
+  it("queries the correct plan-specific URL", async () => {
+    let seenUrl = "";
+    mockFetch(async (url) => {
+      seenUrl = String(url);
+      return jsonResponse({ subscriber_count: 0, total_collected: "0", cancellations: 0 });
+    });
+    await api.planStats(99);
+    expect(seenUrl).toContain("/api/plans/99/stats");
+  });
+});
