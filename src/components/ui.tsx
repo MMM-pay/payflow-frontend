@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { CopyButton } from "@/components/CopyButton";
 import { explorerBase } from "@/lib/config";
 import { shortAddress } from "@/lib/format";
 
@@ -16,7 +17,7 @@ export function Panel({
   return (
     <section className="panel">
       {(title || actions) && (
-        <header className="mb-4 flex items-start justify-between gap-4">
+        <header className="mb-4 flex flex-wrap items-start justify-between gap-4">
           <div>
             {title && <h2 className="text-base font-semibold">{title}</h2>}
             {subtitle && <p className="mt-1 text-sm text-muted">{subtitle}</p>}
@@ -29,12 +30,89 @@ export function Panel({
   );
 }
 
-export function Stat({ label, value, hint }: { label: string; value: ReactNode; hint?: string }) {
+export function Stat({
+  label,
+  value,
+  hint,
+  loading = false,
+}: {
+  label: string;
+  value: ReactNode;
+  hint?: string;
+  loading?: boolean;
+}) {
   return (
-    <div className="panel">
+    <div className="panel" aria-busy={loading || undefined}>
       <div className="label">{label}</div>
-      <div className="text-2xl font-semibold tabular-nums">{value}</div>
+      <div className="text-2xl font-semibold tabular-nums">
+        {loading ? <Skeleton className="h-8 w-24" /> : value}
+      </div>
       {hint && <div className="mt-1 text-xs text-muted">{hint}</div>}
+    </div>
+  );
+}
+
+/**
+ * Decorative loading block. `motion-safe` means the pulse is dropped entirely
+ * for users who ask their OS to reduce motion.
+ */
+export function Skeleton({ className = "" }: { className?: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`block rounded bg-white/10 motion-safe:animate-pulse ${className}`}
+    />
+  );
+}
+
+/** Placeholder rows matching the mandate-style cards used on account and merchant. */
+export function SkeletonRows({ rows = 3, label = "Loading" }: { rows?: number; label?: string }) {
+  return (
+    <div className="space-y-3" role="status" aria-busy="true">
+      <span className="sr-only">{label}…</span>
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="rounded-lg border border-edge p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="w-full space-y-1.5 sm:w-auto">
+              <Skeleton className="h-5 w-44 max-w-full" />
+              <Skeleton className="h-5 w-64 max-w-full" />
+              <Skeleton className="h-4 w-40 max-w-full" />
+            </div>
+            <Skeleton className="h-9 w-24 rounded-lg" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Placeholder grid matching the plan cards on the subscribe page. */
+export function SkeletonPlanCards({ cards = 4, label = "Loading plans" }: { cards?: number; label?: string }) {
+  return (
+    <div className="grid gap-4 sm:grid-cols-2" role="status" aria-busy="true">
+      <span className="sr-only">{label}…</span>
+      {Array.from({ length: cards }, (_, i) => (
+        <div key={i} className="panel">
+          <div className="mb-4">
+            <Skeleton className="h-6 w-32" />
+          </div>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Skeleton className="h-8 w-28" />
+              <Skeleton className="h-5 w-24" />
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <Skeleton className="h-5 w-16" />
+              <Skeleton className="h-5 w-28" />
+            </div>
+            <div>
+              <Skeleton className="mb-1.5 h-3 w-40" />
+              <Skeleton className="h-[38px] w-full rounded-lg" />
+            </div>
+            <Skeleton className="h-[38px] w-full rounded-lg" />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -55,28 +133,34 @@ export function Badge({ status }: { status: string }) {
 
 export function AddressLink({ value, kind = "account" }: { value: string; kind?: "account" | "contract" }) {
   return (
-    <a
-      href={`${explorerBase}/${kind}/${value}`}
-      target="_blank"
-      rel="noreferrer"
-      className="mono text-muted underline-offset-2 hover:text-accent hover:underline"
-      title={value}
-    >
-      {shortAddress(value, 6)}
-    </a>
+    <span className="inline-flex max-w-full items-center gap-1 align-middle">
+      <a
+        href={`${explorerBase}/${kind}/${value}`}
+        target="_blank"
+        rel="noreferrer"
+        className="mono truncate text-muted underline-offset-2 hover:text-accent hover:underline"
+        title={value}
+      >
+        {shortAddress(value, 6)}
+      </a>
+      <CopyButton value={value} label={kind === "contract" ? "contract address" : "address"} />
+    </span>
   );
 }
 
 export function TxLink({ hash }: { hash: string }) {
   return (
-    <a
-      href={`${explorerBase}/tx/${hash}`}
-      target="_blank"
-      rel="noreferrer"
-      className="mono text-muted underline-offset-2 hover:text-accent hover:underline"
-    >
-      {shortAddress(hash, 6)}
-    </a>
+    <span className="inline-flex max-w-full items-center gap-1 align-middle">
+      <a
+        href={`${explorerBase}/tx/${hash}`}
+        target="_blank"
+        rel="noreferrer"
+        className="mono truncate text-muted underline-offset-2 hover:text-accent hover:underline"
+      >
+        {shortAddress(hash, 6)}
+      </a>
+      <CopyButton value={hash} label="transaction hash" />
+    </span>
   );
 }
 

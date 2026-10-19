@@ -8,7 +8,7 @@ import { config } from "@/lib/config";
 import { payflow } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
 import { formatPeriod, fromStroops } from "@/lib/format";
-import { AddressLink, Empty, Notice, Panel, TxLink } from "@/components/ui";
+import { AddressLink, Empty, Notice, Panel, SkeletonPlanCards, TxLink } from "@/components/ui";
 
 export default function SubscribePage() {
   const { address, networkMismatch, signXdr } = useWallet();
@@ -97,7 +97,7 @@ export default function SubscribePage() {
       )}
 
       {plans === null ? (
-        <Empty>Loading plans…</Empty>
+        <SkeletonPlanCards label="Loading plans" />
       ) : active.length === 0 ? (
         <Empty>
           No active plans yet. Publish one from the merchant page to see it here.

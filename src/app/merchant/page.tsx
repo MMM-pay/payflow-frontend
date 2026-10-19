@@ -7,7 +7,7 @@ import { config } from "@/lib/config";
 import { MAX_NAME_LEN, nameByteLength, payflow } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
 import { formatPeriod, formatWhen, fromStroops, toStroops } from "@/lib/format";
-import { AddressLink, Badge, Empty, Notice, Panel, Stat, TxLink } from "@/components/ui";
+import { AddressLink, Badge, Empty, Notice, Panel, SkeletonRows, Stat, TxLink } from "@/components/ui";
 
 const PERIOD_OPTIONS = [
   { label: "Every minute (demo)", value: 60 },
@@ -99,11 +99,20 @@ export default function MerchantPage() {
       <div className="grid gap-4 sm:grid-cols-3">
         <Stat
           label="Collected"
+          loading={summary === null}
           value={summary?.totalCollected ? `${fromStroops(summary.totalCollected)}` : "—"}
           hint="XLM, net of protocol fee"
         />
-        <Stat label="Active mandates" value={summary?.activeMandates ?? "…"} />
-        <Stat label="Charges settled" value={summary?.chargeCount ?? "…"} />
+        <Stat
+          label="Active mandates"
+          loading={summary === null}
+          value={summary?.activeMandates ?? "—"}
+        />
+        <Stat
+          label="Charges settled"
+          loading={summary === null}
+          value={summary?.chargeCount ?? "—"}
+        />
       </div>
 
       {error && <Notice tone="error">{error}</Notice>}
@@ -189,7 +198,7 @@ export default function MerchantPage() {
 
       <Panel title="My plans">
         {plans === null ? (
-          <Empty>Loading…</Empty>
+          <SkeletonRows rows={2} label="Loading plans" />
         ) : plans.length === 0 ? (
           <Empty>No plans yet.</Empty>
         ) : (
@@ -231,7 +240,7 @@ export default function MerchantPage() {
         subtitle="Charging is permissionless — you can settle a due mandate yourself instead of waiting for the keeper."
       >
         {mandates === null ? (
-          <Empty>Loading…</Empty>
+          <SkeletonRows rows={3} label="Loading subscribers" />
         ) : mandates.length === 0 ? (
           <Empty>No subscribers yet.</Empty>
         ) : (

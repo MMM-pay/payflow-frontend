@@ -4,6 +4,23 @@ All notable changes to payflow-frontend. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Upcoming charges calendar.** The account page can download an `.ics` file
+  containing the next charge of every active mandate, with a recurrence bounded
+  by the mandate's charge cap. Works in contract-only mode because the file is
+  generated in the browser from the mandates already on screen.
+- **Copy buttons for addresses and transaction hashes.** Both copy the full
+  value rather than the shortened text, with the result announced through a
+  live region.
+- **Mobile navigation menu.** Below the `md` breakpoint the header links
+  collapse into a menu button with `aria-expanded`, Escape-to-close and focus
+  management.
+- **Skeleton loading states** for plan cards, mandate rows and dashboard stats.
+  The pulse is disabled when the user prefers reduced motion.
+
 ## [0.2.0] - 2026-10-09
 
 Points at the v0.2.0 contract suite on testnet.
