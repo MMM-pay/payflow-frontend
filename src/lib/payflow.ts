@@ -219,6 +219,13 @@ export interface Plan {
   amount: bigint;
   period: bigint;
   active: boolean;
+  /**
+   * Free trial in seconds, 0 meaning none — from payflow-contract#9, which has
+   * not shipped. Optional because a contract built before that change decodes
+   * to a map with no `trial` key, and reporting 0 there would claim a trial
+   * does not exist rather than that we cannot tell.
+   */
+  trial?: bigint;
 }
 
 /** Mirrors MAX_PAGE in the contracts: the most ids one index call returns. */
@@ -243,6 +250,11 @@ export interface Mandate {
    * `mandateStatus` to read it.
    */
   status: string | string[];
+  /**
+   * The trial frozen into the mandate at subscribe time, from
+   * payflow-contract#9. Optional for the same reason as `Plan.trial`.
+   */
+  trial?: bigint;
 }
 
 /**
@@ -265,15 +277,26 @@ export const payflow = {
   createPlan: (
     source: string,
     sign: SignXdr,
-    params: { token: string; amount: bigint; period: number; name: string },
+    params: { token: string; amount: bigint; period: number; name: string; trial?: number },
   ) =>
-    writeContract(config.contracts.planRegistry, "create_plan", source, sign, [
-      arg.address(source),
-      arg.address(params.token),
-      arg.i128(params.amount),
-      arg.u64(params.period),
-      arg.string(params.name),
-    ]),
+    writeContract(
+      config.contracts.planRegistry,
+      "create_plan",
+      source,
+      sign,
+      [
+        arg.address(source),
+        arg.address(params.token),
+        arg.i128(params.amount),
+        arg.u64(params.period),
+        arg.string(params.name),
+        // `trial` is appended only when the caller supplies one. The deployed
+        // contract predates payflow-contract#9 and takes five arguments; adding
+        // a sixth would make every publish fail. Callers pass it only after
+        // `supportsTrials` confirms the contract answers with the field.
+        ...(params.trial === undefined ? [] : [arg.u64(params.trial)]),
+      ],
+    ),
 
   setPlanActive: (
     source: string,
@@ -313,6 +336,15 @@ export const payflow = {
     readContract<Mandate>(config.contracts.subscription, "get_mandate", source, [
       arg.u64(mandateId),
     ]),
+
+  /**
+   * The protocol's current fee, in basis points. Read live rather than hardcoded
+   * so a merchant previewing a fee split sees the rate their subscribers will
+   * actually be charged: the contract freezes `fee_bps` into each mandate at
+   * subscribe time, but an admin can change it between mandates.
+   */
+  feeBps: (source: string) =>
+    readContract<number>(config.contracts.subscription, "fee_bps", source),
 
   // Index getters are paged: at most MAX_PAGE ids per call, oldest first.
   merchantPlanCount: (source: string, merchant: string) =>

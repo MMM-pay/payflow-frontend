@@ -79,6 +79,103 @@ export function formatAmount(
   return `${fromStroops(raw, maxFractionDigits, meta.decimals)} ${meta.symbol}`;
 }
 
+/**
+ * What a form should say about the amount a merchant typed.
+ *
+ * `toStroops` throws, which is the right behaviour for a transaction path and
+ * the wrong one for a live form: a half-typed "1." must read as "keep going",
+ * not as a failure. This returns the reason instead so the field can disable
+ * the submit button and explain itself without a round trip through an
+ * exception.
+ */
+export type AmountCheck =
+  | { ok: true; stroops: bigint }
+  | { ok: false; message: string };
+
+/**
+ * Validate a user-typed amount without throwing.
+ *
+ * Accepts a partially typed number such as "1." — the trailing dot is what a
+ * numeric keypad leaves behind mid-entry — but rejects anything that could not
+ * be read back as a price: signs, exponents, thousands separators, letters.
+ * Zero is rejected because the contract's `InvalidAmount` rejects it too, and a
+ * merchant who discovers that on-chain has paid a fee for nothing.
+ *
+ * `decimals` matches `toStroops`: a SEP-41 token picks its own scale, so a
+ * 6-decimal token must be refused at the 7th place, not the 6th.
+ */
+export function checkAmount(input: string, decimals = DECIMALS): AmountCheck {
+  const places = normalizeDecimals(decimals);
+  const trimmed = input.trim();
+  if (trimmed === "") {
+    return { ok: false, message: "Enter an amount." };
+  }
+  // Accept the separators the user's locale uses ("1,234.5", "1.234,5"),
+  // then apply the strict dot-decimal rules below to the canonical form.
+  // A trailing mark ("1.") canonicalises unchanged, so an unfinished entry
+  // still passes exactly as it did before locale parsing existed.
+  const canonical = canonicalAmount(trimmed);
+  if (canonical === null || !/^\d+(\.\d*)?$/.test(canonical)) {
+    return { ok: false, message: "Enter a positive number, for example 2.5." };
+  }
+  const [whole = "0", frac = ""] = canonical.split(".");
+  if (frac.length > places) {
+    return { ok: false, message: `At most ${places} decimal places.` };
+  }
+  const stroops = BigInt(whole) * 10n ** BigInt(places) + BigInt(frac.padEnd(places, "0") || "0");
+  if (stroops <= 0n) {
+    return { ok: false, message: "Amount must be greater than zero." };
+  }
+  return { ok: true, stroops };
+}
+
+/** Basis points in a percent. Mirrors BPS_DENOMINATOR in the subscription contract. */
+export const BPS_DENOMINATOR = 10_000n;
+
+/** Mirrors MAX_FEE_BPS in the subscription contract: at most 10%. */
+export const MAX_FEE_BPS = 1_000;
+
+export interface FeeSplit {
+  /** What the subscriber is charged, in the token's smallest unit. */
+  gross: bigint;
+  /** The protocol's cut, also debited from the subscriber's vault. */
+  fee: bigint;
+  /** What reaches the merchant. `gross - fee`, exactly as the contract computes it. */
+  net: bigint;
+}
+
+/**
+ * Split an amount the way `charge` does in the subscription contract:
+ * `fee = amount * fee_bps / 10_000` in integer division, then
+ * `merchant_amount = amount - fee`.
+ *
+ * All three are bigint. Multiplying a stroop amount by a percent in floating
+ * point is how a preview ends up promising a tenth of a stroop more than the
+ * contract pays out — and a merchant who reconciles against the chain would see
+ * it on the very first charge.
+ *
+ * The rate is clamped to `[0, MAX_FEE_BPS]`, the range the contract's
+ * `set_fee_bps` accepts. A malformed value from a stale API or a bad read would
+ * otherwise produce a negative payout in a preview that is supposed to
+ * reassure.
+ */
+export function feeSplit(amount: bigint, feeBps: number): FeeSplit {
+  const bps = Number.isFinite(feeBps)
+    ? BigInt(Math.min(MAX_FEE_BPS, Math.max(0, Math.trunc(feeBps))))
+    : 0n;
+  const fee = (amount * bps) / BPS_DENOMINATOR;
+  return { gross: amount, fee, net: amount - fee };
+}
+
+/** A basis-point rate as a readable percentage, e.g. 100 → "1%", 250 → "2.5%". */
+export function formatFeeBps(feeBps: number): string {
+  if (!Number.isFinite(feeBps) || feeBps <= 0) return "0%";
+  const scaled = (feeBps * 100) / 10_000;
+  // Basis points are integers, so the fraction is always exact in decimal.
+  const text = scaled.toFixed(2).replace(/\.?0+$/, "");
+  return `${text}%`;
+}
+
 const PERIODS: Array<[string, number]> = [
   ["minute", 60],
   ["hour", 3_600],
@@ -106,6 +203,37 @@ export function shortAddress(address: string, size = 4): string {
   return `${address.slice(0, size)}…${address.slice(-size)}`;
 }
 
+const MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+/**
+ * A calendar date, e.g. "22 Nov 2026".
+ *
+ * Built from the timestamp's UTC fields with fixed English month names rather
+ * than `toLocaleDateString`. The pages are prerendered on a server that is not
+ * necessarily in the reader's timezone, so a locale-formatted date renders one
+ * way during the build and another after hydration. These pages are static
+ * exports: a mismatch there is a permanent console error, not a transient one.
+ */
+export function formatDate(unixSeconds: number): string {
+  if (!unixSeconds) return "—";
+  const d = new Date(unixSeconds * 1000);
+  const month = MONTHS[d.getUTCMonth()] ?? "";
+  return `${d.getUTCDate()} ${month} ${d.getUTCFullYear()}`;
+}
+
 function relativePhrase(count: number, unit: string, future: boolean): string {
   const text = count === 1 ? `1 ${unit}` : `${count} ${unit}s`;
   return future ? `in ${text}` : `${text} ago`;
@@ -115,9 +243,15 @@ function relativePhrase(count: number, unit: string, future: boolean): string {
  * A timestamp as plain-language relative time: "in 3 days", "2 hours ago".
  * The old "in 3d" form is hard to read at a glance; the exact local time
  * belongs in the tooltip, which `TimeAgo` in `src/components/ui.tsx` renders
- * alongside this. `nowMs` exists so tests can pin the clock.
+ * alongside this.
+ *
+ * `nowMs` is injectable so a caller that already holds its own reference time —
+ * a test, or the trial copy composing several timestamps — cannot have the two
+ * disagree. Without it, asking "is this in the future?" and then asking "how
+ * far?" can straddle a boundary and produce "Free trial ended 3 days ago
+ * (in 2 hours)".
  */
-export function formatWhen(unixSeconds: number, nowMs = Date.now()): string {
+export function formatWhen(unixSeconds: number, nowMs: number = Date.now()): string {
   if (!unixSeconds) return "—";
   const delta = unixSeconds * 1000 - nowMs;
   const abs = Math.abs(delta);
@@ -188,26 +322,23 @@ export function parseAmount(input: string, decimals = DECIMALS): bigint {
 }
 
 /**
- * Restrict what an amount field displays: digits, at most one decimal mark
- * (either character — users type what their keyboard has), and a fraction
- * no longer than the token's decimals. Grouping separators typed before the
- * last mark are kept verbatim so "1,234." stays "1,234." while the user
- * keeps typing. Exported for `AmountInput` and its tests.
+ * Restrict what an amount field displays: digits plus at most one decimal
+ * mark (either character — users type what their keyboard has). Grouping
+ * separators typed before the last mark are kept verbatim so "1,234."
+ * stays "1,234." while the user keeps typing.
+ *
+ * The fraction is deliberately *not* truncated to the token's decimals.
+ * Silently dropping digits changes the amount the user asked for without
+ * saying so; the extra places stay visible and `amountError` explains that
+ * the token cannot represent them. Exported for `AmountInput` and its tests.
  */
-export function normaliseAmountInput(raw: string, decimals = DECIMALS): string {
+export function normaliseAmountInput(raw: string): string {
   const stripped = raw.replace(/[\s\u00a0\u202f]/g, "");
-  const places = normalizeDecimals(decimals);
   const last = Math.max(stripped.lastIndexOf("."), stripped.lastIndexOf(","));
   if (last === -1) return stripped.replace(/\D/g, "");
   const head = stripped.slice(0, last).replace(/[^\d.,]/g, "");
-  // A whole-number token takes no fraction: drop the mark and what follows
-  // rather than joining the digits into a different (larger) number.
-  if (places === 0) return head;
   const mark = stripped[last];
-  const frac = stripped
-    .slice(last + 1)
-    .replace(/\D/g, "")
-    .slice(0, places);
+  const frac = stripped.slice(last + 1).replace(/\D/g, "");
   return frac ? `${head}${mark}${frac}` : `${head}${mark}`;
 }
 

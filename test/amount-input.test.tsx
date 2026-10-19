@@ -67,11 +67,14 @@ describe("AmountInput", () => {
     expect(screen.getByRole("status").textContent).toBe("12345000000");
   });
 
-  it("caps the fraction at the token's decimals", () => {
+  it("keeps over-precision visible so the error can explain it", () => {
+    // Silent truncation would change the amount the user typed. Four decimal
+    // places can only be a fraction, so the value is unambiguous.
     render(<Harness decimals={2} />);
-    type("1,234.567");
+    type("1,234.5678");
     const input = screen.getByLabelText("Amount (XLM)") as HTMLInputElement;
-    expect(input.value).toBe("1,234.56");
+    expect(input.value).toBe("1,234.5678");
+    expect(screen.getByText(/at most 2 decimal places/i)).toBeTruthy();
   });
 
   it("shows an error the moment the value cannot become money", () => {
