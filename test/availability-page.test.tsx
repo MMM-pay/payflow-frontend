@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { PlanPageClient } from "@/app/plans/[id]/PlanPageClient";
 import SubscribePage from "@/app/subscribe/page";
 import type { ApiPlan } from "@/lib/api";
 
 const mocks = vi.hoisted(() => ({ plans: vi.fn(), chain: vi.fn(), subscribe: vi.fn(),
   wallet: { address: "wallet-a" as string | null, networkMismatch: false, signXdr: vi.fn() } }));
-vi.mock("@/lib/api", () => ({ api: { plans: mocks.plans } }));
+vi.mock("@/lib/api", () => ({ api: { plans: mocks.plans, mandatesFor: async () => ({ mandates: [] }) } }));
 vi.mock("@/lib/chain", () => ({ chainPlans: mocks.chain }));
 vi.mock("@/lib/payflow", () => ({ payflow: { subscribe: mocks.subscribe } }));
 vi.mock("@/lib/wallet", () => ({ useWallet: () => mocks.wallet }));
@@ -127,4 +128,30 @@ it("does not sign when the plan expires during simulation", async () => {
   expect(await screen.findByText(/closed to new subscriptions/)).toBeTruthy();
   expect(mocks.wallet.signXdr).not.toHaveBeenCalled();
   vi.restoreAllMocks();
+});
+it.each([
+  { available_until: 1 },
+  { max_subscribers: 1, subscriber_count: 1 },
+])("blocks unavailable plans on the newly added detail route: %j", async (fields) => {
+  mocks.plans.mockResolvedValue({ plans: [plan(fields)] });
+  render(<PlanPageClient planId="1" />);
+  const button = await screen.findByRole("button", { name: "Subscribe" });
+  expect((button as HTMLButtonElement).disabled).toBe(true);
+  expect(button.getAttribute("aria-describedby")).toBe("plan-availability");
+  fireEvent.click(button);
+  expect(mocks.subscribe).not.toHaveBeenCalled();
+});
+it("rechecks seats on the detail route before submission", async () => {
+  mocks.plans.mockResolvedValueOnce({ plans: [plan({ max_subscribers: 1, subscriber_count: 0 })] })
+    .mockResolvedValue({ plans: [plan({ max_subscribers: 1, subscriber_count: 1 })] });
+  render(<PlanPageClient planId="1" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Subscribe" }));
+  await vi.waitFor(() => expect(screen.getAllByText(/This plan is full/).length).toBeGreaterThan(0));
+  expect(mocks.subscribe).not.toHaveBeenCalled();
+});
+it("keeps unlimited detail-route subscriptions working", async () => {
+  mocks.plans.mockResolvedValue({ plans: [plan({ max_subscribers: 0, available_until: 0 })] });
+  render(<PlanPageClient planId="1" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Subscribe" }));
+  await vi.waitFor(() => expect(mocks.subscribe).toHaveBeenCalledTimes(1));
 });
