@@ -6,14 +6,25 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
 import type { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit";
+import { fundWithFriendbot, readNativeAccount, type NativeAccount } from "./account";
 import { config } from "./config";
 import type { SignXdr } from "./payflow";
 
 const STORAGE_KEY = "payflow.wallet";
+
+/** What the app knows about the connected account's native funds. */
+export type AccountState =
+  | { state: "loading" }
+  | { state: "loaded"; account: NativeAccount }
+  /** The account does not exist on the network yet; it needs funding. */
+  | { state: "missing" }
+  /** Horizon could not be reached or answered unusably. */
+  | { state: "error"; message: string };
 
 interface WalletState {
   address: string | null;
@@ -21,8 +32,16 @@ interface WalletState {
   error: string | null;
   networkMismatch: boolean;
   walletNetwork: string | null;
+  /** Native balance and entry count, or why they are not known. */
+  account: AccountState;
+  /** True while a Friendbot request is in flight. */
+  funding: boolean;
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
+  /** Re-reads the native balance. Safe to call after any transaction. */
+  refreshAccount: () => Promise<void>;
+  /** Creates and funds the account with Friendbot. Testnet only. */
+  fund: () => Promise<void>;
   signXdr: SignXdr;
 }
 
@@ -58,11 +77,62 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [walletNetwork, setWalletNetwork] = useState<string | null>(null);
+  const [account, setAccount] = useState<AccountState>({ state: "loading" });
+  const [funding, setFunding] = useState(false);
 
   const networkMismatch = useMemo(
     () => checkNetworkMismatch(walletNetwork),
     [walletNetwork],
   );
+
+  /**
+   * Counts in-flight reads. A wallet can switch accounts mid-load, so a slow
+   * read for the previous address must not overwrite the current one's state.
+   */
+  const readId = useRef(0);
+
+  const loadAccount = useCallback(async (target: string | null) => {
+    const id = (readId.current += 1);
+    if (!target) {
+      setAccount({ state: "loading" });
+      return;
+    }
+    setAccount({ state: "loading" });
+    const result = await readNativeAccount(target);
+    if (id !== readId.current) return; // superseded by a newer read
+    setAccount(
+      result.state === "found"
+        ? { state: "loaded", account: result.account }
+        : result.state === "missing"
+          ? { state: "missing" }
+          : { state: "error", message: result.message },
+    );
+  }, []);
+
+  useEffect(() => {
+    void loadAccount(address);
+  }, [address, loadAccount]);
+
+  /** Re-read the native balance. Called after any transaction changes it. */
+  const refreshAccount = useCallback(
+    () => loadAccount(address),
+    [address, loadAccount],
+  );
+
+  const fund = useCallback(async () => {
+    if (!address) return;
+    setFunding(true);
+    try {
+      await fundWithFriendbot(address);
+      // Friendbot creates the account, so the balance must be re-read: the
+      // first read may have raced ahead of the new ledger entry.
+      await refreshAccount();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not fund this account.");
+    } finally {
+      setFunding(false);
+    }
+  }, [address, refreshAccount]);
 
   // Restore the previous session without prompting the user again.
   useEffect(() => {
@@ -154,8 +224,34 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo<WalletState>(
-    () => ({ address, connecting, error, networkMismatch, walletNetwork, connect, disconnect, signXdr }),
-    [address, connecting, error, networkMismatch, walletNetwork, connect, disconnect, signXdr],
+    () => ({
+      address,
+      connecting,
+      error,
+      networkMismatch,
+      walletNetwork,
+      account,
+      funding,
+      connect,
+      disconnect,
+      refreshAccount,
+      fund,
+      signXdr,
+    }),
+    [
+      address,
+      connecting,
+      error,
+      networkMismatch,
+      walletNetwork,
+      account,
+      funding,
+      connect,
+      disconnect,
+      refreshAccount,
+      fund,
+      signXdr,
+    ],
   );
 
   return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>;

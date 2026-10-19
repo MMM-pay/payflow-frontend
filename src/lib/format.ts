@@ -79,6 +79,42 @@ export function formatAmount(
   return `${fromStroops(raw, maxFractionDigits, meta.decimals)} ${meta.symbol}`;
 }
 
+/**
+ * The network's base reserve: 0.5 XLM, in stroops. Each ledger entry an account
+ * holds costs this much, which is what stops an account from being emptied to
+ * zero by its own fees.
+ */
+export const BASE_RESERVE = 5_000_000n;
+
+/**
+ * The balance an account may not go below.
+ *
+ * The network requires `(2 + subentries) * baseReserve`: two entries for the
+ * account itself, then one per trustline, offer, data or contract entry. Below
+ * this the account is deleted and, with it, every mandate it holds.
+ */
+export function minAccountBalance(
+  subentryCount: number,
+  baseReserve: bigint = BASE_RESERVE,
+): bigint {
+  const entries = Number.isFinite(subentryCount) ? Math.max(0, Math.trunc(subentryCount)) : 0;
+  return BigInt(entries + 2) * baseReserve;
+}
+
+/**
+ * What is actually spendable: the balance less the minimum the account must
+ * keep. Never negative — a balance already below the minimum means the account
+ * cannot pay for anything, not that it has a debt.
+ */
+export function spendableBalance(
+  balance: bigint,
+  subentryCount: number,
+  baseReserve: bigint = BASE_RESERVE,
+): bigint {
+  const spendable = balance - minAccountBalance(subentryCount, baseReserve);
+  return spendable > 0n ? spendable : 0n;
+}
+
 const PERIODS: Array<[string, number]> = [
   ["minute", 60],
   ["hour", 3_600],

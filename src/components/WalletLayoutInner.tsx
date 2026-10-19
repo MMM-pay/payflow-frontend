@@ -93,7 +93,9 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
               </nav>
             </div>
 
-            <div className="flex shrink-0 items-center gap-2">
+            {/* min-w-0 rather than shrink-0: the wallet cluster is allowed to
+                wrap on a phone instead of pushing the logo off the screen. */}
+            <div className="flex min-w-0 items-center justify-end gap-2">
               <WalletButton />
               <button
                 ref={toggleRef}

@@ -21,7 +21,7 @@ import {
 } from "@/components/ui";
 
 export default function AccountPage() {
-  const { address, networkMismatch, signXdr } = useWallet();
+  const { address, networkMismatch, refreshAccount, signXdr } = useWallet();
   const [balance, setBalance] = useState<bigint | null>(null);
   const [mandates, setMandates] = useState<ApiMandate[] | null>(null);
   const [amount, setAmount] = useState("");
@@ -68,6 +68,9 @@ export default function AccountPage() {
     try {
       setDone(await fn());
       await load();
+      // Every write here spends the native balance on fees, so the header's
+      // figure is stale the moment the transaction lands.
+      await refreshAccount();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

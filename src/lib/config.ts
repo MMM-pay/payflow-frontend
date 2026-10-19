@@ -12,12 +12,28 @@ function required(name: string, value: string | undefined): string {
   return value;
 }
 
+const networkName = process.env.NEXT_PUBLIC_STELLAR_NETWORK ?? "TESTNET";
+const isTestnetNetwork = networkName.toUpperCase() === "TESTNET";
+
 export const config = {
   rpcUrl:
     process.env.NEXT_PUBLIC_SOROBAN_RPC_URL ?? "https://soroban-testnet.stellar.org",
   networkPassphrase:
     process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015",
-  network: process.env.NEXT_PUBLIC_STELLAR_NETWORK ?? "TESTNET",
+  network: networkName,
+  /**
+   * Horizon serves the connected account's native balance and whether the
+   * account exists on the network at all. Soroban RPC's `getAccount` returns
+   * only the sequence number, so it cannot answer either question.
+   */
+  horizonUrl:
+    process.env.NEXT_PUBLIC_HORIZON_URL ??
+    (isTestnetNetwork ? "https://horizon-testnet.stellar.org" : "https://horizon.stellar.org"),
+  /**
+   * Friendbot is a testnet faucet with no mainnet equivalent, so the button
+   * that calls it is driven off this rather than off a runtime network check.
+   */
+  friendbotUrl: isTestnetNetwork ? "https://friendbot.stellar.org" : null,
   apiUrl: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080",
   /**
    * Source account used for read-only contract simulation before a wallet is
