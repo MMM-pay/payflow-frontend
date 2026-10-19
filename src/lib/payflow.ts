@@ -14,6 +14,139 @@ export const server = new rpc.Server(config.rpcUrl, {
   allowHttp: config.rpcUrl.startsWith("http://"),
 });
 
+/**
+ * Semaphore to limit concurrent contract simulations.
+ * Prevents hammering the RPC endpoint when many reads fire in parallel.
+ */
+class Semaphore {
+  private permits: number;
+  private waiters: Array<() => void> = [];
+
+  constructor(permits: number) {
+    this.permits = permits;
+  }
+
+  async acquire(): Promise<void> {
+    if (this.permits > 0) {
+      this.permits -= 1;
+      return;
+    }
+    return new Promise((resolve) => {
+      this.waiters.push(resolve);
+    });
+  }
+
+  release(): void {
+    this.permits += 1;
+    const next = this.waiters.shift();
+    if (next) {
+      this.permits -= 1;
+      next();
+    }
+  }
+}
+
+/**
+ * Maximum concurrent contract simulations (reads).
+ * Writes are never limited here — they are user-initiated and serialized by the wallet.
+ */
+export const MAX_CONCURRENT_READS = 6;
+
+const readSemaphore = new Semaphore(MAX_CONCURRENT_READS);
+
+/**
+ * Error types that should trigger a retry.
+ * Only applied to reads — writes are never retried.
+ */
+function isRetryableError(error: unknown): boolean {
+  if (error instanceof TypeError && error.message.includes("fetch")) {
+    // Network error (e.g., offline, DNS, CORS)
+    return true;
+  }
+  if (error instanceof Response) {
+    // HTTP error from fetch
+    return error.status === 429 || error.status === 503;
+  }
+  // The stellar-sdk wraps RPC errors; check for rate limit / unavailable in message
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes("429") ||
+    message.includes("503") ||
+    message.toLowerCase().includes("rate limit") ||
+    message.toLowerCase().includes("service unavailable")
+  );
+}
+
+/**
+ * Exponential backoff with jitter.
+ * attempt: 0-based attempt number (0 = first retry)
+ */
+function backoffDelay(attempt: number): number {
+  const baseMs = 250; // 250ms, 500ms, 1000ms...
+  const maxMs = 2000;
+  const exponential = Math.min(baseMs * 2 ** attempt, maxMs);
+  // Full jitter: random value in [0, exponential]
+  return Math.random() * exponential;
+}
+
+/**
+ * Read contract state via simulation with retry on rate limits and transient errors.
+ *
+ * `sourceAddress` only has to be an account that exists on the network — the
+ * simulation never runs an operation against it.
+ *
+ * Retries up to 3 times (4 total attempts) on 429, 503, and network errors.
+ * Never retries writes — callers must use `writeContract` for state changes.
+ */
+export async function readContract<T>(
+  contractId: string,
+  method: string,
+  sourceAddress: string,
+  args: xdr.ScVal[] = [],
+): Promise<T> {
+  let lastError: unknown;
+  const maxAttempts = 4; // 1 initial + 3 retries
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    await readSemaphore.acquire();
+    try {
+      const account = await server.getAccount(sourceAddress);
+      const tx = new TransactionBuilder(account, {
+        fee: BASE_FEE,
+        networkPassphrase: config.networkPassphrase,
+      })
+        .addOperation(new Contract(contractId).call(method, ...args))
+        .setTimeout(30)
+        .build();
+
+      const sim = await server.simulateTransaction(tx);
+
+      if (rpc.Api.isSimulationError(sim)) {
+        throw new Error(decodeContractError(sim.error, method));
+      }
+      if (!("result" in sim) || !sim.result) {
+        throw new Error(`${method}: simulation returned no result`);
+      }
+      return scValToNative(sim.result.retval) as T;
+    } catch (err) {
+      lastError = err;
+      // Release semaphore before checking retry or throwing
+      readSemaphore.release();
+
+      const isLastAttempt = attempt === maxAttempts - 1;
+      if (isLastAttempt || !isRetryableError(err)) {
+        throw err;
+      }
+      // Wait before retrying
+      await new Promise((r) => setTimeout(r, backoffDelay(attempt)));
+      // Loop continues, will re-acquire semaphore
+    }
+  }
+
+  // Should never reach here, but TypeScript needs it
+  throw lastError;
+}
+
 /** Signs a transaction XDR and returns the signed XDR. Supplied by the wallet. */
 export type SignXdr = (xdrString: string) => Promise<string>;
 
@@ -25,38 +158,6 @@ export const arg = {
   bool: (v: boolean): xdr.ScVal => nativeToScVal(v, { type: "bool" }),
   string: (v: string): xdr.ScVal => nativeToScVal(v, { type: "string" }),
 };
-
-/**
- * Read contract state via simulation. Costs nothing and submits nothing.
- *
- * `sourceAddress` only has to be an account that exists on the network — the
- * simulation never runs an operation against it.
- */
-export async function readContract<T>(
-  contractId: string,
-  method: string,
-  sourceAddress: string,
-  args: xdr.ScVal[] = [],
-): Promise<T> {
-  const account = await server.getAccount(sourceAddress);
-  const tx = new TransactionBuilder(account, {
-    fee: BASE_FEE,
-    networkPassphrase: config.networkPassphrase,
-  })
-    .addOperation(new Contract(contractId).call(method, ...args))
-    .setTimeout(30)
-    .build();
-
-  const sim = await server.simulateTransaction(tx);
-
-  if (rpc.Api.isSimulationError(sim)) {
-    throw new Error(decodeContractError(sim.error, method));
-  }
-  if (!("result" in sim) || !sim.result) {
-    throw new Error(`${method}: simulation returned no result`);
-  }
-  return scValToNative(sim.result.retval) as T;
-}
 
 /**
  * Submit a state-changing call.

@@ -13,9 +13,12 @@ import {
   formatVersion,
   getCommitUrl,
   getProtocolContractLinks,
+  buildDebugInfo,
+  formatDebugInfo,
 } from "@/lib/build-info";
 import { config } from "@/lib/config";
 import { useWallet } from "@/lib/wallet";
+import { copyToClipboard } from "@/lib/clipboard";
 
 const NAV = [
   { href: "/", label: "Overview" },
@@ -38,11 +41,35 @@ function isCurrent(pathname: string, href: string): boolean {
  * component so it can keep exporting `metadata`.
  */
 export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
-  const { networkMismatch, walletNetwork } = useWallet();
+  const { networkMismatch, walletNetwork, address } = useWallet();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLElement>(null);
+
+  const walletName = typeof window !== "undefined" ? window.localStorage.getItem("payflow.wallet") : null;
+  let walletDisplayName = "Unknown";
+  if (walletName) {
+    try {
+      const parsed = JSON.parse(walletName);
+      walletDisplayName = parsed.walletId || "Unknown";
+    } catch {
+      walletDisplayName = walletName;
+    }
+  }
+
+  const handleCopyDebugInfo = async () => {
+    const debugInfo = buildDebugInfo(
+      address ? { name: walletDisplayName, address } : null,
+    );
+    const text = formatDebugInfo(debugInfo);
+    const ok = await copyToClipboard(text);
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
 
   // Navigate to a new page: the menu is no longer needed.
   useEffect(() => {
@@ -241,6 +268,27 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
                     <span aria-hidden="true">·</span>
                   </>
                 )}
+                <button
+                  type="button"
+                  onClick={handleCopyDebugInfo}
+                  className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs text-muted border border-edge hover:bg-fg/5 hover:text-fg hover:border-muted transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                  aria-label="Copy debug information for bug reports"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="h-4 w-4"
+                    aria-hidden="true"
+                  >
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                  </svg>
+                  {copied ? "Copied!" : "Copy debug info"}
+                </button>
                 <a
                   href="https://github.com/MMM-pay"
                   target="_blank"
