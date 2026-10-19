@@ -12,6 +12,7 @@ import {
 } from "@/lib/chain";
 import { config } from "@/lib/config";
 import { payflow } from "@/lib/payflow";
+import { mandateStatus } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
 import { formatPeriod, fromStroops, parseAmount } from "@/lib/format";
 import { describeTrialEnd } from "@/lib/trial";
@@ -95,6 +96,57 @@ export default function AccountPage() {
     } finally {
       setBusy(null);
     }
+  }
+
+  async function handleCancelAll() {
+    if (!address) return;
+
+    const allMandates = await chainMandatesOf(address, address);
+    const toCancel = allMandates.filter((m) =>
+      mandateStatus(m.status) === "Active" || mandateStatus(m.status) === "Paused",
+    );
+
+    if (toCancel.length === 0) {
+      setError("No active or paused mandates to cancel.");
+      return;
+    }
+
+    if (!window.confirm(`This will cancel ${toCancel.length} mandate${toCancel.length !== 1 ? "s" : ""}. Continue?`)) {
+      return;
+    }
+
+    setBusy("cancel-all");
+    setError(null);
+    setDone(null);
+
+    const PAGE_SIZE = 50;
+    let completed = 0;
+    let failed = 0;
+
+    for (let i = 0; i < toCancel.length; i += PAGE_SIZE) {
+      const page = toCancel.slice(i, i + PAGE_SIZE);
+      const promises = page.map((m) =>
+        payflow.cancel(address, signXdr, m.id).then(() => {
+          completed += 1;
+        }).catch((err) => {
+          failed += 1;
+          setError(
+            err instanceof Error ? err.message : String(err),
+          );
+        }),
+      );
+      await Promise.all(promises);
+    }
+
+    const result = completed
+      ? `Cancelled ${completed} mandate${completed !== 1 ? "s" : ""}${
+          failed > 0 ? ` (${failed} failed)` : ""
+        }`
+      : "No mandates were cancelled";
+
+    setDone(result);
+    await load();
+    setBusy(null);
   }
 
   const activeCount = mandates?.filter((m) => m.status === "Active").length ?? 0;
@@ -283,6 +335,16 @@ export default function AccountPage() {
           <Empty>No subscriptions yet.</Empty>
         ) : (
           <div className="space-y-3">
+            <div className="flex gap-2 mt-3">
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={busy !== null || networkMismatch}
+                onClick={handleCancelAll}
+              >
+                {busy !== null || networkMismatch ? "Cancelling…" : "Cancel all"}
+              </button>
+            </div>
             {mandates.map((m) => {
               const terminal = m.status === "Cancelled" || m.status === "Completed";
               const meta = metaFor(metas, m.token ?? config.contracts.token);
