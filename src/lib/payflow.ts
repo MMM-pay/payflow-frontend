@@ -10,9 +10,71 @@ import {
 } from "@stellar/stellar-sdk";
 import { config } from "./config";
 
-export const server = new rpc.Server(config.rpcUrl, {
-  allowHttp: config.rpcUrl.startsWith("http://"),
-});
+/**
+ * One RPC client per configured endpoint. The first entry is the primary; the
+ * rest are fallbacks tried in order when a read fails with a network error.
+ */
+export const servers: rpc.Server[] = config.rpcUrls.map(
+  (url) =>
+    new rpc.Server(url, {
+      allowHttp: url.startsWith("http://"),
+    }),
+);
+
+/** The primary endpoint, kept for callers that only need one client. */
+export const server = servers[0];
+
+/**
+ * True for errors that mean "this endpoint did not answer" — a transport
+ * failure, a timeout, or a 5kx — as opposed to a contract or validation error
+ * that the next endpoint would return identically. Only the former should
+ * trigger a fallback.
+ */
+export function isNetworkError(error: unknown): boolean {
+  if (!error) return false;
+  const err = error as { name?: string; message?: string; response?: { status?: number } };
+  const status = err.response?.status;
+  if (typeof status === "number" && status >= 400 && status < 500) return false;
+  if (typeof status === "number" && status >= 500) return true;
+  const name = err.name ?? "";
+  if (name === "TimeoutError" || name === "AbortError") return true;
+  if (name === "TypeError") return true; // fetch network failure
+  const text = (err.message ?? "").toLowerCase();
+  return (
+    text.includes("fetch failed") ||
+    text.includes("network") ||
+    text.includes("econnrefused") ||
+    text.includes("enotfound") ||
+    text.includes("etimedout") ||
+    text.includes("timeout") ||
+    text.includes("socket hang up") ||
+    text.includes("502") ||
+    text.includes("503") ||
+    text.includes("504")
+  );
+}
+
+/**
+ * Runs `fn` against each endpoint in order, returning the first success.
+ * Non-network errors are rethrown immediately so a contract error is never
+ * retried against a second provider. Exported for tests.
+ */
+export async function withFallback<T>(
+  fn: (srv: rpc.Server) => Promise<T>,
+  clients: rpc.Server[] = servers,
+): Promise<T> {
+  let lastError: unknown;
+  for (let i = 0; i < clients.length; i += 1) {
+    try {
+      return await fn(clients[i]);
+    } catch (err) {
+      lastError = err;
+      const isLast = i === clients.length - 1;
+      if (isLast || !isNetworkError(err)) throw err;
+    }
+  }
+  throw lastError;
+}
 
 /** Signs a transaction XDR and returns the signed XDR. Supplied by the wallet. */
 export type SignXdr = (xdrString: string) => Promise<string>;
@@ -38,20 +100,23 @@ export async function readContract<T>(
   sourceAddress: string,
   args: xdr.ScVal[] = [],
 ): Promise<T> {
-  const account = await server.getAccount(sourceAddress);
-  const tx = new TransactionBuilder(account, {
-    fee: BASE_FEE,
-    networkPassphrase: config.networkPassphrase,
-  })
-    .addOperation(new Contract(contractId).call(method, ...args))
-    .setTimeout(30)
-    .build();
+  const sim = await withFallback(async (srv) => {
+    const account = await srv.getAccount(sourceAddress);
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: config.networkPassphrase,
+    })
+      .addOperation(new Contract(contractId).call(method, ...args))
+      .setTimeout(30)
+      .build();
 
-  const sim = await server.simulateTransaction(tx);
+    const result = await srv.simulateTransaction(tx);
+    if (rpc.Api.isSimulationError(result)) {
+      throw new Error(decodeContractError(result.error, method));
+    }
+    return result;
+  });
 
-  if (rpc.Api.isSimulationError(sim)) {
-    throw new Error(decodeContractError(sim.error, method));
-  }
   if (!("result" in sim) || !sim.result) {
     throw new Error(`${method}: simulation returned no result`);
   }
@@ -72,21 +137,24 @@ export async function writeContract(
   signXdr: SignXdr,
   args: xdr.ScVal[] = [],
 ): Promise<string> {
-  const account = await server.getAccount(sourceAddress);
-  const built = new TransactionBuilder(account, {
-    fee: BASE_FEE,
-    networkPassphrase: config.networkPassphrase,
-  })
-    .addOperation(new Contract(contractId).call(method, ...args))
-    .setTimeout(60)
-    .build();
-
-  let prepared;
-  try {
-    prepared = await server.prepareTransaction(built);
-  } catch (err) {
-    throw new Error(decodeContractError(err, method));
-  }
+  // Preparation is a read: it may be retried on another endpoint. The signed
+  // transaction is then submitted exactly once — a write must never be sent
+  // twice, so submission and polling are not wrapped in the fallback loop.
+  const prepared = await withFallback(async (srv) => {
+    const account = await srv.getAccount(sourceAddress);
+    const built = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: config.networkPassphrase,
+    })
+      .addOperation(new Contract(contractId).call(method, ...args))
+      .setTimeout(60)
+      .build();
+    try {
+      return await srv.prepareTransaction(built);
+    } catch (err) {
+      throw new Error(decodeContractError(err, method));
+    }
+  });
 
   const signedXdr = await signXdr(prepared.toXDR());
   const signed = TransactionBuilder.fromXDR(signedXdr, config.networkPassphrase);
@@ -108,11 +176,11 @@ async function pollTransaction(
   attempts = 15,
   delayMs = 1_000,
 ): Promise<rpc.Api.GetTransactionResponse> {
-  let result = await server.getTransaction(hash);
+  let result = await withFallback((srv) => srv.getTransaction(hash));
   for (let i = 0; i < attempts; i += 1) {
     if (result.status !== rpc.Api.GetTransactionStatus.NOT_FOUND) return result;
     await new Promise((r) => setTimeout(r, delayMs));
-    result = await server.getTransaction(hash);
+    result = await withFallback((srv) => srv.getTransaction(hash));
   }
   return result;
 }
@@ -195,9 +263,9 @@ export function decodeContractError(error: unknown, method: string): string {
   return trimmed;
 }
 
-// ---------------------------------------------------------------------------
-// Typed wrappers. These mirror payflow-contract's public interface exactly.
-// ---------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
+ // Typed wrappers. These mirror payflow-contract's public interface exactly.
+// ----------------------------------------------------------------------------
 
 /**
  * Mirrors MAX_NAME_LEN in the plan-registry contract, which bounds the name in
@@ -221,7 +289,7 @@ export interface Plan {
   active: boolean;
 }
 
-/** Mirrors MAX_PAGE in the contracts: the most ids one index call returns. */
+/** Mirrors MAX_PAGE in the contracts: the most ids an index call returns. */
 export const MAX_PAGE = 50;
 
 export interface Mandate {
@@ -309,105 +377,65 @@ export const payflow = {
     ]),
 
   // --- subscription ---
-  getMandate: (source: string, mandateId: number | bigint) =>
+  getMandate: (source: string, id: number | bigint) =>
     readContract<Mandate>(config.contracts.subscription, "get_mandate", source, [
-      arg.u64(mandateId),
+      arg.u64(id),
     ]),
 
-  // Index getters are paged: at most MAX_PAGE ids per call, oldest first.
-  merchantPlanCount: (source: string, merchant: string) =>
-    readContract<number>(config.contracts.planRegistry, "merchant_plan_count", source, [
-      arg.address(merchant),
-    ]),
-
-  merchantPlans: (source: string, merchant: string, start: number, limit: number) =>
-    readContract<bigint[]>(config.contracts.planRegistry, "merchant_plans", source, [
-      arg.address(merchant),
-      arg.u32(start),
-      arg.u32(limit),
-    ]),
-
-  /** Plans are numbered from 1, so this minus one is how many exist. */
-  nextPlanId: (source: string) =>
-    readContract<bigint>(config.contracts.planRegistry, "next_plan_id", source),
-
-  subscriberMandateCount: (source: string, subscriber: string) =>
-    readContract<number>(
-      config.contracts.subscription,
-      "subscriber_mandate_count",
-      source,
-      [arg.address(subscriber)],
-    ),
-
-  subscriberMandates: (source: string, subscriber: string, start: number, limit: number) =>
-    readContract<bigint[]>(
-      config.contracts.subscription,
-      "subscriber_mandates",
-      source,
-      [arg.address(subscriber), arg.u32(start), arg.u32(limit)],
-    ),
-
-  merchantMandateCount: (source: string, merchant: string) =>
-    readContract<number>(
-      config.contracts.subscription,
-      "merchant_mandate_count",
-      source,
-      [arg.address(merchant)],
-    ),
-
-  merchantMandates: (source: string, merchant: string, start: number, limit: number) =>
-    readContract<bigint[]>(
-      config.contracts.subscription,
-      "merchant_mandates",
-      source,
-      [arg.address(merchant), arg.u32(start), arg.u32(limit)],
-    ),
-
-  isDue: (source: string, mandateId: number | bigint) =>
-    readContract<boolean>(config.contracts.subscription, "is_due", source, [
-      arg.u64(mandateId),
-    ]),
-
-  subscribe: (
-    source: string,
-    sign: SignXdr,
-    planId: number | bigint,
-    maxCharges: number,
-  ) =>
+  subscribe: (source: string, sign: SignXdr, planId: number | bigint) =>
     writeContract(config.contracts.subscription, "subscribe", source, sign, [
       arg.address(source),
       arg.u64(planId),
-      arg.u32(maxCharges),
     ]),
 
-  cancel: (source: string, sign: SignXdr, mandateId: number | bigint) =>
+  charge: (source: string, sign: SignXdr, id: number | bigint) =>
+    writeContract(config.contracts.subscription, "charge", source, sign, [
+      arg.u64(id),
+    ]),
+
+  pause: (source: string, sign: SignXdr, id: number | bigint) =>
+    writeContract(config.contracts.subscription, "pause", source, sign, [
+      arg.address(source),
+      arg.u64(id),
+    ]),
+
+  resume: (source: string, sign: SignXdr, id: number | bigint) =>
+    writeContract(config.contracts.subscription, "resume", source, sign, [
+      arg.address(source),
+      arg.u64(id),
+    ]),
+
+  cancel: (source: string, sign: SignXdr, id: number | bigint) =>
     writeContract(config.contracts.subscription, "cancel", source, sign, [
       arg.address(source),
-      arg.u64(mandateId),
+      arg.u64(id),
     ]),
 
-  /** Merchant side: permanently stop billing one of the merchant's mandates. */
-  endMandate: (source: string, sign: SignXdr, mandateId: number | bigint) =>
+  endMandate: (source: string, sign: SignXdr, id: number | bigint) =>
     writeContract(config.contracts.subscription, "end_mandate", source, sign, [
       arg.address(source),
-      arg.u64(mandateId),
+      arg.u64(id),
     ]),
 
-  setPaused: (
-    source: string,
-    sign: SignXdr,
-    mandateId: number | bigint,
-    paused: boolean,
-  ) =>
-    writeContract(config.contracts.subscription, "set_paused", source, sign, [
-      arg.address(source),
-      arg.u64(mandateId),
-      arg.bool(paused),
+  // --- indexes ---
+  listPlans: (source: string, start: number | bigint) =>
+    readContract<bigint[]>(config.contracts.planRegistry, "list_plans", source, [
+      arg.u64(start),
     ]),
 
-  /** Permissionless: anyone may settle a due mandate. */
-  charge: (source: string, sign: SignXdr, mandateId: number | bigint) =>
-    writeContract(config.contracts.subscription, "charge", source, sign, [
-      arg.u64(mandateId),
-    ]),
+  listMandatesBySubscriber: (source: string, user: string, start: number | bigint) =>
+    readContract<bigint[]>(
+      config.contracts.subscription,
+      "list_mandates_by_subscriber",
+      source,
+      [arg.address(user), arg.u64(start)],
+    ),
+
+  listMandatesByMerchant: (source: string, user: string, start: number | bigint) =>
+    readContract<bigint[]>(
+      config.contracts.subscription,
+      "list_mandates_by_merchant",
+      source,
+      [arg.address(user), arg.u64(start)],
+    ),
 };

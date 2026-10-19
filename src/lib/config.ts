@@ -12,9 +12,42 @@ function required(name: string, value: string | undefined): string {
   return value;
 }
 
+const DEFAULT_RPC_URL = "https://soroban-testnet.stellar.org";
+
+/**
+ * Parse a comma-separated list of REC URLs into a trimmed, deduped,
+ * non-empty array. Falls back to the single URL and then to the public
+ * testnet endpoint so the app always has at least one endpoint.
+ */
+export function parseRpcUrls(list: string | undefined, fallback?: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of (list ?? "").split(",")) {
+    const url = raw.trim();
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    out.push(url);
+  }
+  if (out.length === 0) {
+    out.push(fallback ?? DEFAULT_RPC_URL);
+  }
+  return out;
+}
+
+const rpcUrls = parseRpcUrls(
+  process.env.NEXT_PUBLIC_SOROBAN_RPC_URLS,
+  process.env.NEXT_PUBLIC_SOROBAN_RPC_URL ?? DEFAULT_RPC_URL,
+);
+
 export const config = {
-  rpcUrl:
-    process.env.NEXT_PUBLIC_SOROBAN_RPC_URL ?? "https://soroban-testnet.stellar.org",
+  /**
+   * Primary REC endpoint. Kept for backward compatibility; prefer
+   * `config.rpcUrls` for fallback-aware code.
+   */
+  rpcUrl: rpcUrls[0],
+  /** Ordered list of RPC endpoints to try in turn. */
+  rpcUrls:
+    rpcUrls as readonly string[],
   networkPassphrase:
     process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015",
   network: process.env.NEXT_PUBLIC_STELLAR_NETWORK ?? "TESTNET",
