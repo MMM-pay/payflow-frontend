@@ -18,6 +18,12 @@ export interface ApiPlan {
    * "this source cannot say", which is not the same as 0 — see `supportsTrials`.
    */
   trial?: number;
+  /** Proposed #26 Unix-seconds cutoff; 0 is forever, absent is unsupported. */
+  available_until?: number;
+  /** Proposed #25 cap; 0 is unlimited, absent is unsupported. */
+  max_subscribers?: number;
+  /** Open mandates (including paused), not lifetime subscriptions. */
+  subscriber_count?: number;
 }
 
 export interface ApiMandate {

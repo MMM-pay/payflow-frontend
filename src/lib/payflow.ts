@@ -226,6 +226,10 @@ export interface Plan {
    * does not exist rather than that we cannot tell.
    */
   trial?: bigint;
+  /** Proposed payflow-contract#26; absent on older deployments. */
+  available_until?: bigint;
+  /** Proposed payflow-contract#25; 0 means unlimited. */
+  max_subscribers?: number;
 }
 
 /** Mirrors MAX_PAGE in the contracts: the most ids one index call returns. */
@@ -268,6 +272,10 @@ export function mandateStatus(raw: unknown): string {
 }
 
 export const payflow = {
+  // Proposed read interface for #25's open-mandate counter. Callers must
+  // tolerate missing support until the contract ships this getter.
+  planSubscriberCount: (source: string, planId: number | bigint) =>
+    readContract<number>(config.contracts.subscription, "plan_subscriber_count", source, [arg.u64(planId)]),
   // --- plan registry ---
   getPlan: (source: string, planId: number | bigint) =>
     readContract<Plan>(config.contracts.planRegistry, "get_plan", source, [

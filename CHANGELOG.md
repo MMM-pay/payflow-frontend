@@ -15,6 +15,15 @@ All notable changes to payflow-frontend. The format follows
 
 ### Added
 
+- Subscribe cards show optional availability cutoffs and remaining seats, and
+  reject expired/full plans before signing. Unlimited/legacy plans stay unchanged.
+  Built against payflow-contract#26 (`available_until`, Unix seconds; 0 forever)
+  and #25 (`max_subscribers`, 0 unlimited). Proposed integration: the indexer
+  projects `subscriber_count` (open mandates, including paused); the subscription
+  contract exposes `plan_subscriber_count(plan_id: u64) -> u32`. Those dependencies
+  remain unshipped: absent fields hide the display, and unavailable counts are
+  explained without inventing seats. Confirm the getter/projection when #25 lands.
+
 - **Free trials on plans.** A "N-day free trial" badge on plan cards, the date a
   subscriber's trial ends on the account page, and a trial length in the
   subscribe confirmation. Built against the interface proposed in
