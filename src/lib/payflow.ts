@@ -287,6 +287,13 @@ export interface Plan {
   amount: bigint;
   period: bigint;
   active: boolean;
+  /**
+   * Free trial in seconds, 0 meaning none — from payflow-contract#9, which has
+   * not shipped. Optional because a contract built before that change decodes
+   * to a map with no `trial` key, and reporting 0 there would claim a trial
+   * does not exist rather than that we cannot tell.
+   */
+  trial?: bigint;
 }
 
 /** Mirrors MAX_PAGE in the contracts: the most ids an index call returns. */
@@ -311,6 +318,11 @@ export interface Mandate {
    * `mandateStatus` to read it.
    */
   status: string | string[];
+  /**
+   * The trial frozen into the mandate at subscribe time, from
+   * payflow-contract#9. Optional for the same reason as `Plan.trial`.
+   */
+  trial?: bigint;
 }
 
 /**
@@ -333,15 +345,26 @@ export const payflow = {
   createPlan: (
     source: string,
     sign: SignXdr,
-    params: { token: string; amount: bigint; period: number; name: string },
+    params: { token: string; amount: bigint; period: number; name: string; trial?: number },
   ) =>
-    writeContract(config.contracts.planRegistry, "create_plan", source, sign, [
-      arg.address(source),
-      arg.address(params.token),
-      arg.i128(params.amount),
-      arg.u64(params.period),
-      arg.string(params.name),
-    ]),
+    writeContract(
+      config.contracts.planRegistry,
+      "create_plan",
+      source,
+      sign,
+      [
+        arg.address(source),
+        arg.address(params.token),
+        arg.i128(params.amount),
+        arg.u64(params.period),
+        arg.string(params.name),
+        // `trial` is appended only when the caller supplies one. The deployed
+        // contract predates payflow-contract#9 and takes five arguments; adding
+        // a sixth would make every publish fail. Callers pass it only after
+        // `supportsTrials` confirms the contract answers with the field.
+        ...(params.trial === undefined ? [] : [arg.u64(params.trial)]),
+      ],
+    ),
 
   setPlanActive: (
     source: string,
@@ -382,7 +405,75 @@ export const payflow = {
       arg.u64(id),
     ]),
 
-  subscribe: (source: string, sign: SignXdr, planId: number | bigint) =>
+  /**
+   * The protocol's current fee, in basis points. Read live rather than hardcoded
+   * so a merchant previewing a fee split sees the rate their subscribers will
+   * actually be charged: the contract freezes `fee_bps` into each mandate at
+   * subscribe time, but an admin can change it between mandates.
+   */
+  feeBps: (source: string) =>
+    readContract<number>(config.contracts.subscription, "fee_bps", source),
+
+  // Index getters are paged: at most MAX_PAGE ids per call, oldest first.
+  merchantPlanCount: (source: string, merchant: string) =>
+    readContract<number>(config.contracts.planRegistry, "merchant_plan_count", source, [
+      arg.address(merchant),
+    ]),
+
+  merchantPlans: (source: string, merchant: string, start: number, limit: number) =>
+    readContract<bigint[]>(config.contracts.planRegistry, "merchant_plans", source, [
+      arg.address(merchant),
+      arg.u32(start),
+      arg.u32(limit),
+    ]),
+
+  /** Plans are numbered from 1, so this minus one is how many exist. */
+  nextPlanId: (source: string) =>
+    readContract<bigint>(config.contracts.planRegistry, "next_plan_id", source),
+
+  subscriberMandateCount: (source: string, subscriber: string) =>
+    readContract<number>(
+      config.contracts.subscription,
+      "subscriber_mandate_count",
+      source,
+      [arg.address(subscriber)],
+    ),
+
+  subscriberMandates: (source: string, subscriber: string, start: number, limit: number) =>
+    readContract<bigint[]>(
+      config.contracts.subscription,
+      "subscriber_mandates",
+      source,
+      [arg.address(subscriber), arg.u32(start), arg.u32(limit)],
+    ),
+
+  merchantMandateCount: (source: string, merchant: string) =>
+    readContract<number>(
+      config.contracts.subscription,
+      "merchant_mandate_count",
+      source,
+      [arg.address(merchant)],
+    ),
+
+  merchantMandates: (source: string, merchant: string, start: number, limit: number) =>
+    readContract<bigint[]>(
+      config.contracts.subscription,
+      "merchant_mandates",
+      source,
+      [arg.address(merchant), arg.u32(start), arg.u32(limit)],
+    ),
+
+  isDue: (source: string, mandateId: number | bigint) =>
+    readContract<boolean>(config.contracts.subscription, "is_due", source, [
+      arg.u64(mandateId),
+    ]),
+
+  subscribe: (
+    source: string,
+    sign: SignXdr,
+    planId: number | bigint,
+    maxCharges: number,
+  ) =>
     writeContract(config.contracts.subscription, "subscribe", source, sign, [
       arg.address(source),
       arg.u64(planId),

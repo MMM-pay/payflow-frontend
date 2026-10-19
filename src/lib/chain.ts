@@ -27,6 +27,10 @@ function planToApi(plan: Plan): ApiPlan {
     period: Number(plan.period),
     active: plan.active ? 1 : 0,
     ledger: 0,
+    // Left undefined, not 0, when the decoded Plan has no `trial` key: a
+    // contract built before payflow-contract#9 cannot say whether the plan has
+    // a trial, and 0 would claim it does not.
+    ...(plan.trial !== undefined ? { trial: Number(plan.trial) } : {}),
   };
 }
 
@@ -45,8 +49,12 @@ export function mandateToApi(mandate: Mandate): ApiMandate {
     max_charges: mandate.max_charges,
     fee_bps: mandate.fee_bps,
     status: mandateStatus(mandate.status),
+    token: mandate.token,
     // Contract state does not record who cancelled; only the indexer knows.
     ended_by: null,
+    // Only present once payflow-contract#9 mirrors `trial` onto the mandate;
+    // see `ApiPlan.trial` for why this stays undefined rather than 0.
+    ...(mandate.trial !== undefined ? { trial: Number(mandate.trial) } : {}),
   };
 }
 

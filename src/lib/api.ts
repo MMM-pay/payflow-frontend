@@ -10,6 +10,14 @@ export interface ApiPlan {
   period: number;
   active: number;
   ledger: number;
+  /**
+   * Free trial in seconds, 0 meaning none.
+   *
+   * Optional on purpose: payflow-contract#9 has not shipped, so neither the
+   * deployed `Plan` nor the indexer's rows carry it yet. `undefined` means
+   * "this source cannot say", which is not the same as 0 — see `supportsTrials`.
+   */
+  trial?: number;
 }
 
 export interface ApiMandate {
@@ -26,8 +34,21 @@ export interface ApiMandate {
   /** Fee rate frozen at subscribe time; an admin change cannot move it. */
   fee_bps: number;
   status: string;
+  /**
+   * Token the amount is denominated in. Only the contract fallback fills this
+   * in; the indexer does not serve it, so callers must fall back to the
+   * configured token when it is absent.
+   */
+  token?: string;
   /** Who cancelled the mandate: "subscriber", "merchant", or null. */
   ended_by?: string | null;
+  /**
+   * The plan's trial in seconds, frozen into the mandate at subscribe time and
+   * projected by the indexer from the `Subscribed` event payflow-contract#9
+   * adds. Optional for the same reason as `ApiPlan.trial`: absent means the
+   * source cannot say, which is not the same as zero.
+   */
+  trial?: number;
 }
 
 export interface ApiCharge {

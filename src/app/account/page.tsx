@@ -8,6 +8,8 @@ import { config } from "@/lib/config";
 import { payflow } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
 import { formatPeriod, formatWhen, fromStroops, toStroops } from "@/lib/format";
+import { describeTrialEnd } from "@/lib/trial";
+import { metaFor, useTokenMetas } from "@/lib/token";
 import {
   AddressLink,
   Badge,
@@ -27,6 +29,14 @@ export default function AccountPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+
+  // The vault holds the configured token; each mandate carries the token it
+  // was opened against, which the indexer does not report.
+  const metas = useTokenMetas([
+    config.contracts.token,
+    ...(mandates ?? []).map((m) => m.token ?? config.contracts.token),
+  ]);
+  const vaultMeta = metaFor(metas, config.contracts.token);
 
   const load = useCallback(async () => {
     if (!address) return;
@@ -106,7 +116,7 @@ export default function AccountPage() {
         <Stat
           label="Vault balance"
           loading={balance === null}
-          value={`${fromStroops(balance ?? 0n)} XLM`}
+          value={`${fromStroops(balance ?? 0n, 4, vaultMeta.decimals)} ${vaultMeta.symbol}`}
           hint="Available to be charged"
         />
         <Stat
@@ -130,7 +140,7 @@ export default function AccountPage() {
         <div className="flex flex-wrap items-end gap-3">
           <div className="min-w-[12rem] flex-1">
             <label className="label" htmlFor="amount">
-              Amount (XLM)
+              Amount ({vaultMeta.symbol})
             </label>
             <input
               id="amount"
@@ -147,7 +157,12 @@ export default function AccountPage() {
             disabled={busy !== null || networkMismatch}
             onClick={() =>
               void run("deposit", () =>
-                payflow.deposit(address, signXdr, config.contracts.token, toStroops(amount)),
+                payflow.deposit(
+                  address,
+                  signXdr,
+                  config.contracts.token,
+                  toStroops(amount, vaultMeta.decimals),
+                ),
               )
             }
           >
@@ -159,7 +174,12 @@ export default function AccountPage() {
             disabled={busy !== null || networkMismatch}
             onClick={() =>
               void run("withdraw", () =>
-                payflow.withdraw(address, signXdr, config.contracts.token, toStroops(amount)),
+                payflow.withdraw(
+                  address,
+                  signXdr,
+                  config.contracts.token,
+                  toStroops(amount, vaultMeta.decimals),
+                ),
               )
             }
           >
@@ -195,6 +215,8 @@ export default function AccountPage() {
           <div className="space-y-3">
             {mandates.map((m) => {
               const terminal = m.status === "Cancelled" || m.status === "Completed";
+              const meta = metaFor(metas, m.token ?? config.contracts.token);
+              const trial = describeTrialEnd(m);
               return (
                 <div key={m.id} className="rounded-lg border border-edge p-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -202,13 +224,18 @@ export default function AccountPage() {
                       <div className="flex items-center gap-2">
                         <span className="font-medium">Mandate #{m.id}</span>
                         <Badge status={m.status} />
+                        {trial && (
+                          <span className="rounded-full bg-accent/15 px-2 py-0.5 text-xs font-medium text-accent">
+                            Free trial
+                          </span>
+                        )}
                         {m.ended_by === "merchant" && (
                           <span className="text-xs text-muted">ended by the merchant</span>
                         )}
                       </div>
                       <div className="mt-1 text-sm text-muted">
-                        {fromStroops(m.amount)} XLM {formatPeriod(m.period)} · to{" "}
-                        <AddressLink value={m.merchant} />
+                        {fromStroops(m.amount, 4, meta.decimals)} {meta.symbol}{" "}
+                        {formatPeriod(m.period)} · to <AddressLink value={m.merchant} />
                       </div>
                       <div className="mt-1 text-xs text-muted">
                         {m.charges_made} charge{m.charges_made === 1 ? "" : "s"} taken
@@ -216,6 +243,11 @@ export default function AccountPage() {
                         {" · next "}
                         {m.status === "Active" ? formatWhen(m.next_charge) : "—"}
                       </div>
+                      {trial && (
+                        <div className="mt-1 text-xs text-accent">
+                          {trial}. Cancel before then and you pay nothing.
+                        </div>
+                      )}
                     </div>
 
                     {!terminal && (

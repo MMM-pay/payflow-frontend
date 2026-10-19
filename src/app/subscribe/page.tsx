@@ -8,6 +8,8 @@ import { config } from "@/lib/config";
 import { payflow } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
 import { formatPeriod, fromStroops } from "@/lib/format";
+import { formatTrialLength, trialBadge, trialSeconds } from "@/lib/trial";
+import { metaFor, useTokenMetas } from "@/lib/token";
 import { AddressLink, Empty, Notice, Panel, SkeletonPlanCards, TxLink } from "@/components/ui";
 
 export default function SubscribePage() {
@@ -18,6 +20,13 @@ export default function SubscribePage() {
   const [direct, setDirect] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  // The plan just subscribed to, so the confirmation can say when the trial it
+  // advertised actually ends. The mandate id is not returned by `subscribe`, so
+  // this is the only place the trial length is known at signing time.
+  const [doneTrial, setDoneTrial] = useState<{ plan: string; seconds: number } | null>(null);
+
+  // Each plan can name a different token, so the cards read their own.
+  const metas = useTokenMetas((plans ?? []).map((p) => p.token));
 
   const load = useCallback(async () => {
     const res = await api.plans();
@@ -60,6 +69,11 @@ export default function SubscribePage() {
       }
       const hash = await payflow.subscribe(address, signXdr, plan.id, limit);
       setDone(hash);
+      setDoneTrial(
+        trialSeconds(plan) > 0
+          ? { plan: plan.name || `Plan #${plan.id}`, seconds: trialSeconds(plan) }
+          : null,
+      );
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -93,6 +107,14 @@ export default function SubscribePage() {
       {done && (
         <Notice tone="ok">
           Subscribed. Transaction <TxLink hash={done} />
+          {doneTrial && (
+            <>
+              {" "}
+              {doneTrial.plan} has a {formatTrialLength(doneTrial.seconds)} free trial, so your
+              first charge is due {formatTrialLength(doneTrial.seconds)} from now — nothing is
+              taken before then, and cancelling before then costs nothing.
+            </>
+          )}
         </Notice>
       )}
 
@@ -104,15 +126,31 @@ export default function SubscribePage() {
         </Empty>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">
-          {active.map((plan) => (
+          {active.map((plan) => {
+            const meta = metaFor(metas, plan.token);
+            const badge = trialBadge(plan);
+            return (
             <Panel key={plan.id} title={plan.name || `Plan #${plan.id}`}>
               <div className="space-y-3">
                 <div>
                   <div className="text-2xl font-semibold tabular-nums">
-                    {fromStroops(plan.amount)}{" "}
-                    <span className="text-sm font-normal text-muted">XLM</span>
+                    {fromStroops(plan.amount, 4, meta.decimals)}{" "}
+                    <span className="text-sm font-normal text-muted">{meta.symbol}</span>
                   </div>
-                  <div className="text-sm text-muted">{formatPeriod(plan.period)}</div>
+                  <div className="flex flex-wrap items-center gap-2 text-sm text-muted">
+                    <span>{formatPeriod(plan.period)}</span>
+                    {badge && (
+                      <span className="rounded-full bg-accent/15 px-2 py-0.5 text-xs font-medium text-accent">
+                        {badge}
+                      </span>
+                    )}
+                  </div>
+                  {badge && (
+                    <p className="mt-1 text-xs text-muted">
+                      Nothing is charged for {formatTrialLength(trialSeconds(plan))}. You can
+                      cancel any time before the first charge and pay nothing.
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex items-center justify-between text-sm">
@@ -146,7 +184,8 @@ export default function SubscribePage() {
                 </button>
               </div>
             </Panel>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
