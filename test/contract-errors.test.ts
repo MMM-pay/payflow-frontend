@@ -91,6 +91,39 @@ describe("plan name validation", () => {
   });
 });
 
+describe("every known contract error code", () => {
+  // Mirrors ERRORS and CALLEE_ERRORS in src/lib/payflow.ts. A code that is
+  // added to the contract but missed here reaches the UI as
+  // "Error(Contract, #N)", so keep this table in sync with that map.
+  const cases: Array<[method: string, code: number, message: string]> = [
+    // plan_registry
+    ["create_plan", 3, "That plan does not exist."],
+    ["set_plan_active", 4, "You do not own that plan."],
+    ["create_plan", 5, "Amount must be greater than zero."],
+    ["create_plan", 6, "Billing period must be at least 60 seconds."],
+    ["create_plan", 7, "That plan name is too long."],
+    // vault
+    ["deposit", 3, "Amount must be greater than zero."],
+    ["withdraw", 4, "Not enough balance in your vault."],
+    ["deposit", 5, "The vault is not wired to a subscription contract yet."],
+    // subscription
+    ["cancel", 3, "That subscription does not exist."],
+    ["cancel", 4, "You are not the subscriber on this mandate."],
+    ["charge", 5, "This subscription is not active."],
+    ["charge", 6, "This subscription is not due yet."],
+    ["subscribe", 7, "That plan is no longer accepting subscribers."],
+    ["charge", 9, "This subscription has reached its charge limit."],
+    ["end_mandate", 11, "Only the merchant on this subscription can end it."],
+    // callee codes raised through a cross-contract call
+    ["charge", 4, "The subscriber's vault does not hold enough to cover this charge."],
+    ["subscribe", 3, "That plan does not exist."],
+  ];
+
+  it.each(cases)("%s maps code #%i to a readable message", (method, code, message) => {
+    expect(decodeContractError(err(code), method)).toBe(message);
+  });
+});
+
 describe("nameByteLength", () => {
   it("counts ASCII as one byte per character", () => {
     expect(nameByteLength("Pro Monthly")).toBe(11);
