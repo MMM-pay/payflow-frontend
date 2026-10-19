@@ -64,3 +64,7 @@ jobs:
           NEXT_PUBLIC_SUBSCRIPTION_ID: CD5YZUJU6WLFIHGAV4J2BV42GCVZE5ZGDUGSW5CBRIA47TQHSZZW3XMM
           NEXT_PUBLIC_TOKEN_ID: CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC
           NEXT_PUBLIC_API_URL: http://localhost:8080
+      # Fails the build when any exported route's first-load JS exceeds its
+      # budget in js-budget.json, so a heavy module cannot quietly rejoin the
+      # static import graph (the Stellar SDK and wallet kit must load on demand).
+      - run: npm run budget

@@ -12,7 +12,7 @@ import {
 } from "react";
 import type { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit";
 import { config } from "./config";
-import type { SignXdr } from "./payflow";
+import type { SignXdr } from "./payflow-core";
 
 export const STORAGE_KEY = "payflow.wallet";
 export const ACCOUNT_CHANGED_ERROR =

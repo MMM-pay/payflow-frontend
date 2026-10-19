@@ -11,7 +11,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "budget": "node scripts/check-js-budget.mjs"
   },
   "dependencies": {
     "@creit.tech/stellar-wallets-kit": "^1.7.0",

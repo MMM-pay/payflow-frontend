@@ -7,10 +7,12 @@ import { api, type ApiMandate, type ApiPlan } from "@/lib/api";
 import { chainMandatesFor, chainPlans, planChargeRow, type PlanCharge } from "@/lib/chain";
 import { planAvailability } from "@/lib/availability";
 import { config } from "@/lib/config";
-import { payflow } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
 import { formatPeriod, fromStroops } from "@/lib/format";
 import { AddressLink, Badge, Empty, Notice, Panel, TxLink } from "@/components/ui";
+
+/** The SDK-backed contract module loads on demand, keeping first-load JS small. */
+const loadPayflow = () => import("@/lib/payflow");
 
 type ChargeRow = PlanCharge;
 
@@ -150,6 +152,7 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
         if (reason) throw new Error(reason);
       };
       check();
+      const { payflow } = await loadPayflow();
       const hash = await payflow.subscribe(address, async (xdr) => {
         check();
         return signXdr(xdr);

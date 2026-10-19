@@ -5,13 +5,15 @@ import Link from "next/link";
 import { api, type ApiPlan } from "@/lib/api";
 import { chainPlans } from "@/lib/chain";
 import { config } from "@/lib/config";
-import { payflow } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
 import { formatDate, formatWhen, formatPeriod, fromStroops } from "@/lib/format";
 import { formatTrialLength, trialBadge, trialSeconds } from "@/lib/trial";
 import { planAvailability } from "@/lib/availability";
 import { metaFor, useTokenMetas } from "@/lib/token";
 import { Empty, MerchantAccount, Notice, Panel, SkeletonPlanCards, TxLink } from "@/components/ui";
+
+/** The SDK-backed contract module loads on demand, keeping first-load JS small. */
+const loadPayflow = () => import("@/lib/payflow");
 
 export default function SubscribePage() {
   const { address, networkMismatch, signXdr } = useWallet();
@@ -93,6 +95,7 @@ export default function SubscribePage() {
       if (!latest || latest.active !== 1) throw new Error("This plan is no longer available.");
       const reason = planAvailability(latest).reason;
       if (reason) throw new Error(reason);
+      const { payflow } = await loadPayflow();
       const hash = await payflow.subscribe(address, async (xdr) => {
         if (walletState.current.address !== address || walletState.current.networkMismatch) {
           throw new Error("Wallet changed. Check your wallet and try again.");

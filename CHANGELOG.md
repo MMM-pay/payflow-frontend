@@ -46,6 +46,18 @@ All notable changes to payflow-frontend. The format follows
 - **Skeleton loading states** for plan cards, mandate rows and dashboard stats.
   The pulse is disabled when the user prefers reduced motion.
 
+### Changed
+
+- **Wallet pages ship about half the first-load JS they used to.** The Stellar
+  SDK (~570 kB raw) now loads on demand — the first chunk that talks to the
+  chain arrives after first paint instead of before it. Next's own report:
+  `/account` 238 → 121 kB, `/m` 239 → 122 kB, `/subscribe` 240 → 123 kB,
+  `/merchant` 244 → 127 kB, `/plans/*` 239 → 122 kB. The wallet kit was already
+  loaded on first connect. Session restore, contract-only mode and every
+  write path are unchanged; only when the code arrives moved. A new CI step
+  (`npm run budget`) fails any build where a route's first-load JS grows past
+  the budget in `js-budget.json`.
+
 ## [0.2.0] - 2026-10-09
 
 Points at the v0.2.0 contract suite on testnet.

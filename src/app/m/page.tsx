@@ -6,7 +6,6 @@ import { useSearchParams } from "next/navigation";
 import { api, type ApiPlan } from "@/lib/api";
 import { chainPlansOf, merchantFromParam } from "@/lib/chain";
 import { config } from "@/lib/config";
-import { payflow } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
 import { formatPeriod, fromStroops } from "@/lib/format";
 import { metaFor, useTokenMetas } from "@/lib/token";
@@ -19,6 +18,9 @@ import {
   SkeletonPlanCards,
   TxLink,
 } from "@/components/ui";
+
+/** The SDK-backed contract module loads on demand, keeping first-load JS small. */
+const loadPayflow = () => import("@/lib/payflow");
 
 /**
  * The public catalogue a merchant can link to: `/m/?address=G…` lists that
@@ -101,6 +103,7 @@ function MerchantCatalogue() {
       if (!Number.isInteger(limit) || limit < 0) {
         throw new Error("Charge limit must be a whole number, or 0 for open-ended.");
       }
+      const { payflow } = await loadPayflow();
       const hash = await payflow.subscribe(address, signXdr, plan.id, limit);
       setDone(hash);
       await load();

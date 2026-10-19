@@ -11,7 +11,6 @@ import {
   vaultEventTone,
 } from "@/lib/chain";
 import { config } from "@/lib/config";
-import { payflow } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
 import { formatPeriod, fromStroops, parseAmount } from "@/lib/format";
 import { describeTrialEnd } from "@/lib/trial";
@@ -28,6 +27,14 @@ import {
   TimeAgo,
   TxLink,
 } from "@/components/ui";
+
+/**
+ * The SDK-backed contract module loads on demand. Keeping it out of the
+ * static import graph is what holds this route's first-load JS down: the SDK
+ * is only needed once the wallet talks to the chain, which happens after the
+ * first paint.
+ */
+const loadPayflow = () => import("@/lib/payflow");
 
 export default function AccountPage() {
   const { address, networkMismatch, signXdr } = useWallet();
@@ -50,6 +57,7 @@ export default function AccountPage() {
 
   const load = useCallback(async () => {
     if (!address) return;
+    const { payflow } = await loadPayflow();
     const [bal, res, hist] = await Promise.allSettled([
       payflow.vaultBalance(address, address, config.contracts.token),
       api.mandatesOf(address),
@@ -176,14 +184,15 @@ export default function AccountPage() {
             className="btn-primary"
             disabled={busy !== null || networkMismatch}
             onClick={() =>
-              void run("deposit", () =>
-                payflow.deposit(
+              void run("deposit", async () => {
+                const { payflow } = await loadPayflow();
+                return payflow.deposit(
                   address,
                   signXdr,
                   config.contracts.token,
                   parseAmount(amount, vaultMeta.decimals),
-                ),
-              )
+                );
+              })
             }
           >
             {busy === "deposit" ? "Depositing…" : "Deposit"}
@@ -193,14 +202,15 @@ export default function AccountPage() {
             className="btn-ghost"
             disabled={busy !== null || networkMismatch}
             onClick={() =>
-              void run("withdraw", () =>
-                payflow.withdraw(
+              void run("withdraw", async () => {
+                const { payflow } = await loadPayflow();
+                return payflow.withdraw(
                   address,
                   signXdr,
                   config.contracts.token,
                   parseAmount(amount, vaultMeta.decimals),
-                ),
-              )
+                );
+              })
             }
           >
             {busy === "withdraw" ? "Withdrawing…" : "Withdraw"}
@@ -327,14 +337,15 @@ export default function AccountPage() {
                           className="btn-ghost"
                           disabled={busy !== null || networkMismatch}
                           onClick={() =>
-                            void run(`pause-${m.id}`, () =>
-                              payflow.setPaused(
+                            void run(`pause-${m.id}`, async () => {
+                              const { payflow } = await loadPayflow();
+                              return payflow.setPaused(
                                 address,
                                 signXdr,
                                 m.id,
                                 m.status === "Active",
-                              ),
-                            )
+                              );
+                            })
                           }
                         >
                           {m.status === "Active" ? "Pause" : "Resume"}
@@ -344,9 +355,10 @@ export default function AccountPage() {
                           className="btn-ghost text-rose-300"
                           disabled={busy !== null || networkMismatch}
                           onClick={() =>
-                            void run(`cancel-${m.id}`, () =>
-                              payflow.cancel(address, signXdr, m.id),
-                            )
+                            void run(`cancel-${m.id}`, async () => {
+                              const { payflow } = await loadPayflow();
+                              return payflow.cancel(address, signXdr, m.id);
+                            })
                           }
                         >
                           Cancel

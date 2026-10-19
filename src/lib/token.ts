@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { config } from "./config";
-import { readContract } from "./payflow";
 import { XLM, type TokenMeta } from "./format";
 
 /**
@@ -51,6 +50,9 @@ export async function loadTokenMeta(
 
   let meta: TokenMeta;
   try {
+    // Loaded on demand: the SDK-backed contract module must stay out of the
+    // first-load bundle, and this runs after paint anyway.
+    const { readContract } = await import("./payflow");
     // Settled rather than all: a token that answers only one of the two still
     // gets that half right instead of losing both.
     const [symbol, decimals] = await Promise.allSettled([

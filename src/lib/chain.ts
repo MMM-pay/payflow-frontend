@@ -1,5 +1,5 @@
-import { StrKey } from "@stellar/stellar-sdk";
-import { MAX_PAGE, mandateStatus, payflow, type Mandate, type Plan } from "./payflow";
+import { StrKey } from "@stellar/stellar-sdk/base";
+import { MAX_PAGE, mandateStatus, type Mandate, type Plan } from "./payflow-core";
 import type { ApiCharge, ApiMandate, ApiPlan, ApiVaultEvent, MerchantSummary } from "./api";
 import { availabilityInteger } from "./availability";
 import { fromStroops } from "./format";
@@ -40,6 +40,7 @@ function planToApi(plan: Plan): ApiPlan {
 }
 
 async function planWithAvailability(source: string, plan: Plan): Promise<ApiPlan> {
+  const { payflow } = await import("./payflow");
   const result = planToApi(plan);
   if (result.max_subscribers) {
     try {
@@ -112,6 +113,7 @@ async function newestIds(
  * the newest few. Bounded deliberately: an unbounded read would hammer RPC.
  */
 export async function chainPlans(source: string): Promise<ApiPlan[]> {
+  const { payflow } = await import("./payflow");
   const next = Number(await payflow.nextPlanId(source));
   const newest = Math.min(MAX_PLAN_PROBE, Math.max(0, next - 1));
   const ids = Array.from({ length: newest }, (_, i) => next - 1 - i);
@@ -120,6 +122,7 @@ export async function chainPlans(source: string): Promise<ApiPlan[]> {
 }
 
 export async function chainPlansOf(source: string, merchant: string): Promise<ApiPlan[]> {
+  const { payflow } = await import("./payflow");
   const count = await payflow.merchantPlanCount(source, merchant);
   const ids = await newestIds(count, (s, l) => payflow.merchantPlans(source, merchant, s, l));
   const plans = await settledValues(ids.map((id) => payflow.getPlan(source, id)));
@@ -130,6 +133,7 @@ export async function chainMandatesOf(
   source: string,
   subscriber: string,
 ): Promise<ApiMandate[]> {
+  const { payflow } = await import("./payflow");
   const count = await payflow.subscriberMandateCount(source, subscriber);
   const ids = await newestIds(count, (s, l) =>
     payflow.subscriberMandates(source, subscriber, s, l),
@@ -142,6 +146,7 @@ export async function chainMandatesFor(
   source: string,
   merchant: string,
 ): Promise<ApiMandate[]> {
+  const { payflow } = await import("./payflow");
   const count = await payflow.merchantMandateCount(source, merchant);
   const ids = await newestIds(count, (s, l) => payflow.merchantMandates(source, merchant, s, l));
   const mandates = await settledValues(ids.map((id) => payflow.getMandate(source, id)));

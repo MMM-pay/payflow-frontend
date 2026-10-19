@@ -8,7 +8,7 @@ import { buildCsv, downloadCsv, exportFilename, type ChargeRow } from "@/lib/csv
 import { fillBuckets, parseRevenue, type BucketSize, type RevenuePoint } from "@/lib/revenue";
 import { chainMandatesFor, chainMerchantSummary, chainPlansOf, endable, mandateFunding } from "@/lib/chain";
 import { config } from "@/lib/config";
-import { MAX_NAME_LEN, nameByteLength, payflow, server } from "@/lib/payflow";
+import { MAX_NAME_LEN, nameByteLength } from "@/lib/payflow-core";
 import { useWallet } from "@/lib/wallet";
 import {
   checkAmount,
@@ -36,6 +36,13 @@ const PERIOD_OPTIONS = [
 
 /** How far back the revenue chart looks, in days. */
 const REVENUE_WINDOW_DAYS = 90;
+
+/**
+ * The SDK-backed contract module loads on demand. Keeping it out of the static
+ * import graph is what holds this route's first-load JS down: the SDK is only
+ * needed once the wallet talks to the chain, which happens after first paint.
+ */
+const loadPayflow = () => import("@/lib/payflow");
 
 /**
  * "subscriber pays X, you receive Y after the Z% fee".
@@ -149,6 +156,7 @@ export default function MerchantPage() {
     // Read each subscriber's vault balance in parallel so the dashboard can
     // flag mandates that will fail. Individual reads may fail without breaking
     // the whole list.
+    const { payflow } = await loadPayflow();
     const subscribers = [...new Set(rows.map((m) => m.subscriber))];
     const settled = await Promise.allSettled(
       subscribers.map((sub) => payflow.vaultBalance(address, sub, config.contracts.token)),
@@ -180,8 +188,8 @@ export default function MerchantPage() {
   useEffect(() => {
     if (!address) return;
     let live = true;
-    void payflow
-      .feeBps(address)
+    void loadPayflow()
+      .then(({ payflow }) => payflow.feeBps(address))
       .then((bps) => {
         if (live && Number.isFinite(bps)) setFeeBps(bps);
       })
@@ -247,6 +255,7 @@ export default function MerchantPage() {
         if (dateCache.has(txHash)) return dateCache.get(txHash)!;
         let date = "—";
         try {
+          const { server } = await loadPayflow();
           const tx = await server.getTransaction(txHash);
           // Only successful/failed transactions carry a creation timestamp.
           if ("createdAt" in tx) {
@@ -458,8 +467,9 @@ export default function MerchantPage() {
               // `toStroops` rejects, so re-parsing here would throw on a
               // click the form had just said was fine.
               if (!priceCheck.ok) return;
-              void run("create", () =>
-                payflow.createPlan(address, signXdr, {
+              void run("create", async () => {
+                const { payflow } = await loadPayflow();
+                return payflow.createPlan(address, signXdr, {
                   token: config.contracts.token,
                   amount: priceCheck.stroops,
                   period,
@@ -468,8 +478,8 @@ export default function MerchantPage() {
                   // contract's create_plan takes five arguments and a sixth
                   // would fail every publish.
                   ...(trialSupported ? { trial } : {}),
-                }),
-              );
+                });
+              });
             }}
           >
             {busy === "create" ? "Publishing…" : "Publish plan"}
@@ -536,9 +546,10 @@ export default function MerchantPage() {
                     className="btn-ghost"
                     disabled={busy !== null || networkMismatch}
                     onClick={() =>
-                      void run(`toggle-${p.id}`, () =>
-                        payflow.setPlanActive(address, signXdr, p.id, p.active !== 1),
-                      )
+                      void run(`toggle-${p.id}`, async () => {
+                        const { payflow } = await loadPayflow();
+                        return payflow.setPlanActive(address, signXdr, p.id, p.active !== 1);
+                      })
                     }
                   >
                     {p.active ? "Deactivate" : "Activate"}
@@ -616,9 +627,10 @@ export default function MerchantPage() {
                           className="btn-primary"
                           disabled={busy !== null || networkMismatch || short}
                           onClick={() =>
-                            void run(`charge-${m.id}`, () =>
-                              payflow.charge(address, signXdr, m.id),
-                            )
+                            void run(`charge-${m.id}`, async () => {
+                              const { payflow } = await loadPayflow();
+                              return payflow.charge(address, signXdr, m.id);
+                            })
                           }
                         >
                           {busy === `charge-${m.id}` ? "Charging…" : short ? "Short on funds" : "Charge now"}
@@ -646,9 +658,10 @@ export default function MerchantPage() {
                             className="btn-danger"
                             disabled={busy !== null || networkMismatch}
                             onClick={() =>
-                              void run(`end-${m.id}`, () =>
-                                payflow.endMandate(address, signXdr, m.id),
-                              ).then(() => setConfirmEnd(null))
+                              void run(`end-${m.id}`, async () => {
+                                const { payflow } = await loadPayflow();
+                                return payflow.endMandate(address, signXdr, m.id);
+                              }).then(() => setConfirmEnd(null))
                             }
                           >
                             {busy === `end-${m.id}` ? "Ending…" : "Confirm: end for good"}

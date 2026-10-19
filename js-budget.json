@@ -1,0 +1,12 @@
+{
+  "//": "First-load JS budgets in kB (gzip), enforced by scripts/check-js-budget.mjs over out/**/index.html. Measured after deferring the Stellar SDK and the wallet kit to on-demand chunks: / 153, /account 164, /m 162, /merchant 167, /plans/* 162, /subscribe 163. Budgets keep roughly 10% headroom; growth is only ever accepted deliberately, in the PR that causes it.",
+  "default": 165,
+  "routes": {
+    "/": 165,
+    "/account": 175,
+    "/m": 175,
+    "/merchant": 180,
+    "/subscribe": 175,
+    "/plans": 175
+  }
+}
