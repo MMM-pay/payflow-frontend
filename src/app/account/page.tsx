@@ -11,6 +11,11 @@ import {
   vaultEventTone,
 } from "@/lib/chain";
 import { config } from "@/lib/config";
+import {
+  discountBadge,
+  nextChargeAmount,
+  remainingDiscountCharges,
+} from "@/lib/discount";
 import { payflow } from "@/lib/payflow";
 import { mandateStatus } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
@@ -366,6 +371,10 @@ export default function AccountPage() {
               const terminal = m.status === "Cancelled" || m.status === "Completed";
               const meta = metaFor(metas, m.token ?? config.contracts.token);
               const trial = describeTrialEnd(m);
+              // What the next charge costs while the merchant's discount runs.
+              const discounted = nextChargeAmount(m);
+              const badge = discountBadge(m);
+              const remaining = remainingDiscountCharges(m);
               // Both of these read from data the page already has, so the
               // timeline works in contract-only mode: the mandates may come
               // from chain state and the balance from a vault read.
@@ -384,7 +393,7 @@ export default function AccountPage() {
                 <div key={m.id} className="rounded-lg border border-edge p-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="font-medium">Mandate #{m.id}</span>
                         <Badge status={m.status} />
                         {trial && (
@@ -392,14 +401,51 @@ export default function AccountPage() {
                             Free trial
                           </span>
                         )}
+                        {badge && (
+                          <span className="rounded-full bg-accent/15 px-2 py-0.5 text-xs font-medium text-accent">
+                            {badge}
+                          </span>
+                        )}
                         {m.ended_by === "merchant" && (
                           <span className="text-xs text-muted">ended by the merchant</span>
                         )}
                       </div>
                       <div className="mt-1 text-sm text-muted">
-                        {fromStroops(m.amount, 4, meta.decimals)} {meta.symbol}{" "}
+                        {discounted !== null ? (
+                          <>
+                            <span className="font-medium text-fg">
+                              {fromStroops(discounted, 4, meta.decimals)} {meta.symbol}
+                            </span>{" "}
+                            <span className="text-xs line-through">
+                              {fromStroops(m.amount, 4, meta.decimals)} {meta.symbol}
+                            </span>{" "}
+                          </>
+                        ) : (
+                          <>
+                            {fromStroops(m.amount, 4, meta.decimals)} {meta.symbol}{" "}
+                          </>
+                        )}
                         {formatPeriod(m.period)} · to <MerchantAccount value={m.merchant} />
                       </div>
+                      {badge && (
+                        <div className="mt-1 text-xs text-accent">
+                          {discounted !== null ? (
+                            <>
+                              You pay {fromStroops(discounted, 4, meta.decimals)}{" "}
+                              {meta.symbol} for the next charge
+                              {remaining === null
+                                ? "."
+                                : remaining === 1
+                                  ? ", then the full price."
+                                  : `, then the full price. ${remaining} discounted charges left.`}
+                            </>
+                          ) : remaining === 0 ? (
+                            <>The discount has run out — you pay the full price now.</>
+                          ) : (
+                            <>The merchant set a discount on this subscription.</>
+                          )}
+                        </div>
+                      )}
                       <div className="mt-1 text-xs text-muted">
                         {m.charges_made} charge{m.charges_made === 1 ? "" : "s"} taken
                         {m.max_charges > 0 && ` of ${m.max_charges}`}

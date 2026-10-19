@@ -24,6 +24,14 @@ All notable changes to payflow-frontend. The format follows
   and a warning when the vault cannot cover the next charge. Built from the
   mandates and vault balance already on the page, so it also works in
   contract-only mode.
+- **Merchant discounts on a mandate.** A merchant can attach a discount to one
+  of their mandates — a percentage and the number of charges it covers — and
+  the subscriber sees the discounted price and how many discounted charges are
+  left. The rate is a whole number of basis points, and the amount is computed
+  in the token's smallest unit, so the price shown is the price charged.
+  Built against the interface proposed in payflow-contract#37 and hidden
+  entirely — including the merchant's control — while the deployed contract
+  cannot carry the field.
 
 - Subscribe cards show optional availability cutoffs and remaining seats, and
   reject expired/full plans before signing. Unlimited/legacy plans stay unchanged.

@@ -1,4 +1,9 @@
 import type { ApiMandate } from "./api";
+import {
+  discountBps,
+  discountedAmount,
+  remainingDiscountCharges,
+} from "./discount";
 
 /**
  * The next few charges a mandate will make.
@@ -16,7 +21,15 @@ export const UPCOMING_CHARGE_LIMIT = 6;
 /** The fields the schedule needs; a full `ApiMandate` satisfies this. */
 export type SchedulableMandate = Pick<
   ApiMandate,
-  "status" | "amount" | "period" | "next_charge" | "charges_made" | "max_charges"
+  | "status"
+  | "amount"
+  | "period"
+  | "next_charge"
+  | "charges_made"
+  | "max_charges"
+  | "discount_bps"
+  | "discount_charges"
+  | "discount_charges_made"
 >;
 
 export interface ScheduledCharge {
@@ -87,13 +100,24 @@ export function buildChargeSchedule(
   }
   if (!Number.isFinite(mandate.period) || mandate.period <= 0) return EMPTY;
 
-  let amount: bigint;
+  let baseAmount: bigint;
   try {
-    amount = BigInt(mandate.amount);
+    baseAmount = BigInt(mandate.amount);
   } catch {
     return EMPTY;
   }
-  if (amount <= 0n) return EMPTY;
+  if (baseAmount <= 0n) return EMPTY;
+
+  // A mandate may carry a merchant discount for its first N charges. When the
+  // source cannot report how many discounted charges are left, keep the full
+  // price rather than inventing a lower one — the same rule `nextChargeAmount`
+  // uses for the summary card.
+  const bps = discountBps(mandate);
+  const discountLeft = remainingDiscountCharges(mandate);
+  const amountFor = (offset: number): bigint =>
+    bps > 0 && discountLeft !== null && offset < discountLeft
+      ? discountedAmount(baseAmount, bps)
+      : baseAmount;
 
   const capped = mandate.max_charges > 0;
   const remaining = capped
@@ -108,6 +132,7 @@ export function buildChargeSchedule(
   const charges: ScheduledCharge[] = [];
   let total = 0n;
   for (let i = 0; i < count; i += 1) {
+    const amount = amountFor(i);
     total += amount;
     charges.push({
       index: i + 1,

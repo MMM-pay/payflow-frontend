@@ -249,6 +249,19 @@ export interface Mandate {
   max_charges: number;
   fee_bps: number;
   /**
+   * The discount the merchant set on this mandate, in basis points.
+   *
+   * Optional on purpose: payflow-contract#37 has not shipped, so a contract
+   * built before it returns a `Mandate` map without these keys. Absent means
+   * "this contract cannot say", which is not the same as "no discount" — see
+   * `supportsDiscounts` in `lib/discount`.
+   */
+  discount_bps?: number;
+  /** How many charges the discount covers. */
+  discount_charges?: number;
+  /** How many of those charges have been settled. */
+  discount_charges_made?: number;
+  /**
    * A `#[contracttype]` enum variant without data is encoded as a vector
    * holding its name, so this decodes as `["Active"]`, not `"Active"`. Use
    * `mandateStatus` to read it.
@@ -440,9 +453,29 @@ export const payflow = {
     paused: boolean,
   ) =>
     writeContract(config.contracts.subscription, "set_paused", source, sign, [
-      arg.address(source),
       arg.u64(mandateId),
       arg.bool(paused),
+    ]),
+
+  /**
+   * Merchant side: attach a discount to one of the merchant's mandates.
+   *
+   * Built against the interface proposed in payflow-contract#37: the
+   * discount is a rate in basis points and covers a number of charges. The
+   * contract charges the discounted amount for those charges and the full
+   * price afterwards; a discount can only lower the price.
+   */
+  setDiscount: (
+    source: string,
+    sign: SignXdr,
+    mandateId: number | bigint,
+    discountBps: number,
+    discountCharges: number,
+  ) =>
+    writeContract(config.contracts.subscription, "set_discount", source, sign, [
+      arg.u64(mandateId),
+      arg.u32(discountBps),
+      arg.u32(discountCharges),
     ]),
 
   /** Permissionless: anyone may settle a due mandate. */

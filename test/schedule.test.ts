@@ -105,6 +105,35 @@ describe("buildChargeSchedule", () => {
   it("honours a caller-supplied horizon", () => {
     expect(buildChargeSchedule(mandate(), 2).charges).toHaveLength(2);
   });
+
+  it("applies a merchant discount to the charges it covers", () => {
+    const schedule = buildChargeSchedule(
+      mandate({
+        discount_bps: 2_000, // 20% off
+        discount_charges: 2,
+        discount_charges_made: 0,
+      }),
+    );
+
+    expect(schedule.charges.map((c) => c.amount)).toEqual([
+      8_000_000n,
+      8_000_000n,
+      10_000_000n,
+      10_000_000n,
+      10_000_000n,
+      10_000_000n,
+    ]);
+    // 2 discounted charges + 4 full-price charges.
+    expect(schedule.total).toBe(56_000_000n);
+  });
+
+  it("keeps the full price when the discount counter is unavailable", () => {
+    const schedule = buildChargeSchedule(
+      mandate({ discount_bps: 2_000, discount_charges: 2 }),
+    );
+
+    expect(schedule.charges.every((c) => c.amount === 10_000_000n)).toBe(true);
+  });
 });
 
 describe("chargeShortfall", () => {

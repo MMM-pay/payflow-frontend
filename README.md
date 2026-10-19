@@ -28,7 +28,7 @@ Four pages:
 | `/` | everyone | Explains the mandate model, shows protocol counters and live contract IDs |
 | `/subscribe` | subscribers | Browse published plans and open a mandate |
 | `/account` | subscribers | Fund and withdraw from the vault, pause or cancel subscriptions |
-| `/merchant` | merchants | Publish plans, track revenue, settle due mandates manually, end a subscriber's mandate |
+| `/merchant` | merchants | Publish plans, track revenue, settle due mandates manually, discount or end a subscriber's mandate |
 
 ## Two data paths, on purpose
 
@@ -101,6 +101,7 @@ src/
     wallet.tsx    Stellar Wallets Kit context
     format.ts     stroop/decimal conversion, period and address formatting
     config.ts     env access
+    discount.ts   per-mandate discounts: rate, remaining charges, price
 ```
 
 `src/lib/payflow.ts` is the piece worth reading first: it maps every public
