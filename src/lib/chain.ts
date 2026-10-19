@@ -32,7 +32,7 @@ function planToApi(plan: Plan): ApiPlan {
     ledger: 0,
     // Left undefined, not 0, when the decoded Plan has no `trial` key: a
     // contract built before payflow-contract#9 cannot say whether the plan has
-    // a trial, and 0 would claim it does not.
+    // a trial, and 0 is would claim it does not.
     ...(plan.trial !== undefined ? { trial: Number(plan.trial) } : {}),
     ...(plan.available_until !== undefined ? { available_until: availabilityInteger(plan.available_until) } : {}),
     ...(plan.max_subscribers !== undefined ? { max_subscribers: availabilityInteger(plan.max_subscribers) } : {}),
@@ -73,6 +73,40 @@ export function mandateToApi(mandate: Mandate): ApiMandate {
     // see `ApiPlan.trial` for why this stays undefined rather than 0.
     ...(mandate.trial !== undefined ? { trial: Number(mandate.trial) } : {}),
   };
+}
+
+/**
+ * Whether the contract exposes `set_max_charges`, so the account page can
+ * show the Edit cap control only when the contract can honour it. Exported for
+ * tests.
+ */
+export function supportsSetMaxCharges(): boolean {
+  return typeof payflow.setMaxCharges === "function";
+}
+
+/**
+ * Validate a new charge cap before signing. Returns the cap as a bigint on
+ * success, or a message explaining why it cannot be used. Amounts stay in
+ * the smallest unit; no floating point is ever involved. Exported for tests.
+ */
+export type CapResult = { ok: true; value: bigint } | { ok: false; error: string };
+
+export function validateMaxCharges(raw: string, chargesMade: number): CapResult {
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    return { ok: false, error: "Enter a whole number of charges." };
+  }
+  const value = BigInt(trimmed);
+  if (value <= 0n) {
+    return { ok: false, error: "The cap must be at least 1." };
+  }
+  if (value < BigInt(chargesMade)) {
+    return {
+      ok: false,
+      error: `The cap cannot be below the ${chargesMade} charges already made.`,
+    };
+  }
+  return { ok: true, value };
 }
 
 async function settledValues<T>(promises: Promise<T>[]): Promise<T[]> {
@@ -202,7 +236,7 @@ export function planChargeRow(charge: ApiCharge, subscriber: string): PlanCharge
   const fee = BigInt(charge.fee);
   return {
     mandateId: charge.mandate_id,
-    subscriber,
+    subscriber: subscriber,
     amount: fromStroops(amount),
     fee: fromStroops(fee),
     net: fromStroops(amount - fee),
@@ -276,5 +310,3 @@ export function vaultEventTone(event: ApiVaultEvent): "ok" | "error" {
 export function sortVaultEventsNewestFirst(events: ApiVaultEvent[]): ApiVaultEvent[] {
   return [...events].sort((a, b) => b.ledger - a.ledger);
 }
-
-

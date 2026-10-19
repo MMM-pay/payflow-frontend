@@ -39,6 +39,9 @@ export default function AccountPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  const [capFor, setCapFor] = useState<number | null>(null);
+  const [capAmount, setCapAmount] = useState("");
+  const [capError, setCapError] = useState<string | null>(null);
 
   // The vault holds the configured token; each mandate carries the token it
   // was opened against, which the indexer does not report.
@@ -121,6 +124,31 @@ export default function AccountPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not build the calendar file.");
     }
+  }
+
+  function openCapEditor(m: ApiMandate) {
+    setCapFor(m.id);
+    setCapAmount(m.max_charges > 0 ? String(m.max_charges) : "");
+    setCapError(null);
+  }
+
+  function submitCap(m: ApiMandate) {
+    const raw = capAmount.trim();
+    if (!/^\d+$/.test(raw)) {
+      setCapError("Enter a whole number of charges.");
+      return;
+    }
+    const next = BigInt(raw);
+    if (next < BigInt(m.charges_made)) {
+      setCapError(`Cap cannot be below the ${m.charges_made} charge${m.charges_made === 1 ? "" : "s"} already taken.`);
+      return;
+    }
+    setCapError(null);
+    void run(`cap-${m.id}`, async () => {
+      const hash = await payflow.setMaxCharges(address, signXdr, m.id, next);
+      setCapFor(null);
+      return hash;
+    });
   }
 
   if (!address) {
@@ -341,6 +369,14 @@ export default function AccountPage() {
                         </button>
                         <button
                           type="button"
+                          className="btn-ghost"
+                          disabled={busy !== null || networkMismatch}
+                          onClick={() => openCapEditor(m)}
+                        >
+                          Edit cap
+                        </button>
+                        <button
+                          type="button"
                           className="btn-ghost text-rose-300"
                           disabled={busy !== null || networkMismatch}
                           onClick={() =>
@@ -354,6 +390,48 @@ export default function AccountPage() {
                       </div>
                     )}
                   </div>
+                  {capFor === m.id && (
+                    <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-edge pt-3">
+                      <div className="min-w-[10rem] flex-1">
+                        <label
+                          htmlFor={`cap-${m.id}`}
+                          className="block text-xs text-muted"
+                        >
+                          Max charges (0 = unlimited)
+                        </label>
+                        <input
+                          id={`cap-${m.id}`}
+                          type="text"
+                          inputMode="numeric"
+                          className="input mt-1 w-full"
+                          value={capAmount}
+                          onChange={(e) => setCapAmount(e.target.value)}
+                          disabled={busy !== null}
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        disabled={busy !== null || networkMismatch}
+                        onClick={() => submitCap(m)}
+                      >
+                        {busy === `cap-${m.id}` ? "Saving…" : "Save cap"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        disabled={busy !== null}
+                        onClick={() => setCapFor(null)}
+                      >
+                        Close
+                      </button>
+                      {capError && (
+                        <p className="w-full text-xs text-rose-300" role="alert">
+                          {capError}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}

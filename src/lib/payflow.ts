@@ -156,6 +156,9 @@ const CALLEE_ERRORS: Record<string, Record<number, string>> = {
   subscribe: {
     3: "That plan does not exist.",
   },
+  set_max_charges: {
+    8: "The new cap cannot be below the number of charges already made.",
+  },
 };
 
 const REGISTRY_METHODS = new Set(["create_plan", "set_plan_active", "get_plan"]);
@@ -443,6 +446,23 @@ export const payflow = {
       arg.address(source),
       arg.u64(mandateId),
       arg.bool(paused),
+    ]),
+
+  /**
+   * Subscriber side: change a mandate's charge cap. The contract rejects a cap
+   * below `charges_made`, so callers should validate against the mandate's
+   * current `charges_made` before submitting.
+   */
+  setMaxCharges: (
+    source: string,
+    sign: SignXdr,
+    mandateId: number | bigint,
+    maxCharges: number,
+  ) =>
+    writeContract(config.contracts.subscription, "set_max_charges", source, sign, [
+      arg.address(source),
+      arg.u64(mandateId),
+      arg.u32(maxCharges),
     ]),
 
   /** Permissionless: anyone may settle a due mandate. */
