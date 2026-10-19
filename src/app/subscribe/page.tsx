@@ -8,6 +8,7 @@ import { config } from "@/lib/config";
 import { payflow } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
 import { formatPeriod, fromStroops } from "@/lib/format";
+import { metaFor, useTokenMetas } from "@/lib/token";
 import { AddressLink, Empty, Notice, Panel, SkeletonPlanCards, TxLink } from "@/components/ui";
 
 export default function SubscribePage() {
@@ -18,6 +19,9 @@ export default function SubscribePage() {
   const [direct, setDirect] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+
+  // Each plan can name a different token, so the cards read their own.
+  const metas = useTokenMetas((plans ?? []).map((p) => p.token));
 
   const load = useCallback(async () => {
     const res = await api.plans();
@@ -104,13 +108,15 @@ export default function SubscribePage() {
         </Empty>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">
-          {active.map((plan) => (
+          {active.map((plan) => {
+            const meta = metaFor(metas, plan.token);
+            return (
             <Panel key={plan.id} title={plan.name || `Plan #${plan.id}`}>
               <div className="space-y-3">
                 <div>
                   <div className="text-2xl font-semibold tabular-nums">
-                    {fromStroops(plan.amount)}{" "}
-                    <span className="text-sm font-normal text-muted">XLM</span>
+                    {fromStroops(plan.amount, 4, meta.decimals)}{" "}
+                    <span className="text-sm font-normal text-muted">{meta.symbol}</span>
                   </div>
                   <div className="text-sm text-muted">{formatPeriod(plan.period)}</div>
                 </div>
@@ -146,7 +152,8 @@ export default function SubscribePage() {
                 </button>
               </div>
             </Panel>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

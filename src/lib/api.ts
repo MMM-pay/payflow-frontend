@@ -26,6 +26,12 @@ export interface ApiMandate {
   /** Fee rate frozen at subscribe time; an admin change cannot move it. */
   fee_bps: number;
   status: string;
+  /**
+   * Token the amount is denominated in. Only the contract fallback fills this
+   * in; the indexer does not serve it, so callers must fall back to the
+   * configured token when it is absent.
+   */
+  token?: string;
   /** Who cancelled the mandate: "subscriber", "merchant", or null. */
   ended_by?: string | null;
 }

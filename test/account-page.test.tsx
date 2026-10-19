@@ -32,6 +32,7 @@ const payflowMock = vi.hoisted(() => ({
   withdraw: vi.fn(),
   setPaused: vi.fn(),
   cancel: vi.fn(),
+  readContract: vi.fn(),
 }));
 
 const chainMock = vi.hoisted(() => ({
@@ -40,8 +41,28 @@ const chainMock = vi.hoisted(() => ({
 
 vi.mock("@/lib/wallet", () => ({ useWallet: () => wallet }));
 vi.mock("@/lib/api", () => ({ api: { mandatesOf: apiMock.mandatesOf } }));
-vi.mock("@/lib/payflow", () => ({ payflow: payflowMock }));
+vi.mock("@/lib/payflow", () => ({ payflow: payflowMock, readContract: payflowMock.readContract }));
 vi.mock("@/lib/chain", () => ({ chainMandatesOf: chainMock.chainMandatesOf }));
+
+// Pinned so the page has a token contract to ask about. Without it the token
+// id is "" in tests and every amount falls back to native XLM.
+vi.mock("@/lib/config", () => ({
+  config: {
+    rpcUrl: "http://localhost:8000/rpc",
+    networkPassphrase: "Test SDF Network ; September 2015",
+    network: "TESTNET",
+    apiUrl: "http://localhost:8080",
+    readSource: "GAP6QFLXQD73URCC3EXU2WOQHIAREPCGMSIMKF5PFLLI5TR6HTMNDTIE",
+    contracts: {
+      planRegistry: "CDQ5EJTVXXX2CBMHWP3BGGUDHSK6D4I25IF5XXH3QGL2TNTBMJUOFKDB",
+      vault: "CBNQEWSYYQOKNX5KB62OFT6ID5TCVSWN4PS4AXAJK6IWUEXOLVN6DXII",
+      subscription: "CD5YZUJU6WLFIHGAV4J2BV42GCVZE5ZGDUGSW5CBRIA47TQHSZZW3XMM",
+      token: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    },
+  },
+  explorerBase: "https://stellar.expert/explorer/testnet",
+  requireContracts: () => {},
+}));
 
 const SUBSCRIBER = "GAP6QFLXQD73URCC3EXU2WOQHIAREPCGMSIMKF5PFLLI5TR6HTMNDTIE";
 const MERCHANT = "GCH5VHWNS24VI75HLDBHK4SSJ2E5XZA5IB6XEZTNE4BJH7AKZI6Z3MHU";
@@ -65,7 +86,7 @@ function mandate(overrides: Partial<ApiMandate> = {}): ApiMandate {
   };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   wallet.address = SUBSCRIBER;
   wallet.connecting = false;
   wallet.error = null;
@@ -77,7 +98,11 @@ beforeEach(() => {
   payflowMock.withdraw.mockReset();
   payflowMock.setPaused.mockReset();
   payflowMock.cancel.mockReset();
+  payflowMock.readContract.mockReset();
   chainMock.chainMandatesOf.mockReset();
+  // The token metadata cache is module-level and outlives a single render.
+  const { clearTokenMetaCache } = await import("@/lib/token");
+  clearTokenMetaCache();
 });
 
 afterEach(cleanup);
@@ -152,5 +177,37 @@ describe("AccountPage", () => {
     expect(deposit.disabled).toBe(true);
     expect(withdraw.disabled).toBe(true);
     expect(pause.disabled).toBe(true);
+  });
+
+  it("labels and scales amounts with the token's own metadata", async () => {
+    // A 6-decimal token: 50_000_000 smallest units is 50, not 5. Reading it as
+    // XLM is the bug this page used to have.
+    payflowMock.readContract.mockImplementation(async (_id: string, method: string) =>
+      method === "symbol" ? "USDC" : 6,
+    );
+    payflowMock.vaultBalance.mockResolvedValue(50_000_000n);
+    apiMock.mandatesOf.mockResolvedValue({ mandates: [mandate()] });
+
+    render(<AccountPage />);
+
+    expect(await screen.findByText("50 USDC")).toBeTruthy();
+    expect(await screen.findByText(/10 USDC per month/)).toBeTruthy();
+    expect(screen.getByLabelText("Amount (USDC)")).toBeTruthy();
+    expect(payflowMock.readContract).toHaveBeenCalledWith(
+      expect.any(String),
+      "decimals",
+      expect.any(String),
+    );
+  });
+
+  it("still shows amounts when the token's metadata cannot be read", async () => {
+    payflowMock.readContract.mockRejectedValue(new Error("host error: missing contract"));
+    payflowMock.vaultBalance.mockResolvedValue(50_000_000n);
+    apiMock.mandatesOf.mockResolvedValue({ mandates: [mandate()] });
+
+    render(<AccountPage />);
+
+    // Degrades to the native assumption rather than blanking the page.
+    expect(await screen.findByText("5 XLM")).toBeTruthy();
   });
 });

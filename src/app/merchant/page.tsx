@@ -7,6 +7,7 @@ import { config } from "@/lib/config";
 import { MAX_NAME_LEN, nameByteLength, payflow } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
 import { formatPeriod, formatWhen, fromStroops, toStroops } from "@/lib/format";
+import { metaFor, useTokenMetas } from "@/lib/token";
 import { AddressLink, Badge, Empty, Notice, Panel, SkeletonRows, Stat, TxLink } from "@/components/ui";
 
 const PERIOD_OPTIONS = [
@@ -34,6 +35,14 @@ export default function MerchantPage() {
   const nameTooLong = nameByteLength(name.trim()) > MAX_NAME_LEN;
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+
+  // Plans are published in the configured token; mandates carry their own.
+  const metas = useTokenMetas([
+    config.contracts.token,
+    ...(plans ?? []).map((p) => p.token),
+    ...(mandates ?? []).map((m) => m.token ?? config.contracts.token),
+  ]);
+  const tokenMeta = metaFor(metas, config.contracts.token);
 
   const load = useCallback(async () => {
     if (!address) return;
@@ -100,8 +109,12 @@ export default function MerchantPage() {
         <Stat
           label="Collected"
           loading={summary === null}
-          value={summary?.totalCollected ? `${fromStroops(summary.totalCollected)}` : "—"}
-          hint="XLM, net of protocol fee"
+          value={
+            summary?.totalCollected
+              ? fromStroops(summary.totalCollected, 4, tokenMeta.decimals)
+              : "—"
+          }
+          hint={`${tokenMeta.symbol}, net of protocol fee`}
         />
         <Stat
           label="Active mandates"
@@ -129,7 +142,7 @@ export default function MerchantPage() {
         <div className="flex flex-wrap items-end gap-3">
           <div className="min-w-[10rem] flex-1">
             <label className="label" htmlFor="price">
-              Price (XLM)
+              Price ({tokenMeta.symbol})
             </label>
             <input
               id="price"
@@ -184,7 +197,7 @@ export default function MerchantPage() {
               void run("create", () =>
                 payflow.createPlan(address, signXdr, {
                   token: config.contracts.token,
-                  amount: toStroops(price),
+                  amount: toStroops(price, tokenMeta.decimals),
                   period,
                   name: name.trim(),
                 }),
@@ -203,34 +216,38 @@ export default function MerchantPage() {
           <Empty>No plans yet.</Empty>
         ) : (
           <div className="space-y-3">
-            {plans.map((p) => (
-              <div
-                key={p.id}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-edge p-4"
-              >
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium">{p.name || `Plan #${p.id}`}</span>
-                    <Badge status={p.active ? "Active" : "Paused"} />
-                  </div>
-                  <div className="mt-1 text-sm text-muted">
-                    {fromStroops(p.amount)} XLM {formatPeriod(p.period)}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  disabled={busy !== null || networkMismatch}
-                  onClick={() =>
-                    void run(`toggle-${p.id}`, () =>
-                      payflow.setPlanActive(address, signXdr, p.id, p.active !== 1),
-                    )
-                  }
+            {plans.map((p) => {
+              const meta = metaFor(metas, p.token);
+              return (
+                <div
+                  key={p.id}
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-edge p-4"
                 >
-                  {p.active ? "Deactivate" : "Activate"}
-                </button>
-              </div>
-            ))}
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{p.name || `Plan #${p.id}`}</span>
+                      <Badge status={p.active ? "Active" : "Paused"} />
+                    </div>
+                    <div className="mt-1 text-sm text-muted">
+                      {fromStroops(p.amount, 4, meta.decimals)} {meta.symbol}{" "}
+                      {formatPeriod(p.period)}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    disabled={busy !== null || networkMismatch}
+                    onClick={() =>
+                      void run(`toggle-${p.id}`, () =>
+                        payflow.setPlanActive(address, signXdr, p.id, p.active !== 1),
+                      )
+                    }
+                  >
+                    {p.active ? "Deactivate" : "Activate"}
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
       </Panel>
@@ -247,6 +264,7 @@ export default function MerchantPage() {
           <div className="space-y-3">
             {mandates.map((m) => {
               const due = m.status === "Active" && m.next_charge * 1000 <= Date.now();
+              const meta = metaFor(metas, m.token ?? config.contracts.token);
               return (
                 <div
                   key={m.id}
@@ -262,8 +280,8 @@ export default function MerchantPage() {
                       )}
                     </div>
                     <div className="mt-1 text-xs text-muted">
-                      {fromStroops(m.amount)} XLM {formatPeriod(m.period)} ·{" "}
-                      {m.charges_made} settled · next{" "}
+                      {fromStroops(m.amount, 4, meta.decimals)} {meta.symbol}{" "}
+                      {formatPeriod(m.period)} · {m.charges_made} settled · next{" "}
                       {m.status === "Active" ? formatWhen(m.next_charge) : "—"}
                     </div>
                   </div>

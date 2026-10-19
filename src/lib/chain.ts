@@ -45,6 +45,7 @@ export function mandateToApi(mandate: Mandate): ApiMandate {
     max_charges: mandate.max_charges,
     fee_bps: mandate.fee_bps,
     status: mandateStatus(mandate.status),
+    token: mandate.token,
     // Contract state does not record who cancelled; only the indexer knows.
     ended_by: null,
   };

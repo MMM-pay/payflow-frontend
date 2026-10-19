@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   DECIMALS,
+  formatAmount,
   formatPeriod,
   formatWhen,
   fromStroops,
   shortAddress,
   toStroops,
+  XLM,
 } from "@/lib/format";
 
 /**
@@ -13,6 +15,9 @@ import {
  * contract through `toStroops`, and every amount read back from chain is shown
  * through `fromStroops`. A rounding or parsing bug here silently misprices a
  * mandate, so the round-trip and the rejection cases are tested explicitly.
+ *
+ * The decimals argument is the token's, not a constant: a SEP-41 token picks
+ * its own, and reading a 6-decimal amount as if it were XLM is off by 10^1.
  */
 
 describe("toStroops", () => {
@@ -51,7 +56,7 @@ describe("toStroops", () => {
 
   it("never loses precision on large amounts", () => {
     // 1 billion XLM — far beyond Number.MAX_SAFE_INTEGER once scaled.
-        const stroops = toStroops("1000000000");
+    const stroops = toStroops("1000000000");
     expect(stroops).toBe(10_000_000_000_000_000n);
     expect(stroops > BigInt(Number.MAX_SAFE_INTEGER)).toBe(true);
   });
@@ -99,6 +104,63 @@ describe("fromStroops", () => {
   it("shows sub-display amounts as 0 rather than empty", () => {
     // One stroop is below 4dp display precision.
     expect(fromStroops("1", 4)).toBe("0");
+  });
+});
+
+describe("token decimals", () => {
+  it("leaves native XLM — 7 decimals — exactly as it was", () => {
+    // Regression guard for issue #30: the default path must not move at all.
+    expect(DECIMALS).toBe(7);
+    expect(fromStroops("1500000")).toBe("0.15");
+    expect(fromStroops("1500000", 4, DECIMALS)).toBe("0.15");
+    expect(toStroops("0.15", DECIMALS)).toBe(1_500_000n);
+    expect(toStroops("0.15")).toBe(1_500_000n);
+    expect(XLM).toEqual({ symbol: "XLM", decimals: 7 });
+  });
+
+  it("formats a 6-decimal token with its own scale", () => {
+    // USDC-style. Read as XLM, 1500000 would show as 0.15 instead of 1.5.
+    expect(fromStroops("1500000", 4, 6)).toBe("1.5");
+    expect(fromStroops("999999", 4, 6)).toBe("0.9999");
+    expect(fromStroops("1", 4, 6)).toBe("0");
+    expect(toStroops("1.5", 6)).toBe(1_500_000n);
+    expect(toStroops("0.000001", 6)).toBe(1n);
+  });
+
+  it("round-trips a 6-decimal token at full precision", () => {
+    for (const amount of ["0", "1", "0.99", "2.5", "1000", "0.000001"]) {
+      expect(fromStroops(toStroops(amount, 6), 6, 6), `round-trip of ${amount}`).toBe(amount);
+    }
+  });
+
+  it("caps input at the token's own precision", () => {
+    // The 7th decimal is real on XLM but unrepresentable on a 6-decimal token.
+    expect(() => toStroops("1.0000001", 6)).toThrow(/at most 6 decimal places/i);
+    expect(() => toStroops("1.0000001", 7)).not.toThrow();
+  });
+
+  it("handles a whole-number token", () => {
+    expect(fromStroops("5", 4, 0)).toBe("5");
+    expect(toStroops("5", 0)).toBe(5n);
+    expect(() => toStroops("5.5", 0)).toThrow(/at most 0 decimal places/i);
+  });
+
+  it("survives an absurd or missing decimals value", () => {
+    // SEP-41 lets a token declare any u32; a bad one must not hang or throw.
+    expect(fromStroops("1500000", 4, 0)).toBe("1500000");
+    expect(fromStroops("1500000", 4, 30)).toBe("0");
+    expect(fromStroops("1500000", 4, -3)).toBe("1500000");
+    expect(fromStroops("1500000", 4, Number.NaN)).toBe("0.15");
+    // 30 clamps to the 18 decimals an i128 amount can carry.
+    expect(toStroops("1", 30)).toBe(10n ** 18n);
+  });
+});
+
+describe("formatAmount", () => {
+  it("labels an amount with its own token", () => {
+    expect(formatAmount("1500000", { symbol: "USDC", decimals: 6 })).toBe("1.5 USDC");
+    expect(formatAmount("1500000")).toBe("0.15 XLM");
+    expect(formatAmount(0n, { symbol: "USDC", decimals: 6 })).toBe("0 USDC");
   });
 });
 
