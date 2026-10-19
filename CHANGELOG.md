@@ -15,6 +15,16 @@ All notable changes to payflow-frontend. The format follows
 
 ### Added
 
+- **Light theme with a system default.** Both palettes are exposed as CSS
+  variables, the page follows `prefers-color-scheme` unless the reader chooses
+  Light or Dark from the header, and the choice is saved in `localStorage`. A
+  pre-paint script applies a stored choice so the wrong theme never flashes.
+- **Upcoming charges timeline on the account page.** Each active mandate shows
+  its next six charges, the running total, the final charge date when capped,
+  and a warning when the vault cannot cover the next charge. Built from the
+  mandates and vault balance already on the page, so it also works in
+  contract-only mode.
+
 - Subscribe cards show optional availability cutoffs and remaining seats, and
   reject expired/full plans before signing. Unlimited/legacy plans stay unchanged.
   Built against payflow-contract#26 (`available_until`, Unix seconds; 0 forever)
@@ -45,6 +55,12 @@ All notable changes to payflow-frontend. The format follows
   management.
 - **Skeleton loading states** for plan cards, mandate rows and dashboard stats.
   The pulse is disabled when the user prefers reduced motion.
+
+### Changed
+
+- **Cancelling a subscription now asks for confirmation.** The account page
+  shows Keep and Confirm after the first Cancel click, matches the merchant's
+  End flow, and allows only one mandate to be confirming at a time.
 
 ## [0.2.0] - 2026-10-09
 
