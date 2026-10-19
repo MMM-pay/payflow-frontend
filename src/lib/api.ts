@@ -55,6 +55,18 @@ export interface ApiMandate {
    * source cannot say, which is not the same as zero.
    */
   trial?: number;
+  /**
+   * The discount the merchant set on this mandate, in basis points, and how
+   * many charges it covers.
+   *
+   * Optional for the same reason: payflow-contract#37 has not shipped, so
+   * neither the deployed contract's `Mandate` nor the indexer's rows carry
+   * them. Absent means the source cannot say — see `supportsDiscounts`.
+   */
+  discount_bps?: number;
+  discount_charges?: number;
+  /** How many of the discounted charges have been settled. */
+  discount_charges_made?: number;
 }
 
 export interface ApiCharge {

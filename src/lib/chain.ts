@@ -72,6 +72,18 @@ export function mandateToApi(mandate: Mandate): ApiMandate {
     // Only present once payflow-contract#9 mirrors `trial` onto the mandate;
     // see `ApiPlan.trial` for why this stays undefined rather than 0.
     ...(mandate.trial !== undefined ? { trial: Number(mandate.trial) } : {}),
+    // Only present once payflow-contract#37 mirrors the discount onto the
+    // mandate; a contract without the fields cannot say, and a zero would
+    // claim there is no discount where there is one.
+    ...(mandate.discount_bps !== undefined
+      ? { discount_bps: Number(mandate.discount_bps) }
+      : {}),
+    ...(mandate.discount_charges !== undefined
+      ? { discount_charges: Number(mandate.discount_charges) }
+      : {}),
+    ...(mandate.discount_charges_made !== undefined
+      ? { discount_charges_made: Number(mandate.discount_charges_made) }
+      : {}),
   };
 }
 

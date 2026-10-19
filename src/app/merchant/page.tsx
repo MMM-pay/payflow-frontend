@@ -8,6 +8,14 @@ import { buildCsv, downloadCsv, exportFilename, type ChargeRow } from "@/lib/csv
 import { fillBuckets, parseRevenue, type BucketSize, type RevenuePoint } from "@/lib/revenue";
 import { chainMandatesFor, chainMerchantSummary, chainPlansOf, endable, mandateFunding } from "@/lib/chain";
 import { config } from "@/lib/config";
+import {
+  checkDiscountBps,
+  checkDiscountCharges,
+  discountedAmount,
+  discountBadge,
+  remainingDiscountCharges,
+  supportsDiscounts,
+} from "@/lib/discount";
 import { MAX_NAME_LEN, nameByteLength, payflow, server } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
 import {
@@ -62,6 +70,110 @@ function FeePreview({
   );
 }
 
+/**
+ * The discount a merchant can attach to one mandate.
+ *
+ * The rate is a percentage the merchant types; it is converted to basis
+ * points in integer arithmetic, and the preview says what the subscriber pays
+ * while the discount runs and what they pay after it. The discount can only
+ * lower the price, so the preview never shows more than the plan's price.
+ */
+function DiscountForm({
+  amount,
+  meta,
+  busy,
+  onCancel,
+  onApply,
+}: {
+  amount: bigint;
+  meta: TokenMeta;
+  busy: boolean;
+  onCancel: () => void;
+  onApply: (bps: number, charges: number) => void;
+}) {
+  const [percent, setPercent] = useState("10");
+  const [charges, setCharges] = useState("3");
+  const bpsCheck = checkDiscountBps(percent);
+  const chargesCheck = checkDiscountCharges(charges);
+  const usable = bpsCheck.ok && chargesCheck.ok;
+
+  return (
+    <div className="mt-3 rounded-lg border border-edge p-3">
+      <p className="text-sm font-medium">Discount this mandate</p>
+      <div className="mt-2 flex flex-wrap items-end gap-3">
+        <div className="min-w-[7rem] flex-1">
+          <label className="label" htmlFor="discount-percent">
+            Discount (%)
+          </label>
+          <input
+            id="discount-percent"
+            className="input"
+            inputMode="decimal"
+            placeholder="10"
+            value={percent}
+            onChange={(e) => setPercent(e.target.value)}
+            aria-invalid={!bpsCheck.ok}
+            aria-describedby={bpsCheck.ok ? undefined : "discount-percent-error"}
+            disabled={busy}
+          />
+        </div>
+        <div className="min-w-[9rem] flex-1">
+          <label className="label" htmlFor="discount-charges">
+            Charges to cover
+          </label>
+          <input
+            id="discount-charges"
+            className="input"
+            inputMode="numeric"
+            placeholder="3"
+            value={charges}
+            onChange={(e) => setCharges(e.target.value)}
+            aria-invalid={!chargesCheck.ok}
+            aria-describedby={chargesCheck.ok ? undefined : "discount-charges-error"}
+            disabled={busy}
+          />
+        </div>
+        <button
+          type="button"
+          className="btn-primary"
+          disabled={busy || !usable}
+          onClick={() => {
+            if (!bpsCheck.ok || !chargesCheck.ok) return;
+            onApply(bpsCheck.bps, chargesCheck.charges);
+          }}
+        >
+          {busy ? "Applying…" : "Apply discount"}
+        </button>
+        <button type="button" className="btn-ghost" disabled={busy} onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+
+      {!bpsCheck.ok && (
+        <p id="discount-percent-error" className="mt-2 text-sm text-rose-200">
+          {bpsCheck.message}
+        </p>
+      )}
+      {!chargesCheck.ok && (
+        <p id="discount-charges-error" className="mt-2 text-sm text-rose-200">
+          {chargesCheck.message}
+        </p>
+      )}
+
+      {bpsCheck.ok && chargesCheck.ok && (
+        <p className="mt-2 text-sm text-muted">
+          Subscriber pays {formatAmount(discountedAmount(amount, bpsCheck.bps), meta)}{" "}
+          for the next {chargesCheck.charges === 1 ? "charge" : `${chargesCheck.charges} charges`},{" "}
+          then {formatAmount(amount, meta)}.
+          {discountedAmount(amount, bpsCheck.bps) === 0n && (
+            <> This discount rounds the charge down to zero, which the vault cannot debit.</>
+          )}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export default function MerchantPage() {
   const { address, networkMismatch, signXdr } = useWallet();
   const [plans, setPlans] = useState<ApiPlan[] | null>(null);
@@ -88,6 +200,19 @@ export default function MerchantPage() {
   const [busy, setBusy] = useState<string | null>(null);
   // Ending is permanent, so the End button asks for a second click.
   const [confirmEnd, setConfirmEnd] = useState<number | null>(null);
+  /**
+   * The mandate whose discount form is open. One at a time: the form carries
+   * two fields, and a page full of them is unreadable.
+   */
+  const [discountFor, setDiscountFor] = useState<number | null>(null);
+  /**
+   * Whether the deployed contract can carry a discount at all.
+   *
+   * The control is hidden until it can: calling a method the contract does
+   * not have fails every transaction, and a merchant who sees a discount
+   * button that cannot work has been misled.
+   */
+  const [discountSupport, setDiscountSupport] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
@@ -163,6 +288,37 @@ export default function MerchantPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  /**
+   * Whether the deployed contract can carry a discount.
+   *
+   * The rows are enough when they came from the contract, but the indexer
+   * does not project the discount yet, so one mandate is read from the chain
+   * to answer the question the same way in both modes.
+   */
+  useEffect(() => {
+    const row = mandates?.[0];
+    if (!address || !row) {
+      setDiscountSupport(false);
+      return;
+    }
+    if (supportsDiscounts(row)) {
+      setDiscountSupport(true);
+      return;
+    }
+    let live = true;
+    void payflow
+      .getMandate(address, row.id)
+      .then((mandate) => {
+        if (live) setDiscountSupport(supportsDiscounts(mandate));
+      })
+      .catch(() => {
+        if (live) setDiscountSupport(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [address, mandates]);
 
   // The shareable catalogue link, built after mount so the statically
   // prerendered markup (no window) and the hydrated one cannot disagree.
@@ -577,60 +733,98 @@ export default function MerchantPage() {
               const balance = balances[m.subscriber] ?? null;
               const funding = mandateFunding(balance, BigInt(m.amount));
               const short = funding.status === "short";
+              const badge = discountBadge(m);
+              const remaining = remainingDiscountCharges(m);
               return (
                 <div
                   key={m.id}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-edge p-4"
+                  className="rounded-lg border border-edge p-4"
                 >
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">#{m.id}</span>
-                      <AddressLink value={m.subscriber} />
-                      <Badge status={m.status} />
-                      {m.ended_by === "merchant" && (
-                        <span className="text-xs text-muted">ended by you</span>
-                      )}
-                    </div>
-                    <div className="mt-1 text-xs text-muted">
-                      {fromStroops(m.amount, 4, meta.decimals)} {meta.symbol}{" "}
-                      {formatPeriod(m.period)} · {m.charges_made} settled · next{" "}
-                      {m.status === "Active" ? <TimeAgo value={m.next_charge} /> : "—"}
-                    </div>
-                    <div className="mt-1 text-xs font-medium">
-                      {balance === null ? (
-                        <span className="text-muted">Vault balance —</span>
-                      ) : short ? (
-                        <span className="text-rose-300">
-                          Short by {fromStroops(funding.shortfall)} {meta.symbol}
-                        </span>
-                      ) : (
-                        <span className="text-accent">Funded</span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {due && (
-                      <>
-                        <button
-                          type="button"
-                          className="btn-primary"
-                          disabled={busy !== null || networkMismatch || short}
-                          onClick={() =>
-                            void run(`charge-${m.id}`, () =>
-                              payflow.charge(address, signXdr, m.id),
-                            )
-                          }
-                        >
-                          {busy === `charge-${m.id}` ? "Charging…" : short ? "Short on funds" : "Charge now"}
-                        </button>
-                        {short && (
-                          <span className="text-xs text-rose-300">
-                            Subscriber vault short by {fromStroops(funding.shortfall)} {meta.symbol}
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium">#{m.id}</span>
+                        <AddressLink value={m.subscriber} />
+                        <Badge status={m.status} />
+                        {badge && (
+                          <span className="rounded-full bg-accent/15 px-2 py-0.5 text-xs font-medium text-accent">
+                            {badge}
                           </span>
                         )}
-                      </>
-                    )}
-                    {endable(m) &&
+                        {m.ended_by === "merchant" && (
+                          <span className="text-xs text-muted">ended by you</span>
+                        )}
+                      </div>
+                      <div className="mt-1 text-xs text-muted">
+                        {fromStroops(m.amount, 4, meta.decimals)} {meta.symbol}{" "}
+                        {formatPeriod(m.period)} · {m.charges_made} settled · next{" "}
+                        {m.status === "Active" ? <TimeAgo value={m.next_charge} /> : "—"}
+                      </div>
+                      {badge && (
+                        <div className="mt-1 text-xs text-accent">
+                          Subscriber pays{" "}
+                          {fromStroops(
+                            discountedAmount(BigInt(m.amount), Number(m.discount_bps)),
+                            4,
+                            meta.decimals,
+                          )}{" "}
+                          {meta.symbol} while the discount runs
+                          {remaining === null
+                            ? ""
+                            : remaining === 0
+                              ? " — the discount has run out"
+                              : ` — ${remaining} discounted charge${remaining === 1 ? "" : "s"} left`}
+                          .
+                        </div>
+                      )}
+                      <div className="mt-1 text-xs font-medium">
+                        {balance === null ? (
+                          <span className="text-muted">Vault balance —</span>
+                        ) : short ? (
+                          <span className="text-rose-300">
+                            Short by {fromStroops(funding.shortfall)} {meta.symbol}
+                          </span>
+                        ) : (
+                          <span className="text-accent">Funded</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {due && (
+                        <>
+                          <button
+                            type="button"
+                            className="btn-primary"
+                            disabled={busy !== null || networkMismatch || short}
+                            onClick={() =>
+                              void run(`charge-${m.id}`, () =>
+                                payflow.charge(address, signXdr, m.id),
+                              )
+                            }
+                          >
+                            {busy === `charge-${m.id}` ? "Charging…" : short ? "Short on funds" : "Charge now"}
+                          </button>
+                          {short && (
+                            <span className="text-xs text-rose-300">
+                              Subscriber vault short by {fromStroops(funding.shortfall)} {meta.symbol}
+                            </span>
+                          )}
+                        </>
+                      )}
+                      {discountSupport && endable(m) && (
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          disabled={busy !== null || networkMismatch}
+                          aria-expanded={discountFor === m.id}
+                          onClick={() =>
+                            setDiscountFor(discountFor === m.id ? null : m.id)
+                          }
+                        >
+                          {discountFor === m.id ? "Close" : "Discount"}
+                        </button>
+                      )}
+                      {endable(m) &&
                       (confirmEnd === m.id ? (
                         <>
                           <button
@@ -665,7 +859,22 @@ export default function MerchantPage() {
                           End
                         </button>
                       ))}
+                    </div>
                   </div>
+
+                  {discountFor === m.id && (
+                    <DiscountForm
+                      amount={BigInt(m.amount)}
+                      meta={meta}
+                      busy={busy === `discount-${m.id}`}
+                      onCancel={() => setDiscountFor(null)}
+                      onApply={(bps, charges) =>
+                        void run(`discount-${m.id}`, () =>
+                          payflow.setDiscount(address, signXdr, m.id, bps, charges),
+                        ).then(() => setDiscountFor(null))
+                      }
+                    />
+                  )}
                 </div>
               );
             })}
