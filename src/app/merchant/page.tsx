@@ -63,7 +63,7 @@ function FeePreview({
 }
 
 export default function MerchantPage() {
-  const { address, networkMismatch, signXdr } = useWallet();
+  const { address, networkMismatch, signXdr, connect, connecting } = useWallet();
   const [plans, setPlans] = useState<ApiPlan[] | null>(null);
   const [mandates, setMandates] = useState<ApiMandate[] | null>(null);
   const [summary, setSummary] = useState<MerchantSummary | null>(null);
@@ -297,7 +297,23 @@ export default function MerchantPage() {
   if (!address) {
     return (
       <Panel title="Merchant dashboard">
-        <Empty>Connect a wallet to publish plans and track revenue.</Empty>
+        <Empty
+          title="No wallet connected"
+          action={
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={connecting}
+              onClick={() => void connect()}
+            >
+              {connecting ? "Connecting…" : "Connect wallet"}
+            </button>
+          }
+        >
+          Connect the wallet that will publish plans. Plans, subscribers and
+          revenue are all read for that address — on testnet, fund it with
+          Friendbot before publishing.
+        </Empty>
       </Panel>
     );
   }
@@ -332,7 +348,18 @@ export default function MerchantPage() {
         ) : revenue === null ? (
           <SkeletonRows rows={2} label="Loading revenue" />
         ) : revenue.length === 0 ? (
-          <Empty>No charges settled in this period.</Empty>
+          <Empty
+            title="Nothing settled in this period"
+            action={
+              <a href="#publish-plan" className="btn-ghost">
+                Publish a plan
+              </a>
+            }
+          >
+            A charge settles when a mandate falls due and the keeper — or you,
+            with Charge now — collects it. Publish a plan and share your public
+            page to get your first subscriber.
+          </Empty>
         ) : (
           <RevenueChart points={revenue} size={bucketSize} meta={tokenMeta} />
         )}
@@ -368,7 +395,9 @@ export default function MerchantPage() {
         </Notice>
       )}
 
+      {/* id is the anchor target for the empty states below. */}
       <Panel
+        id="publish-plan"
         title="Publish a plan"
         subtitle="Price and period are frozen into every mandate opened against this plan. To change them, publish a new plan."
       >
@@ -506,7 +535,18 @@ export default function MerchantPage() {
         {plans === null ? (
           <SkeletonRows rows={2} label="Loading plans" />
         ) : plans.length === 0 ? (
-          <Empty>No plans yet.</Empty>
+          <Empty
+            title="No plans yet"
+            action={
+              <a href="#publish-plan" className="btn-primary">
+                Publish a plan
+              </a>
+            }
+          >
+            Use the form above to publish your first plan — it is written
+            straight to the contract, so it works with or without the indexer.
+            Subscribers can open a mandate against it as soon as it confirms.
+          </Empty>
         ) : (
           <div className="space-y-3">
             {plans.map((p) => {
@@ -568,7 +608,25 @@ export default function MerchantPage() {
         {mandates === null ? (
           <SkeletonRows rows={3} label="Loading subscribers" />
         ) : mandates.length === 0 ? (
-          <Empty>No subscribers yet.</Empty>
+          <Empty
+            title="No subscribers yet"
+            action={
+              publicUrl ? (
+                <a
+                  href={publicUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn-primary"
+                >
+                  Open your public page
+                </a>
+              ) : undefined
+            }
+          >
+            Share your public page link so anyone can open a mandate against
+            your plans. New subscribers appear here with their vault funding at
+            a glance.
+          </Empty>
         ) : (
           <div className="space-y-3">
             {mandates.map((m) => {

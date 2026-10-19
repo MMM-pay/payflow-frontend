@@ -154,9 +154,33 @@ export default function SubscribePage() {
       {plans === null ? (
         <SkeletonPlanCards label="Loading plans" />
       ) : active.length === 0 ? (
-        <Empty>
-          No active plans yet. Publish one from the merchant page to see it here.
-        </Empty>
+        (plans ?? []).length === 0 ? (
+          <Empty
+            title="No plans yet"
+            action={
+              <Link href="/merchant" className="btn-primary">
+                Publish a plan
+              </Link>
+            }
+          >
+            Nothing has been published on this deployment yet. Publish a plan
+            from the merchant page — it is written straight to the contract, so
+            it appears here with or without the indexer.
+          </Empty>
+        ) : (
+          <Empty
+            title="No active plans right now"
+            action={
+              <Link href="/merchant" className="btn-primary">
+                Publish a plan
+              </Link>
+            }
+          >
+            Every plan on this list is deactivated, so there is nothing to
+            subscribe to at the moment. Check back later, or publish your own
+            plan from the merchant page.
+          </Empty>
+        )
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">
           {active.map((plan) => {

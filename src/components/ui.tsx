@@ -7,18 +7,21 @@ import { formatExactTime, formatWhen, shortAddress } from "@/lib/format";
 import { useOrgName } from "@/lib/toml";
 
 export function Panel({
+  id,
   title,
   subtitle,
   children,
   actions,
 }: {
+  /** Optional DOM id, e.g. an anchor target for in-page links. */
+  id?: string;
   title?: string;
   subtitle?: string;
   children: ReactNode;
   actions?: ReactNode;
 }) {
   return (
-    <section className="panel">
+    <section className="panel" id={id}>
       {(title || actions) && (
         <header className="mb-4 flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -217,8 +220,31 @@ export function Notice({ tone, children }: { tone: "error" | "ok" | "info"; chil
   );
 }
 
-export function Empty({ children }: { children: ReactNode }) {
-  return <p className="py-8 text-center text-sm text-muted">{children}</p>;
+/**
+ * An empty state that says what is missing, why, and what to do next.
+ *
+ * `title` names the situation, `children` explains it, and `action` offers the
+ * next step — usually a `Link` or button. A title- and action-less usage
+ * still works for transitional states like "Loading…".
+ */
+export function Empty({
+  title,
+  children,
+  action,
+}: {
+  title?: string;
+  children: ReactNode;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="rounded-lg border border-dashed border-edge px-4 py-8 text-center">
+      {title && <p className="text-sm font-medium text-slate-200">{title}</p>}
+      <p className={`mx-auto max-w-prose text-sm text-muted ${title ? "mt-1" : ""}`}>
+        {children}
+      </p>
+      {action && <div className="mt-4 flex flex-wrap justify-center gap-2">{action}</div>}
+    </div>
+  );
 }
 
 

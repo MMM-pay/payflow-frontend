@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { api, type ApiMandate, type ApiVaultEvent } from "@/lib/api";
 import { buildUpcomingChargesCalendar, CALENDAR_FILENAME } from "@/lib/calendar";
 import {
@@ -30,7 +31,7 @@ import {
 } from "@/components/ui";
 
 export default function AccountPage() {
-  const { address, networkMismatch, signXdr } = useWallet();
+  const { address, networkMismatch, signXdr, connect, connecting } = useWallet();
   const [balance, setBalance] = useState<bigint | null>(null);
   const [mandates, setMandates] = useState<ApiMandate[] | null>(null);
   const [history, setHistory] = useState<ApiVaultEvent[] | null>(null);
@@ -126,7 +127,23 @@ export default function AccountPage() {
   if (!address) {
     return (
       <Panel title="My account">
-        <Empty>Connect a wallet to see your vault balance and subscriptions.</Empty>
+        <Empty
+          title="No wallet connected"
+          action={
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={connecting}
+              onClick={() => void connect()}
+            >
+              {connecting ? "Connecting…" : "Connect wallet"}
+            </button>
+          }
+        >
+          Connect a wallet to see your vault balance, fund it, and manage your
+          subscriptions. Nothing is sent to the network until you approve a
+          transaction in your wallet.
+        </Empty>
       </Panel>
     );
   }
@@ -215,7 +232,25 @@ export default function AccountPage() {
         {history === null ? (
           <Empty>Loading history…</Empty>
         ) : history.length === 0 ? (
-          <Empty>No vault events yet.</Empty>
+          indexerAvailable ? (
+            <Empty
+              title="No vault activity yet"
+              action={
+                <a href="#amount" className="btn-primary">
+                  Make a deposit
+                </a>
+              }
+            >
+              Deposits, withdrawals and debit charges appear here as they
+              settle. Fund the vault above so charges have a balance to draw
+              from.
+            </Empty>
+          ) : (
+            // No indexer, no event log: the notice below says why there is
+            // nothing to show. An empty list here would claim “no events”
+            // when the truth is “no event source”.
+            null
+          )
         ) : (
           <div className="space-y-2">
             {history.map((event) => {
@@ -248,7 +283,7 @@ export default function AccountPage() {
             })}
           </div>
         )}
-        {!indexerAvailable && (
+        {history !== null && !indexerAvailable && (
           <Notice tone="info">
             Vault history is not available in contract-only mode. It requires
             the payflow-backend indexer (set NEXT_PUBLIC_API_URL). Deposits,
@@ -280,7 +315,18 @@ export default function AccountPage() {
         {mandates === null ? (
           <SkeletonRows rows={2} label="Loading subscriptions" />
         ) : mandates.length === 0 ? (
-          <Empty>No subscriptions yet.</Empty>
+          <Empty
+            title="No subscriptions yet"
+            action={
+              <Link href="/subscribe" className="btn-primary">
+                Browse plans
+              </Link>
+            }
+          >
+            Subscribing to a plan opens a mandate, and every mandate shows up
+            here with its next charge date. You can pause or cancel any of them
+            from this page.
+          </Empty>
         ) : (
           <div className="space-y-3">
             {mandates.map((m) => {
