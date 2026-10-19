@@ -46,7 +46,7 @@ export default function HomePage() {
           Stellar payments are push-only: the account holding the funds must sign every
           transfer. That makes one-off payments simple and subscriptions impossible without
           custody. Payflow adds the missing primitive — a bounded, revocable{" "}
-          <strong className="text-slate-200">mandate</strong> the subscriber signs once.
+          <strong className="text-soft">mandate</strong> the subscriber signs once.
         </p>
         <div className="flex flex-wrap gap-3 pt-1">
           <Link href="/subscribe" className="btn-primary">

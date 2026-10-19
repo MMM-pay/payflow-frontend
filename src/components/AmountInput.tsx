@@ -86,7 +86,7 @@ export function AmountInput({
         </p>
       )}
       {!hideError && message && (
-        <p id={errorId} className="mt-1 text-sm text-rose-200">
+        <p id={errorId} className="mt-1 text-sm text-danger">
           {message}
         </p>
       )}

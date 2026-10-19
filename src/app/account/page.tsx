@@ -14,7 +14,14 @@ import { config } from "@/lib/config";
 import { payflow } from "@/lib/payflow";
 import { mandateStatus } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
-import { formatPeriod, fromStroops, parseAmount } from "@/lib/format";
+import {
+  formatAmount,
+  formatDate,
+  formatPeriod,
+  fromStroops,
+  parseAmount,
+} from "@/lib/format";
+import { buildChargeSchedule, chargeShortfall } from "@/lib/schedule";
 import { describeTrialEnd } from "@/lib/trial";
 import { metaFor, useTokenMetas } from "@/lib/token";
 import { AmountInput } from "@/components/AmountInput";
@@ -38,6 +45,10 @@ export default function AccountPage() {
   const [indexerAvailable, setIndexerAvailable] = useState(false);
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  // Cancelling is permanent, so the first click only reveals Keep/Confirm.
+  // One id, not a set: only one mandate can be awaiting confirmation at a
+  // time, which keeps the destructive action unambiguous.
+  const [confirmCancel, setConfirmCancel] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
@@ -83,6 +94,12 @@ export default function AccountPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // A wallet switch mid-flow must not leave another account's mandate in the
+  // confirming state.
+  useEffect(() => {
+    setConfirmCancel(null);
+  }, [address]);
 
   async function run(key: string, fn: () => Promise<string>) {
     setBusy(key);
@@ -288,7 +305,7 @@ export default function AccountPage() {
                   <div className="text-right">
                     <span
                       className={`font-semibold tabular-nums ${
-                        isCredit ? "text-accent" : "text-rose-300"
+                        isCredit ? "text-accent" : "text-danger"
                       }`}
                     >
                       {eventAmount} {vaultMeta.symbol}
@@ -349,6 +366,20 @@ export default function AccountPage() {
               const terminal = m.status === "Cancelled" || m.status === "Completed";
               const meta = metaFor(metas, m.token ?? config.contracts.token);
               const trial = describeTrialEnd(m);
+              // Both of these read from data the page already has, so the
+              // timeline works in contract-only mode: the mandates may come
+              // from chain state and the balance from a vault read.
+              const schedule = buildChargeSchedule(m);
+              const nextAmount = schedule.charges[0]?.amount;
+              // `balance` is the configured token's vault balance. A mandate
+              // denominated in another token cannot be compared against it, so
+              // leave the warning out rather than reporting a false shortfall.
+              const sameToken =
+                (m.token ?? config.contracts.token) === config.contracts.token;
+              const shortfall =
+                nextAmount === undefined || !sameToken
+                  ? null
+                  : chargeShortfall(balance, nextAmount);
               return (
                 <div key={m.id} className="rounded-lg border border-edge p-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -401,21 +432,102 @@ export default function AccountPage() {
                         >
                           {m.status === "Active" ? "Pause" : "Resume"}
                         </button>
-                        <button
-                          type="button"
-                          className="btn-ghost text-rose-300"
-                          disabled={busy !== null || networkMismatch}
-                          onClick={() =>
-                            void run(`cancel-${m.id}`, () =>
-                              payflow.cancel(address, signXdr, m.id),
-                            )
-                          }
-                        >
-                          Cancel
-                        </button>
+                        {confirmCancel === m.id ? (
+                          <>
+                            <button
+                              type="button"
+                              className="btn-ghost"
+                              disabled={busy !== null}
+                              autoFocus
+                              onClick={() => setConfirmCancel(null)}
+                            >
+                              Keep
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-danger"
+                              disabled={busy !== null || networkMismatch}
+                              aria-label={`Confirm cancelling subscription #${m.id}`}
+                              onClick={() =>
+                                void run(`cancel-${m.id}`, () =>
+                                  payflow.cancel(address, signXdr, m.id),
+                                ).then(() => setConfirmCancel(null))
+                              }
+                            >
+                              {busy === `cancel-${m.id}` ? "Cancelling…" : "Confirm"}
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn-ghost text-danger"
+                            disabled={busy !== null || networkMismatch}
+                            aria-label={`Cancel subscription #${m.id}`}
+                            onClick={() => setConfirmCancel(m.id)}
+                          >
+                            Cancel
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
+
+                  {schedule.charges.length > 0 && (
+                    <section
+                      className="mt-4 border-t border-edge pt-3"
+                      aria-labelledby={`schedule-${m.id}`}
+                    >
+                      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                        <h3 id={`schedule-${m.id}`} className="text-sm font-medium">
+                          Upcoming charges
+                        </h3>
+                        <span className="text-xs text-muted">
+                          Next {schedule.charges.length} total{" "}
+                          {formatAmount(schedule.total, meta)}
+                        </span>
+                      </div>
+                      <ol className="mt-2 space-y-1.5">
+                        {schedule.charges.map((charge) => (
+                          <li
+                            key={charge.due}
+                            className="flex items-baseline justify-between gap-3 text-sm"
+                          >
+                            <time
+                              dateTime={new Date(charge.due * 1000).toISOString()}
+                              className="text-muted"
+                            >
+                              {formatDate(charge.due)}
+                            </time>
+                            <span className="tabular-nums">
+                              {formatAmount(charge.amount, meta)}
+                            </span>
+                          </li>
+                        ))}
+                      </ol>
+                      <div className="mt-2 flex flex-wrap justify-between gap-2 text-xs text-muted">
+                        <span>
+                          Running total{" "}
+                          <strong className="font-medium text-fg">
+                            {formatAmount(schedule.total, meta)}
+                          </strong>
+                        </span>
+                        {schedule.finalDate !== null && (
+                          <span>Final charge {formatDate(schedule.finalDate)}</span>
+                        )}
+                      </div>
+                      {shortfall !== null && (
+                        <p
+                          role="status"
+                          className="mt-2 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger"
+                        >
+                          Your vault is short by{" "}
+                          {formatAmount(shortfall, meta)} for the next charge.
+                          Deposit before {formatDate(m.next_charge)} or it will
+                          fail.
+                        </p>
+                      )}
+                    </section>
+                  )}
                 </div>
               );
             })}

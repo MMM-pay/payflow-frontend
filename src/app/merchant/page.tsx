@@ -406,7 +406,7 @@ export default function MerchantPage() {
               aria-describedby={nameTooLong ? "plan-name-error" : undefined}
             />
             {nameTooLong && (
-              <p id="plan-name-error" className="mt-1 text-sm text-rose-200">
+              <p id="plan-name-error" className="mt-1 text-sm text-danger">
                 Too long — {MAX_NAME_LEN} bytes maximum.
               </p>
             )}
@@ -479,7 +479,7 @@ export default function MerchantPage() {
         <p
           id="price-preview"
           aria-live="polite"
-          className={showPriceError ? "mt-3 text-sm text-rose-200" : "mt-3 text-sm text-muted"}
+          className={showPriceError ? "mt-3 text-sm text-danger" : "mt-3 text-sm text-muted"}
         >
           {showPriceError
             ? priceError
@@ -600,7 +600,7 @@ export default function MerchantPage() {
                       {balance === null ? (
                         <span className="text-muted">Vault balance —</span>
                       ) : short ? (
-                        <span className="text-rose-300">
+                        <span className="text-danger">
                           Short by {fromStroops(funding.shortfall)} {meta.symbol}
                         </span>
                       ) : (
@@ -624,7 +624,7 @@ export default function MerchantPage() {
                           {busy === `charge-${m.id}` ? "Charging…" : short ? "Short on funds" : "Charge now"}
                         </button>
                         {short && (
-                          <span className="text-xs text-rose-300">
+                          <span className="text-xs text-danger">
                             Subscriber vault short by {fromStroops(funding.shortfall)} {meta.symbol}
                           </span>
                         )}

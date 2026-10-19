@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { WalletProvider } from "@/lib/wallet";
 import { WalletLayoutInner } from "@/components/WalletLayoutInner";
+import { THEME_INIT_SCRIPT } from "@/lib/theme";
 
 export const metadata: Metadata = {
   title: "Payflow — recurring payments on Stellar",
@@ -11,7 +12,14 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    // The inline script below sets `data-theme` on this element before the
+    // first paint, so the server markup (no attribute) and the DOM can differ
+    // by design. Suppressing the warning is the documented pattern for a
+    // pre-paint theme script.
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+      </head>
       <body>
         <WalletProvider>
           <WalletLayoutInner>{children}</WalletLayoutInner>

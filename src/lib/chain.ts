@@ -3,6 +3,7 @@ import { MAX_PAGE, mandateStatus, payflow, type Mandate, type Plan } from "./pay
 import type { ApiCharge, ApiMandate, ApiPlan, ApiVaultEvent, MerchantSummary } from "./api";
 import { availabilityInteger } from "./availability";
 import { fromStroops } from "./format";
+import { chargeShortfall } from "./schedule";
 
 /**
  * Contract-only fallbacks for the lists the indexer normally serves.
@@ -230,11 +231,10 @@ export function mandateFunding(
 ): MandateFunding {
   // A null balance (read still in flight or failed) is unknown: don't block
   // the charge on a missing read. Treat it as not-short.
-  if (vaultBalance === null) {
-    return { status: "funded", shortfall: 0n };
-  }
-  const shortfall = mandateAmount - vaultBalance;
-  return shortfall > 0n ? { status: "short", shortfall } : { status: "funded", shortfall: 0n };
+  const shortfall = chargeShortfall(vaultBalance, mandateAmount);
+  return shortfall === null
+    ? { status: "funded", shortfall: 0n }
+    : { status: "short", shortfall };
 }
 
 /** Whether a vault event increases the vault balance. */

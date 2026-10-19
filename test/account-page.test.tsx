@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import AccountPage from "@/app/account/page";
 import type { ApiMandate } from "@/lib/api";
 
@@ -136,7 +136,9 @@ describe("AccountPage", () => {
     expect(screen.getByText("Mandate #7")).toBeTruthy();
     expect(screen.getByText(/1 XLM per month/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Pause" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Cancel subscription #7" }),
+    ).toBeTruthy();
     expect(screen.getByText("Active subscriptions").parentElement?.textContent).toContain(
       "1",
     );
@@ -163,7 +165,7 @@ describe("AccountPage", () => {
     expect(screen.getByText("Cancelled")).toBeTruthy();
     expect(chainMock.chainMandatesOf).toHaveBeenCalledWith(SUBSCRIBER, SUBSCRIBER);
     // Cancelled mandates are terminal, so the page must not offer Cancel.
-    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Cancel subscription/ })).toBeNull();
   });
 
   it("disables write actions while the wallet is on the wrong network", async () => {
@@ -216,5 +218,153 @@ describe("AccountPage", () => {
 
     // Degrades to the native assumption rather than blanking the page.
     expect(await screen.findByText("5 XLM")).toBeTruthy();
+  });
+
+  it("asks for confirmation before cancelling a subscription", async () => {
+    payflowMock.vaultBalance.mockResolvedValue(0n);
+    payflowMock.cancel.mockResolvedValue("c0ffee");
+    apiMock.mandatesOf.mockResolvedValue({ mandates: [mandate()] });
+
+    render(<AccountPage />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Cancel subscription #7" }),
+    );
+
+    // The irreversible write has not happened yet.
+    expect(payflowMock.cancel).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Keep" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", {
+        name: "Confirm cancelling subscription #7",
+      }),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Keep" }));
+    expect(payflowMock.cancel).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "Cancel subscription #7" }),
+    ).toBeTruthy();
+  });
+
+  it("only sends the cancel transaction from Confirm", async () => {
+    payflowMock.vaultBalance.mockResolvedValue(0n);
+    payflowMock.cancel.mockResolvedValue("c0ffee");
+    apiMock.mandatesOf.mockResolvedValue({ mandates: [mandate()] });
+
+    render(<AccountPage />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Cancel subscription #7" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Confirm cancelling subscription #7",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(payflowMock.cancel).toHaveBeenCalledWith(
+        SUBSCRIBER,
+        expect.any(Function),
+        7,
+      ),
+    );
+    expect(payflowMock.cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps only one mandate in the confirming state at a time", async () => {
+    payflowMock.vaultBalance.mockResolvedValue(0n);
+    apiMock.mandatesOf.mockResolvedValue({
+      mandates: [mandate({ id: 7 }), mandate({ id: 8 })],
+    });
+
+    render(<AccountPage />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Cancel subscription #7" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Cancel subscription #8" }));
+
+    expect(screen.getAllByRole("button", { name: "Keep" })).toHaveLength(1);
+    expect(
+      screen.getByRole("button", {
+        name: "Confirm cancelling subscription #8",
+      }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("button", {
+        name: "Confirm cancelling subscription #7",
+      }),
+    ).toBeNull();
+  });
+
+  it("renders the next six charges and their running total", async () => {
+    payflowMock.vaultBalance.mockResolvedValue(100_000_000n); // 10 XLM
+    apiMock.mandatesOf.mockResolvedValue({
+      mandates: [mandate({ next_charge: 1_700_000_000, period: 2_592_000 })],
+    });
+
+    render(<AccountPage />);
+
+    const timeline = await screen.findByRole("region", {
+      name: "Upcoming charges",
+    });
+    expect(within(timeline).getAllByRole("listitem")).toHaveLength(6);
+    expect(within(timeline).getByText(/Next 6 total/).textContent).toContain(
+      "6 XLM",
+    );
+    expect(within(timeline).getByText(/Running total/).textContent).toContain(
+      "6 XLM",
+    );
+  });
+
+  it("renders the timeline from contract state when the indexer is offline", async () => {
+    payflowMock.vaultBalance.mockResolvedValue(100_000_000n);
+    apiMock.mandatesOf.mockResolvedValue(null);
+    chainMock.chainMandatesOf.mockResolvedValue([
+      mandate({ next_charge: 1_700_000_000, period: 2_592_000 }),
+    ]);
+
+    render(<AccountPage />);
+
+    const timeline = await screen.findByRole("region", {
+      name: "Upcoming charges",
+    });
+    expect(within(timeline).getAllByRole("listitem")).toHaveLength(6);
+    expect(chainMock.chainMandatesOf).toHaveBeenCalledWith(SUBSCRIBER, SUBSCRIBER);
+  });
+
+  it("does not render a timeline for paused mandates", async () => {
+    payflowMock.vaultBalance.mockResolvedValue(100_000_000n);
+    apiMock.mandatesOf.mockResolvedValue({
+      mandates: [
+        mandate({
+          status: "Paused",
+          next_charge: 1_700_000_000,
+          period: 2_592_000,
+        }),
+      ],
+    });
+
+    render(<AccountPage />);
+
+    await screen.findByText("Mandate #7");
+    expect(screen.queryByRole("region", { name: "Upcoming charges" })).toBeNull();
+  });
+
+  it("warns when the vault cannot cover the next charge", async () => {
+    payflowMock.vaultBalance.mockResolvedValue(0n);
+    apiMock.mandatesOf.mockResolvedValue({
+      mandates: [mandate({ next_charge: 1_700_000_000, period: 2_592_000 })],
+    });
+
+    render(<AccountPage />);
+
+    const timeline = await screen.findByRole("region", {
+      name: "Upcoming charges",
+    });
+    const warning = within(timeline).getByRole("status");
+    expect(warning.textContent).toContain("Your vault is short by 1 XLM");
   });
 });

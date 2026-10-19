@@ -63,7 +63,7 @@ export function Skeleton({ className = "" }: { className?: string }) {
   return (
     <span
       aria-hidden="true"
-      className={`block rounded bg-white/10 motion-safe:animate-pulse ${className}`}
+      className={`block rounded bg-fg/10 motion-safe:animate-pulse ${className}`}
     />
   );
 }
@@ -122,13 +122,13 @@ export function SkeletonPlanCards({ cards = 4, label = "Loading plans" }: { card
 
 const BADGE_TONES: Record<string, string> = {
   Active: "bg-accent/15 text-accent",
-  Paused: "bg-amber-400/15 text-amber-300",
-  Cancelled: "bg-rose-400/15 text-rose-300",
-  Completed: "bg-sky-400/15 text-sky-300",
+  Paused: "bg-warn/15 text-warn",
+  Cancelled: "bg-danger/15 text-danger",
+  Completed: "bg-info/15 text-info",
 };
 
 export function Badge({ status }: { status: string }) {
-  const tone = BADGE_TONES[status] ?? "bg-white/10 text-slate-300";
+  const tone = BADGE_TONES[status] ?? "bg-fg/10 text-soft";
   return (
     <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${tone}`}>{status}</span>
   );
@@ -208,9 +208,9 @@ export function TxLink({ hash }: { hash: string }) {
 
 export function Notice({ tone, children }: { tone: "error" | "ok" | "info"; children: ReactNode }) {
   const tones = {
-    error: "border-rose-500/40 bg-rose-500/10 text-rose-200",
+    error: "border-danger/40 bg-danger/10 text-danger",
     ok: "border-accent/40 bg-accent/10 text-accent",
-    info: "border-edge bg-white/5 text-muted",
+    info: "border-edge bg-fg/5 text-muted",
   } as const;
   return (
     <div className={`rounded-lg border px-3 py-2 text-sm ${tones[tone]}`}>{children}</div>
@@ -231,9 +231,9 @@ export function NetworkMismatchBanner({
 }) {
   if (!walletNetwork) return null;
   return (
-    <div className="flex items-center justify-between gap-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+    <div className="flex items-center justify-between gap-4 rounded-lg border border-warn/40 bg-warn/10 px-4 py-3 text-sm text-warn">
       <div className="flex items-center gap-2">
-        <span className="text-amber-400">⚠</span>
+        <span aria-hidden="true">⚠</span>
         <span>
           <strong>Network mismatch detected.</strong> Your wallet is connected to a different
           network than this app. Switch to{" "}
