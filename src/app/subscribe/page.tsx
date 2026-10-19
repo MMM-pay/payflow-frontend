@@ -230,7 +230,10 @@ export default function SubscribePage() {
                   className="btn-primary w-full"
                   disabled={busy !== null || !address || networkMismatch || availability.reason !== null}
                   aria-describedby={availability.reason ? `availability-${plan.id}` : undefined}
-                  onClick={() => void subscribe(plan)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void subscribe(plan);
+                  }}
                 >
                   {busy === plan.id ? "Confirming…" : networkMismatch ? "Wrong network" : address ? "Subscribe" : "Connect wallet"}
                 </button>

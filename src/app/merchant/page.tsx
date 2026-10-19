@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, type ApiMandate, type ApiPlan, type MerchantSummary } from "@/lib/api";
-import { chainMandatesFor, chainMerchantSummary, chainPlansOf, endable } from "@/lib/chain";
+import { buildCsv, downloadCsv, exportFilename, type ChargeRow } from "@/lib/csv";
+import { chainMandatesFor, chainMerchantSummary, chainPlansOf, endable, mandateFunding } from "@/lib/chain";
 import { config } from "@/lib/config";
-import { MAX_NAME_LEN, nameByteLength, payflow } from "@/lib/payflow";
+import { MAX_NAME_LEN, nameByteLength, payflow, server } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
 import {
   checkAmount,
@@ -59,6 +60,9 @@ export default function MerchantPage() {
   const [plans, setPlans] = useState<ApiPlan[] | null>(null);
   const [mandates, setMandates] = useState<ApiMandate[] | null>(null);
   const [summary, setSummary] = useState<MerchantSummary | null>(null);
+  // Vault balance per subscriber address, read in parallel with mandates.
+  const [balances, setBalances] = useState<Record<string, bigint | null>>({});
+  const [exporting, setExporting] = useState(false);
   const [feeBps, setFeeBps] = useState<number | null>(null);
 
   const [name, setName] = useState("");
@@ -126,6 +130,19 @@ export default function MerchantPage() {
 
     // Revenue totals come from charge history, which only the indexer has.
     setSummary(s ?? chainMerchantSummary(address, rows));
+
+    // Read each subscriber's vault balance in parallel so the dashboard can
+    // flag mandates that will fail. Individual reads may fail without breaking
+    // the whole list.
+    const subscribers = [...new Set(rows.map((m) => m.subscriber))];
+    const settled = await Promise.allSettled(
+      subscribers.map((sub) => payflow.vaultBalance(address, sub, config.contracts.token)),
+    );
+    const b: Record<string, bigint | null> = {};
+    subscribers.forEach((sub, i) => {
+      if (settled[i]?.status === "fulfilled") b[sub] = settled[i].value;
+    });
+    setBalances(b);
   }, [address]);
 
   useEffect(() => {
@@ -160,6 +177,62 @@ export default function MerchantPage() {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(null);
+    }
+  }
+
+  /** Gather every charge settled against the merchant's mandates and download it as CSV. */
+  async function exportCsv() {
+    setExporting(true);
+    try {
+      const dateCache = new Map<string, string>();
+      async function chargeDate(txHash: string): Promise<string> {
+        if (dateCache.has(txHash)) return dateCache.get(txHash)!;
+        let date = "—";
+        try {
+          const tx = await server.getTransaction(txHash);
+          // Only successful/failed transactions carry a creation timestamp.
+          if ("createdAt" in tx) {
+            const createdAt = tx.createdAt as number;
+            const ms = createdAt > 1e12 ? createdAt : createdAt * 1000;
+            date = new Date(ms).toISOString().slice(0, 10);
+          }
+        } catch {
+          // Best-effort: contract-only mode or RPC failure leaves the date blank.
+        }
+        dateCache.set(txHash, date);
+        return date;
+      }
+
+      const rows: ChargeRow[] = [];
+      for (const m of mandates ?? []) {
+        const res = await api.charges(m.id);
+        if (!res) continue;
+        for (const c of res.charges) {
+          const amount = BigInt(c.amount);
+          const fee = BigInt(c.fee);
+          rows.push({
+            date: await chargeDate(c.tx_hash),
+            mandateId: c.mandate_id,
+            subscriber: m.subscriber,
+            gross: fromStroops(amount),
+            fee: fromStroops(fee),
+            net: fromStroops(amount - fee),
+            txHash: c.tx_hash,
+          });
+        }
+      }
+
+      rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+      const dates = rows.map((r) => r.date).filter((d) => d !== "—");
+      const from = dates.length ? dates[0]! : "all";
+      const to = dates.length ? dates[dates.length - 1]! : "all";
+
+      downloadCsv(
+        buildCsv(rows),
+        exportFilename(address!, from, to),
+      );
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -375,6 +448,17 @@ export default function MerchantPage() {
       <Panel
         title="Subscribers"
         subtitle="Charging is permissionless — you can settle a due mandate yourself instead of waiting for the keeper."
+        actions={
+          <button
+            type="button"
+            className="btn-ghost mono text-sm"
+            disabled={exporting || mandates?.length === 0 || networkMismatch}
+            onClick={() => void exportCsv()}
+            aria-label="Export charges to CSV"
+          >
+            {exporting ? "Exporting…" : "Export CSV"}
+          </button>
+        }
       >
         {mandates === null ? (
           <SkeletonRows rows={3} label="Loading subscribers" />
@@ -385,6 +469,9 @@ export default function MerchantPage() {
             {mandates.map((m) => {
               const due = m.status === "Active" && m.next_charge * 1000 <= Date.now();
               const meta = metaFor(metas, m.token ?? config.contracts.token);
+              const balance = balances[m.subscriber] ?? null;
+              const funding = mandateFunding(balance, BigInt(m.amount));
+              const short = funding.status === "short";
               return (
                 <div
                   key={m.id}
@@ -404,21 +491,39 @@ export default function MerchantPage() {
                       {formatPeriod(m.period)} · {m.charges_made} settled · next{" "}
                       {m.status === "Active" ? formatWhen(m.next_charge) : "—"}
                     </div>
+                    <div className="mt-1 text-xs font-medium">
+                      {balance === null ? (
+                        <span className="text-muted">Vault balance —</span>
+                      ) : short ? (
+                        <span className="text-rose-300">
+                          Short by {fromStroops(funding.shortfall)} {meta.symbol}
+                        </span>
+                      ) : (
+                        <span className="text-accent">Funded</span>
+                      )}
+                    </div>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {due && (
-                      <button
-                        type="button"
-                        className="btn-primary"
-                        disabled={busy !== null || networkMismatch}
-                        onClick={() =>
-                          void run(`charge-${m.id}`, () =>
-                            payflow.charge(address, signXdr, m.id),
-                          )
-                        }
-                      >
-                        {busy === `charge-${m.id}` ? "Charging…" : "Charge now"}
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          className="btn-primary"
+                          disabled={busy !== null || networkMismatch || short}
+                          onClick={() =>
+                            void run(`charge-${m.id}`, () =>
+                              payflow.charge(address, signXdr, m.id),
+                            )
+                          }
+                        >
+                          {busy === `charge-${m.id}` ? "Charging…" : short ? "Short on funds" : "Charge now"}
+                        </button>
+                        {short && (
+                          <span className="text-xs text-rose-300">
+                            Subscriber vault short by {fromStroops(funding.shortfall)} {meta.symbol}
+                          </span>
+                        )}
+                      </>
                     )}
                     {endable(m) &&
                       (confirmEnd === m.id ? (

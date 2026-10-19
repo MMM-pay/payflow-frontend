@@ -1,6 +1,7 @@
 import { MAX_PAGE, mandateStatus, payflow, type Mandate, type Plan } from "./payflow";
-import type { ApiMandate, ApiPlan, MerchantSummary } from "./api";
+import type { ApiCharge, ApiMandate, ApiPlan, MerchantSummary } from "./api";
 import { availabilityInteger } from "./availability";
+import { fromStroops } from "./format";
 
 /**
  * Contract-only fallbacks for the lists the indexer normally serves.
@@ -170,3 +171,57 @@ export function chainMerchantSummary(
     mrr: mrr.toString(),
   };
 }
+
+/** A charge row for display: gross, fee, and net as decimal strings. */
+export interface PlanCharge {
+  mandateId: number;
+  subscriber: string;
+  amount: string;
+  fee: string;
+  net: string;
+  txHash: string;
+  ledger: number;
+}
+
+/** Build a display row for a charge settled against a plan. Amounts never use floats. */
+export function planChargeRow(charge: ApiCharge, subscriber: string): PlanCharge {
+  const amount = BigInt(charge.amount);
+  const fee = BigInt(charge.fee);
+  return {
+    mandateId: charge.mandate_id,
+    subscriber,
+    amount: fromStroops(amount),
+    fee: fromStroops(fee),
+    net: fromStroops(amount - fee),
+    txHash: charge.tx_hash,
+    ledger: charge.ledger,
+  };
+}
+
+/** Whether a mandate can be charged against a subscriber's vault balance.
+ *
+ * `shortfall` is in stroops (smallest unit) and is zero when funded.
+ */
+export interface MandateFunding {
+  status: "funded" | "short";
+  shortfall: bigint;
+}
+
+/** Compare a vault balance against a mandate amount. Returns "short" with the
+ * stroops shortfall when the vault cannot cover one charge, "funded" otherwise.
+ * A null balance (read still in flight or failed) is treated as unknown: not
+ * short, so the UI can show "—" rather than wrongly blocking a charge. */
+export function mandateFunding(
+  vaultBalance: bigint | null,
+  mandateAmount: bigint,
+): MandateFunding {
+  // A null balance (read still in flight or failed) is unknown: don't block
+  // the charge on a missing read. Treat it as not-short.
+  if (vaultBalance === null) {
+    return { status: "funded", shortfall: 0n };
+  }
+  const shortfall = mandateAmount - vaultBalance;
+  return shortfall > 0n ? { status: "short", shortfall } : { status: "funded", shortfall: 0n };
+}
+
+

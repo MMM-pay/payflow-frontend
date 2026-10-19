@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chainMerchantSummary, endable, mandateToApi, newestPages } from "@/lib/chain";
+import { chainMerchantSummary, endable, mandateFunding, mandateToApi, newestPages } from "@/lib/chain";
 import { mandateStatus, type Mandate } from "@/lib/payflow";
 import type { ApiMandate } from "@/lib/api";
 
@@ -171,5 +171,28 @@ describe("mandate status from contract state", () => {
     const m = mandateToApi(raw);
     expect(m.status).toBe("Active");
     expect(chainMerchantSummary(MERCHANT, [m]).activeMandates).toBe(1);
+  });
+});
+
+describe("mandateFunding", () => {
+  const ONE_XLM = 10_000_000n;
+
+  it("reports funded when the vault covers the mandate amount", () => {
+    expect(mandateFunding(20_000_000n, ONE_XLM)).toEqual({ status: "funded", shortfall: 0n });
+    expect(mandateFunding(ONE_XLM, ONE_XLM)).toEqual({ status: "funded", shortfall: 0n });
+  });
+
+  it("reports short with the exact stroops shortfall", () => {
+    expect(mandateFunding(5_000_000n, ONE_XLM)).toEqual({ status: "short", shortfall: 5_000_000n });
+    expect(mandateFunding(0n, ONE_XLM)).toEqual({ status: "short", shortfall: ONE_XLM });
+  });
+
+  it("treats a null balance as unknown, not short", () => {
+    expect(mandateFunding(null, ONE_XLM)).toEqual({ status: "funded", shortfall: 0n });
+  });
+
+  it("keeps large shortfalls exact without floating point", () => {
+    const huge = 10_000_000_000_000n; // 1 million XLM
+    expect(mandateFunding(0n, huge)).toEqual({ status: "short", shortfall: huge });
   });
 });
