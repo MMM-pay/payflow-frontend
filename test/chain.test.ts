@@ -8,7 +8,7 @@ import {
   merchantFromParam,
   newestPages,
 } from "@/lib/chain";
-import { mandateStatus, type Mandate } from "@/lib/payflow";
+import { mandatePauseUntil, mandateStatus, type Mandate } from "@/lib/payflow";
 import type { ApiMandate } from "@/lib/api";
 
 /**
@@ -148,6 +148,48 @@ describe("endable", () => {
     expect(endable({ status: "Paused" })).toBe(true);
     expect(endable({ status: "Cancelled" })).toBe(false);
     expect(endable({ status: "Completed" })).toBe(false);
+  });
+});
+
+describe("pause_until from contract state", () => {
+  const raw: Mandate = {
+    id: 1n,
+    subscriber: "GAP6QFLXQD73URCC3EXU2WOQHIAREPCGMSIMKF5PFLLI5TR6HTMNDTIE",
+    plan_id: 1n,
+    merchant: MERCHANT,
+    token: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    amount: 10_000_000n,
+    period: 60n,
+    next_charge: 0n,
+    last_charge: 0n,
+    charges_made: 0,
+    max_charges: 0,
+    fee_bps: 100,
+    status: ["Paused"],
+  };
+
+  it("maps the contract's bigint onto an indexer-style number", () => {
+    const until = Date.UTC(2026, 9, 25) / 1000;
+    const m = mandateToApi({ ...raw, pause_until: BigInt(until) });
+
+    expect(m.pause_until).toBe(until);
+    expect(mandatePauseUntil(m)).toBe(until);
+  });
+
+  it("leaves it absent when the contract predates the field", () => {
+    const m = mandateToApi(raw);
+
+    expect(m.pause_until).toBeUndefined();
+    // Absence is the capability signal; the page hides the picker.
+    expect(mandatePauseUntil(m)).toBeNull();
+  });
+
+  it("treats a reported zero as support, not absence", () => {
+    // A contract that ships the field reports 0 for "no dated pause". That is
+    // still proof the contract can service one, so the control must be shown.
+    const m = mandateToApi({ ...raw, pause_until: 0n });
+    expect(m.pause_until).toBe(0);
+    expect(mandatePauseUntil(m)).toBe(0);
   });
 });
 

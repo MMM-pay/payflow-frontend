@@ -73,6 +73,12 @@ export function mandateToApi(mandate: Mandate): ApiMandate {
     // Only present once payflow-contract#9 mirrors `trial` onto the mandate;
     // see `ApiPlan.trial` for why this stays undefined rather than 0.
     ...(mandate.trial !== undefined ? { trial: Number(mandate.trial) } : {}),
+    // Only present once payflow-contract#41 adds `pause_until` to Mandate; a
+    // contract decoded without it cannot service a dated pause, and the page
+    // hides the control instead of guessing at support.
+    ...(mandate.pause_until !== undefined
+      ? { pause_until: Number(mandate.pause_until) }
+      : {}),
     // Only present once payflow-contract#37 mirrors the discount onto the
     // mandate; a contract without the fields cannot say, and a zero would
     // claim there is no discount where there is one.

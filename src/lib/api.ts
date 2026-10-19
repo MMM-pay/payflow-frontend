@@ -56,6 +56,15 @@ export interface ApiMandate {
    */
   trial?: number;
   /**
+   * When a paused mandate resumes, as a Unix time, from payflow-contract#41.
+   *
+   * Optional because the field has not shipped: the contract only reports it
+   * once the dated pause exists, and the indexer only serves what the contract
+   * emits. Absent therefore means "this source cannot pause until a date",
+   * which is what the account page uses to hide the control.
+   */
+  pause_until?: number;
+  /**
    * The discount the merchant set on this mandate, in basis points, and how
    * many charges it covers.
    *

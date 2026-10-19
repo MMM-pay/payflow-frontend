@@ -43,7 +43,12 @@ vi.mock("@/lib/wallet", () => ({ useWallet: () => wallet }));
 vi.mock("@/lib/api", () => ({
   api: { mandatesOf: apiMock.mandatesOf, vaultHistory: apiMock.vaultHistory },
 }));
-vi.mock("@/lib/payflow", () => ({ payflow: payflowMock, readContract: payflowMock.readContract }));
+vi.mock("@/lib/payflow", () => ({
+  payflow: payflowMock,
+  readContract: payflowMock.readContract,
+  // This page's tests predate payflow-contract#41; the dated pause stays off.
+  mandatePauseUntil: () => null,
+}));
 vi.mock("@/lib/chain", () => ({ chainMandatesOf: chainMock.chainMandatesOf }));
 vi.mock("@/lib/toml", () => ({ useOrgName: () => null }));
 

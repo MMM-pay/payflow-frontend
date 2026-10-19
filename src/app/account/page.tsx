@@ -17,7 +17,7 @@ import {
   nextChargeAmount,
   remainingDiscountCharges,
 } from "@/lib/discount";
-import { payflow } from "@/lib/payflow";
+import { mandatePauseUntil, payflow } from "@/lib/payflow";
 import { mandateStatus } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
 import {
@@ -25,7 +25,10 @@ import {
   formatDate,
   formatPeriod,
   fromStroops,
+  minPauseDate,
   parseAmount,
+  parsePauseDate,
+  resumeDate,
 } from "@/lib/format";
 import { buildChargeSchedule, chargeShortfall } from "@/lib/schedule";
 import { describeTrialEnd } from "@/lib/trial";
@@ -55,6 +58,10 @@ export default function AccountPage() {
   // One id, not a set: only one mandate can be awaiting confirmation at a
   // time, which keeps the destructive action unambiguous.
   const [confirmCancel, setConfirmCancel] = useState<number | null>(null);
+  // The mandate whose date picker is open, and the date typed into it. Like
+  // `confirmCancel`, one at a time keeps the pending write unambiguous.
+  const [pauseFor, setPauseFor] = useState<number | null>(null);
+  const [pauseDate, setPauseDate] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
@@ -105,6 +112,7 @@ export default function AccountPage() {
   // confirming state.
   useEffect(() => {
     setConfirmCancel(null);
+    setPauseFor(null);
   }, [address]);
 
   async function run(key: string, fn: () => Promise<string>) {
@@ -173,6 +181,47 @@ export default function AccountPage() {
   }
 
   const activeCount = mandates?.filter((m) => m.status === "Active").length ?? 0;
+
+  /**
+   * Whether the contract behind these mandates can service a dated pause.
+   *
+   * A contract built before payflow-contract#41 decodes its mandates without
+   * `pause_until`, so the absence of that field is the signal; there is no
+   * method to probe. Checking the mandates already on screen costs no extra
+   * round trip. With an indexer configured, it has to serve the field too —
+   * when it cannot, hiding the control is still the honest choice, because
+   * offering it would send a transaction the deployed contract may reject.
+   */
+  const pauseSupported = (mandates ?? []).some(
+    (m) => mandatePauseUntil(m) !== null,
+  );
+
+  function openPausePicker(mandateId: number) {
+    setPauseFor(mandateId);
+    // Default to a week out: long enough to be the common case, short enough
+    // that the user can still see what they picked.
+    const week = new Date(Date.now() + 7 * 86_400_000);
+    setPauseDate(week.toISOString().slice(0, 10));
+    setConfirmCancel(null);
+    setError(null);
+  }
+
+  async function pauseUntil(mandateId: number) {
+    if (!address) return;
+    const until = parsePauseDate(pauseDate);
+    if (until === null) {
+      setError("Pick a date for the mandate to resume on.");
+      return;
+    }
+    if (until * 1000 <= Date.now()) {
+      setError("Pick a date in the future.");
+      return;
+    }
+    await run(`pause-until-${mandateId}`, () =>
+      payflow.pauseUntil(address, signXdr, mandateId, until),
+    );
+    setPauseFor(null);
+  }
 
   /**
    * The .ics is generated in the browser from the same mandates shown on this
@@ -416,6 +465,7 @@ export default function AccountPage() {
             {mandates.map((m) => {
               const terminal = m.status === "Cancelled" || m.status === "Completed";
               const meta = metaFor(metas, m.token ?? config.contracts.token);
+              const resumes = resumeDate(mandatePauseUntil(m));
               const trial = describeTrialEnd(m);
               // What the next charge costs while the merchant's discount runs.
               const discounted = nextChargeAmount(m);
@@ -442,6 +492,9 @@ export default function AccountPage() {
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-medium">Mandate #{m.id}</span>
                         <Badge status={m.status} />
+                        {resumes && (
+                          <span className="text-xs text-muted">resumes {resumes}</span>
+                        )}
                         {trial && (
                           <span className="rounded-full bg-accent/15 px-2 py-0.5 text-xs font-medium text-accent">
                             Free trial
@@ -506,7 +559,7 @@ export default function AccountPage() {
                     </div>
 
                     {!terminal && (
-                      <div className="flex gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <button
                           type="button"
                           className="btn-ghost"
@@ -524,6 +577,50 @@ export default function AccountPage() {
                         >
                           {m.status === "Active" ? "Pause" : "Resume"}
                         </button>
+                        {/* Offered only against a contract that carries
+                            pause_until; see `pauseSupported`. */}
+                        {pauseSupported &&
+                          (pauseFor === m.id ? (
+                            <>
+                              <label className="sr-only" htmlFor={`pause-until-${m.id}`}>
+                                Resume date for mandate {m.id}
+                              </label>
+                              <input
+                                id={`pause-until-${m.id}`}
+                                type="date"
+                                className="input"
+                                min={minPauseDate()}
+                                value={pauseDate}
+                                disabled={busy !== null}
+                                onChange={(e) => setPauseDate(e.target.value)}
+                              />
+                              <button
+                                type="button"
+                                className="btn-primary"
+                                disabled={busy !== null || networkMismatch}
+                                onClick={() => void pauseUntil(m.id)}
+                              >
+                                {busy === `pause-until-${m.id}` ? "Pausing…" : "Pause until…"}
+                              </button>
+                              <button
+                                type="button"
+                                className="btn-ghost"
+                                disabled={busy !== null}
+                                onClick={() => setPauseFor(null)}
+                              >
+                                Back
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              className="btn-ghost"
+                              disabled={busy !== null || networkMismatch}
+                              onClick={() => openPausePicker(m.id)}
+                            >
+                              Pause until…
+                            </button>
+                          ))}
                         {confirmCancel === m.id ? (
                           <>
                             <button

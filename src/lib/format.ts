@@ -359,3 +359,46 @@ export function amountError(input: string, decimals = DECIMALS): string | null {
     return err instanceof Error ? err.message : String(err);
   }
 }
+
+/**
+ * The Unix time a date picker's `YYYY-MM-DD` means: midnight UTC on that day.
+ *
+ * A date with no time in it is ambiguous, and a mandate's resume has to read
+ * the same to everyone looking at it, so this is pinned to UTC rather than the
+ * viewer's timezone. "Pause until 2026-10-25" therefore resumes at the start
+ * of the 25th.
+ */
+export function parsePauseDate(value: string): number | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+  const [, year = "", month = "", day = ""] = match;
+  const ms = Date.UTC(Number(year), Number(month) - 1, Number(day));
+  // Date.UTC rolls 31 February over into March, so check it came back whole.
+  const back = new Date(ms);
+  if (back.getUTCFullYear() !== Number(year)) return null;
+  if (back.getUTCMonth() !== Number(month) - 1) return null;
+  if (back.getUTCDate() !== Number(day)) return null;
+  return Math.floor(ms / 1000);
+}
+
+/**
+ * The earliest date a pause can run until, as a date picker value: tomorrow.
+ *
+ * Today cannot be chosen because a date means midnight UTC, which has already
+ * passed by the time the transaction lands.
+ */
+export function minPauseDate(now: number = Date.now()): string {
+  return new Date(now + 86_400_000).toISOString().slice(0, 10);
+}
+
+/**
+ * A resume timestamp as a calendar date, or null when there is no future
+ * resume to show. Returned as `YYYY-MM-DD` rather than a locale string so the
+ * page does not disagree with itself between readers.
+ */
+export function resumeDate(unixSeconds: number | null, now: number = Date.now()): string | null {
+  if (unixSeconds === null || !Number.isFinite(unixSeconds)) return null;
+  const at = unixSeconds * 1000;
+  if (at <= now) return null;
+  return new Date(at).toISOString().slice(0, 10);
+}

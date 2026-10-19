@@ -272,6 +272,13 @@ export interface Mandate {
    * payflow-contract#9. Optional for the same reason as `Plan.trial`.
    */
   trial?: bigint;
+  /**
+   * When a paused mandate resumes, from payflow-contract#41. Optional because
+   * the deployed contract predates it: a mandate decoded without the key means
+   * that contract cannot service a pause-until, and the UI hides the control
+   * rather than building a transaction the contract would reject.
+   */
+  pause_until?: bigint;
 }
 
 /**
@@ -282,6 +289,27 @@ export interface Mandate {
 export function mandateStatus(raw: unknown): string {
   if (Array.isArray(raw)) return String(raw[0] ?? "");
   return String(raw ?? "");
+}
+
+/**
+ * When a mandate resumes, or null when the contract does not report it.
+ *
+ * A contract built before payflow-contract#41 decodes without `pause_until`,
+ * so its absence *is* the capability signal: there is no method to probe and
+ * no version to guess at, and treating null as "no such feature" hides the
+ * date picker exactly when the contract cannot service it. Read through this
+ * helper rather than the raw field because contract state carries a bigint
+ * while an indexer row carries a number.
+ */
+export function mandatePauseUntil(mandate: unknown): number | null {
+  const value = (mandate as { pause_until?: unknown } | null | undefined)?.pause_until;
+  const seconds =
+    typeof value === "bigint"
+      ? Number(value)
+      : typeof value === "number"
+        ? value
+        : Number.NaN;
+  return Number.isFinite(seconds) ? seconds : null;
 }
 
 export const payflow = {
@@ -455,6 +483,24 @@ export const payflow = {
     writeContract(config.contracts.subscription, "set_paused", source, sign, [
       arg.u64(mandateId),
       arg.bool(paused),
+    ]),
+
+  /**
+   * Subscriber side: pause billing until a point in time, from the interface
+   * proposed in payflow-contract#41. Only callable against a contract that
+   * carries `pause_until` — see `mandatePauseUntil`, which is how the UI
+   * decides whether to offer this at all.
+   */
+  pauseUntil: (
+    source: string,
+    sign: SignXdr,
+    mandateId: number | bigint,
+    untilUnixSeconds: number,
+  ) =>
+    writeContract(config.contracts.subscription, "pause_until", source, sign, [
+      arg.address(source),
+      arg.u64(mandateId),
+      arg.u64(untilUnixSeconds),
     ]),
 
   /**

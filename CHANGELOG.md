@@ -15,6 +15,13 @@ All notable changes to payflow-frontend. The format follows
 
 ### Added
 
+- **Pause until a date on the account page.** A subscriber can choose the day
+  billing resumes, and a paused mandate shows that date. The control is hidden
+  unless the mandate data carries `pause_until`, so a deployed contract that
+  predates the field — including the current testnet deployment — never offers
+  a write it cannot service. Built against the interface proposed in
+  payflow-contract#41; the indexer must serve the field for the control to
+  appear when a backend is configured.
 - **Light theme with a system default.** Both palettes are exposed as CSS
   variables, the page follows `prefers-color-scheme` unless the reader chooses
   Light or Dark from the header, and the choice is saved in `localStorage`. A
