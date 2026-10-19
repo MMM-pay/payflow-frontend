@@ -47,6 +47,8 @@ const chainMock = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/wallet", () => ({ useWallet: () => wallet }));
+// The subscribe page reads the `?plan=` parameter of a shared link.
+vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams() }));
 vi.mock("@/lib/api", () => ({ api: apiMock }));
 vi.mock("@/lib/payflow", () => ({
   payflow: payflowMock,

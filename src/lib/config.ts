@@ -22,6 +22,14 @@ export const config = {
   network: process.env.NEXT_PUBLIC_STELLAR_NETWORK ?? "TESTNET",
   apiUrl: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080",
   /**
+   * The path the static export is served from.
+   *
+   * GitHub Pages serves a project site from `/<repo>`, so a link built without
+   * it 404s on the deployed demo. Vercel and local dev serve from the root and
+   * set nothing.
+   */
+  basePath: (process.env.NEXT_PUBLIC_BASE_PATH ?? "").replace(/\/+$/, ""),
+  /**
    * Source account used for read-only contract simulation before a wallet is
    * connected. Simulation never touches this account — it only has to exist on
    * the network. Defaults to the deployer of the public testnet suite.

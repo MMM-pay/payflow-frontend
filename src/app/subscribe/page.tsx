@@ -1,11 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { api, type ApiPlan } from "@/lib/api";
 import { chainPlans } from "@/lib/chain";
 import { config } from "@/lib/config";
 import { payflow } from "@/lib/payflow";
+import { planParam } from "@/lib/share";
 import { useWallet } from "@/lib/wallet";
 import { formatDate, formatWhen, formatPeriod, fromStroops } from "@/lib/format";
 import { formatTrialLength, trialBadge, trialSeconds } from "@/lib/trial";
@@ -13,7 +15,17 @@ import { planAvailability } from "@/lib/availability";
 import { metaFor, useTokenMetas } from "@/lib/token";
 import { Empty, MerchantAccount, Notice, Panel, SkeletonPlanCards, TxLink } from "@/components/ui";
 
-export default function SubscribePage() {
+/**
+ * The plan list.
+ *
+ * A merchant shares `/subscribe/?plan=12` to send a customer to one plan
+ * instead of the whole catalogue. The parameter is read at runtime — the app
+ * is a static export, so per-plan state cannot live in the path — and the
+ * page then shows that plan alone, with a way back to the full list.
+ */
+function SubscribePlans() {
+  const params = useSearchParams();
+  const wanted = planParam(params.get("plan"));
   const { address, networkMismatch, signXdr } = useWallet();
   const [plans, setPlans] = useState<ApiPlan[] | null>(null);
   const [maxCharges, setMaxCharges] = useState<Record<number, string>>({});
@@ -116,11 +128,20 @@ export default function SubscribePage() {
   }
 
   const active = (plans ?? []).filter((p) => p.active === 1);
+  // A shared link points at one plan; the catalogue is the fallback.
+  const shown =
+    wanted.kind === "plan" ? active.filter((p) => p.id === wanted.id) : active;
+  const single = wanted.kind === "plan";
+  // Only once the list has loaded: an empty list is still "loading", not
+  // "this plan does not exist".
+  const missing = single && plans !== null && shown.length === 0;
+  const heading =
+    single && shown[0] ? shown[0].name || `Plan #${shown[0].id}` : "Available plans";
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Available plans</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">{heading}</h1>
         <p className="mt-1 text-sm text-muted">
           Subscribing opens a mandate. Fund your vault on the{" "}
           <Link href="/account" className="text-accent hover:underline">
@@ -129,6 +150,20 @@ export default function SubscribePage() {
           or charges will fail for lack of balance.
         </p>
       </div>
+
+      {single && (
+        <p className="text-sm">
+          <Link href="/subscribe/" className="text-accent hover:underline">
+            See all plans
+          </Link>
+        </p>
+      )}
+
+      {wanted.kind === "invalid" && (
+        <Notice tone="info">
+          That link does not name a plan, so every plan is listed below.
+        </Notice>
+      )}
 
       {direct && (
         <Notice tone="info">
@@ -153,13 +188,24 @@ export default function SubscribePage() {
 
       {plans === null ? (
         <SkeletonPlanCards label="Loading plans" />
-      ) : active.length === 0 ? (
+      ) : missing ? (
+        <Notice tone="info">
+          That plan is no longer listed — it may have been deactivated or
+          removed. Every available plan is on the{" "}
+          <Link href="/subscribe/" className="text-accent hover:underline">
+            catalogue
+          </Link>
+          .
+        </Notice>
+      ) : shown.length === 0 ? (
         <Empty>
-          No active plans yet. Publish one from the merchant page to see it here.
+          {single
+            ? "This plan is not available."
+            : "No active plans yet. Publish one from the merchant page to see it here."}
         </Empty>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">
-          {active.map((plan) => {
+          {shown.map((plan) => {
             const meta = metaFor(metas, plan.token);
             const badge = trialBadge(plan);
             const availability = planAvailability(plan, now);
@@ -244,5 +290,15 @@ export default function SubscribePage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function SubscribePage() {
+  // `useSearchParams` needs a boundary: the page is prerendered at build time
+  // and the plan id only arrives in the browser.
+  return (
+    <Suspense fallback={<SkeletonPlanCards label="Loading plans" />}>
+      <SubscribePlans />
+    </Suspense>
   );
 }

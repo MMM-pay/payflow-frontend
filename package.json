@@ -17,6 +17,7 @@
     "@creit.tech/stellar-wallets-kit": "^1.7.0",
     "@stellar/stellar-sdk": "^17.2.1",
     "next": "^15.1.6",
+    "qrcode-generator": "^2.0.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

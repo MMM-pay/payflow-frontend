@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { api, type ApiMandate, type ApiPlan, type MerchantSummary } from "@/lib/api";
 import { RevenueChart } from "@/components/RevenueChart";
@@ -9,6 +10,7 @@ import { fillBuckets, parseRevenue, type BucketSize, type RevenuePoint } from "@
 import { chainMandatesFor, chainMerchantSummary, chainPlansOf, endable, mandateFunding } from "@/lib/chain";
 import { config } from "@/lib/config";
 import { MAX_NAME_LEN, nameByteLength, payflow, server } from "@/lib/payflow";
+import { subscribeLink } from "@/lib/share";
 import { useWallet } from "@/lib/wallet";
 import {
   checkAmount,
@@ -25,6 +27,16 @@ import { supportsTrials, trialBadge, TRIAL_OPTIONS } from "@/lib/trial";
 import { AmountInput } from "@/components/AmountInput";
 import { CopyButton } from "@/components/CopyButton";
 import { AddressLink, Badge, Empty, Notice, Panel, SkeletonRows, Stat, TimeAgo, TxLink } from "@/components/ui";
+
+/**
+ * The QR code is only on screen once a merchant asks for it, so it is loaded
+ * then: the encoder is a third-party library and the dashboard should not
+ * carry it for every visitor.
+ */
+const QrCode = dynamic(
+  () => import("@/components/QrCode").then((module) => module.QrCode),
+  { ssr: false },
+);
 
 const PERIOD_OPTIONS = [
   { label: "Every minute (demo)", value: 60 },
@@ -169,10 +181,25 @@ export default function MerchantPage() {
   const [publicUrl, setPublicUrl] = useState("");
   useEffect(() => {
     if (!address) return;
-    setPublicUrl(
-      `${window.location.origin}${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/m/?address=${address}`,
-    );
+    setPublicUrl(`${window.location.origin}${config.basePath}/m/?address=${address}`);
   }, [address]);
+
+  /**
+   * The link to each plan, for the same reason: the origin is only known in
+   * the browser, and the link has to carry the base path the site is served
+   * from or it 404s on the deployed demo.
+   */
+  const [planLinks, setPlanLinks] = useState<Record<number, string>>({});
+  useEffect(() => {
+    const origin = window.location.origin;
+    const links: Record<number, string> = {};
+    for (const plan of plans ?? []) links[plan.id] = subscribeLink(origin, plan.id);
+    setPlanLinks(links);
+  }, [plans]);
+
+  // The plan whose QR code is on screen. Only one at a time: the codes are
+  // large, and a list of them is noise.
+  const [qrPlan, setQrPlan] = useState<number | null>(null);
 
   // Read once per wallet, not on every reload: the protocol fee only moves
   // when an admin changes it, and this is a preview rather than a gate — if the
@@ -511,38 +538,75 @@ export default function MerchantPage() {
           <div className="space-y-3">
             {plans.map((p) => {
               const meta = metaFor(metas, p.token);
+              const name = p.name || `Plan #${p.id}`;
+              const link = planLinks[p.id] ?? "";
+              const qrOpen = qrPlan === p.id;
               return (
-                <div
-                  key={p.id}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-edge p-4"
-                >
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">{p.name || `Plan #${p.id}`}</span>
-                      <Badge status={p.active ? "Active" : "Paused"} />
-                      {trialBadge(p) && (
-                        <span className="rounded-full bg-accent/15 px-2 py-0.5 text-xs font-medium text-accent">
-                          {trialBadge(p)}
-                        </span>
+                <div key={p.id} className="rounded-lg border border-edge p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{name}</span>
+                        <Badge status={p.active ? "Active" : "Paused"} />
+                        {trialBadge(p) && (
+                          <span className="rounded-full bg-accent/15 px-2 py-0.5 text-xs font-medium text-accent">
+                            {trialBadge(p)}
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-1 text-sm text-muted">
+                        {fromStroops(p.amount, 4, meta.decimals)} {meta.symbol}{" "}
+                        {formatPeriod(p.period)}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        disabled={busy !== null || networkMismatch}
+                        onClick={() =>
+                          void run(`toggle-${p.id}`, () =>
+                            payflow.setPlanActive(address, signXdr, p.id, p.active !== 1),
+                          )
+                        }
+                      >
+                        {p.active ? "Deactivate" : "Activate"}
+                      </button>
+                      {link && (
+                        <>
+                          <CopyButton value={link} label={`link to ${name}`} />
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            aria-expanded={qrOpen}
+                            aria-controls={`qr-${p.id}`}
+                            onClick={() => setQrPlan(qrOpen ? null : p.id)}
+                          >
+                            {qrOpen ? "Hide QR" : "Show QR"}
+                          </button>
+                        </>
                       )}
                     </div>
-                    <div className="mt-1 text-sm text-muted">
-                      {fromStroops(p.amount, 4, meta.decimals)} {meta.symbol}{" "}
-                      {formatPeriod(p.period)}
-                    </div>
                   </div>
-                  <button
-                    type="button"
-                    className="btn-ghost"
-                    disabled={busy !== null || networkMismatch}
-                    onClick={() =>
-                      void run(`toggle-${p.id}`, () =>
-                        payflow.setPlanActive(address, signXdr, p.id, p.active !== 1),
-                      )
-                    }
-                  >
-                    {p.active ? "Deactivate" : "Activate"}
-                  </button>
+
+                  {qrOpen && link && (
+                    <div
+                      id={`qr-${p.id}`}
+                      className="mt-4 flex flex-wrap items-center gap-4 border-t border-edge pt-4"
+                    >
+                      <QrCode data={link} label={`QR code for the link to ${name}`} />
+                      <div className="min-w-[12rem] flex-1">
+                        <p className="text-sm font-medium">Send customers to this plan</p>
+                        <p className="mono mt-1 break-all text-xs text-muted">{link}</p>
+                        <Link
+                          href={`/subscribe/?plan=${p.id}`}
+                          className="mt-2 inline-block text-sm text-accent hover:underline"
+                        >
+                          Open the plan page
+                        </Link>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}

@@ -26,7 +26,7 @@ Four pages:
 | Route | Who it is for | What it does |
 |---|---|---|
 | `/` | everyone | Explains the mandate model, shows protocol counters and live contract IDs |
-| `/subscribe` | subscribers | Browse published plans and open a mandate |
+| `/subscribe` | subscribers | Browse published plans and open a mandate. A shared link (`?plan=12`) opens one plan |
 | `/account` | subscribers | Fund and withdraw from the vault, pause or cancel subscriptions |
 | `/merchant` | merchants | Publish plans, track revenue, settle due mandates manually, end a subscriber's mandate |
 
@@ -101,6 +101,8 @@ src/
     wallet.tsx    Stellar Wallets Kit context
     format.ts     stroop/decimal conversion, period and address formatting
     config.ts     env access
+    share.ts      shareable plan links
+    qr.ts         QR codes for those links
 ```
 
 `src/lib/payflow.ts` is the piece worth reading first: it maps every public

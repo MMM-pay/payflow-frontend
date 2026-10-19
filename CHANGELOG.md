@@ -15,6 +15,12 @@ All notable changes to payflow-frontend. The format follows
 
 ### Added
 
+- **Shareable plan links with QR codes.** A merchant can copy the link to a
+  plan, or show its QR code, from the dashboard, and `/subscribe/?plan=12`
+  opens that plan alone with a way back to the catalogue. The link carries the
+  base path the static export is served from, so it resolves on the deployed
+  demo. The code is drawn from the link itself, so the two cannot disagree.
+
 - Subscribe cards show optional availability cutoffs and remaining seats, and
   reject expired/full plans before signing. Unlimited/legacy plans stay unchanged.
   Built against payflow-contract#26 (`available_until`, Unix seconds; 0 forever)
