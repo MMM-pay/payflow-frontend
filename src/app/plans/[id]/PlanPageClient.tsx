@@ -1,10 +1,11 @@
 "use client";
 
 import { notFound } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { api, type ApiMandate, type ApiPlan } from "@/lib/api";
 import { chainMandatesFor, chainPlans, planChargeRow, type PlanCharge } from "@/lib/chain";
+import { planAvailability } from "@/lib/availability";
 import { config } from "@/lib/config";
 import { payflow } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
@@ -28,6 +29,14 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
   const [maxCharges, setMaxCharges] = useState("");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<string | null>(null);
+
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
+  const walletState = useRef({ address, networkMismatch });
+  walletState.current = { address, networkMismatch };
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -101,6 +110,9 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
   // `notFound()` terminates rendering when the plan is missing, so `plan` is
   // non-null from here on.
   const subscribePlanId = plan.id;
+  const unavailable = plan.active !== 1
+    ? "This plan is closed to new subscriptions."
+    : planAvailability(plan, now).reason;
 
   async function subscribe() {
     if (!address) {
@@ -109,6 +121,11 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
     }
     if (networkMismatch) {
       setError("Switch your wallet to the correct network first.");
+      return;
+    }
+    const blocked = unavailable || planAvailability(plan ?? {}).reason;
+    if (blocked) {
+      setError(blocked);
       return;
     }
     const limit = Number(maxCharges?.trim()) || 0;
@@ -120,7 +137,23 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
     setError(null);
     setDone(null);
     try {
-      const hash = await payflow.subscribe(address, signXdr, subscribePlanId, limit);
+      const res = await api.plans();
+      const plans = res ? res.plans : await chainPlans(address);
+      const latest = plans.find((p) => p.id === subscribePlanId);
+      if (!latest || latest.active !== 1) throw new Error("This plan is no longer available.");
+      setPlan(latest);
+      const check = () => {
+        if (walletState.current.address !== address || walletState.current.networkMismatch) {
+          throw new Error("Wallet changed. Check your wallet and try again.");
+        }
+        const reason = planAvailability(latest).reason;
+        if (reason) throw new Error(reason);
+      };
+      check();
+      const hash = await payflow.subscribe(address, async (xdr) => {
+        check();
+        return signXdr(xdr);
+      }, subscribePlanId, limit);
       setDone(hash);
       setMaxCharges("");
     } catch (err) {
@@ -213,6 +246,7 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
           </Link>{" "}
           first, or charges will fail for lack of balance.
         </p>
+        {unavailable && <p id="plan-availability" className="text-sm text-muted">{unavailable}</p>}
         <div className="flex flex-wrap items-end gap-3">
           <div className="min-w-[12rem] flex-1">
             <label className="label" htmlFor="plan-charge-limit">
@@ -230,7 +264,8 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
           <button
             type="button"
             className="btn-primary"
-            disabled={busy || !address || networkMismatch}
+            disabled={busy || !address || networkMismatch || unavailable !== null}
+            aria-describedby={unavailable ? "plan-availability" : undefined}
             onClick={() => void subscribe()}
           >
             {busy
