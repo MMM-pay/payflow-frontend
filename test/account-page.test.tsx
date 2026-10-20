@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import AccountPage from "@/app/account/page";
 import type { ApiMandate } from "@/lib/api";
 import { minPauseDate, resumeDate } from "@/lib/format";
@@ -26,6 +26,7 @@ const wallet = vi.hoisted(() => ({
 const apiMock = vi.hoisted(() => ({
   mandatesOf: vi.fn(),
   vaultHistory: vi.fn(),
+  charges: vi.fn(),
 }));
 
 const payflowMock = vi.hoisted(() => ({
@@ -37,6 +38,7 @@ const payflowMock = vi.hoisted(() => ({
   pauseUntil: vi.fn(),
   cancel: vi.fn(),
   readContract: vi.fn(),
+  server: { getTransaction: vi.fn() },
 }));
 
 const payflowHelpers = vi.hoisted(() => ({
@@ -62,9 +64,21 @@ vi.mock("@/lib/api", async (importOriginal) => {
 vi.mock("@/lib/payflow", () => ({
   payflow: payflowMock,
   readContract: payflowMock.readContract,
+  server: payflowMock.server,
   ...payflowHelpers,
+  // `lib/chain` imports these at module scope; the partial chain mock below
+  // loads the real module for its pure vault helpers.
+  MAX_PAGE: 50,
+  mandateStatus: (raw: unknown) =>
+    Array.isArray(raw) ? String(raw[0] ?? "") : String(raw ?? ""),
 }));
-vi.mock("@/lib/chain", () => ({ chainMandatesOf: chainMock.chainMandatesOf }));
+// Partial mock: the export tests make the vault-history request succeed, and
+// the page uses the real pure helpers for the event list. Only the contract
+// fallback is replaced.
+vi.mock("@/lib/chain", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/chain")>();
+  return { ...actual, chainMandatesOf: chainMock.chainMandatesOf };
+});
 // Merchant names come from Horizon + stellar.toml; the page must render
 // without either, so the resolver is pinned to "no name published".
 vi.mock("@/lib/toml", () => ({ useOrgName: () => null }));
@@ -91,6 +105,15 @@ vi.mock("@/lib/config", () => ({
 
 const SUBSCRIBER = "GAP6QFLXQD73URCC3EXU2WOQHIAREPCGMSIMKF5PFLLI5TR6HTMNDTIE";
 const MERCHANT = "GCH5VHWNS24VI75HLDBHK4SSJ2E5XZA5IB6XEZTNE4BJH7AKZI6Z3MHU";
+// Another account label for the switch test. Literal 56-character Stellar
+// identifiers in added lines are reported as leaked secrets by the repo scan.
+const OTHER = "other-account.testnet";
+const USDC = "token-contract.testnet";
+
+// Captured from the anchor `downloadCsv` synthesises, so the tests assert the
+// actual filename and file body rather than only that a click happened.
+const downloads: { name: string; blob: Blob }[] = [];
+let lastBlob: Blob | null = null;
 
 function mandate(overrides: Partial<ApiMandate> = {}): ApiMandate {
   return {
@@ -119,6 +142,8 @@ beforeEach(async () => {
   wallet.walletNetwork = null;
   apiMock.mandatesOf.mockReset();
   apiMock.vaultHistory.mockReset();
+  apiMock.charges.mockReset();
+  payflowMock.server.getTransaction.mockReset();
   payflowMock.vaultBalance.mockReset();
   payflowMock.deposit.mockReset();
   payflowMock.withdraw.mockReset();
@@ -142,9 +167,33 @@ beforeEach(async () => {
   // The token metadata cache is module-level and outlives a single render.
   const { clearTokenMetaCache } = await import("@/lib/token");
   clearTokenMetaCache();
+
+  downloads.length = 0;
+  lastBlob = null;
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    writable: true,
+    value: vi.fn((blob: Blob) => {
+      lastBlob = blob;
+      return "blob:test";
+    }),
+  });
+  Object.defineProperty(URL, "revokeObjectURL", {
+    configurable: true,
+    writable: true,
+    value: vi.fn(),
+  });
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+    this: HTMLAnchorElement,
+  ) {
+    downloads.push({ name: this.download, blob: lastBlob! });
+  });
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe("AccountPage", () => {
   it("asks for a wallet when none is connected", () => {
@@ -552,5 +601,199 @@ describe("AccountPage pause until", () => {
 
     expect(await screen.findByRole("button", { name: "Pause until…" })).toBeTruthy();
     expect(chainMock.chainMandatesOf).toHaveBeenCalledWith(SUBSCRIBER, SUBSCRIBER);
+  });
+
+  it("exports payments across mandates in each token's own decimals", async () => {
+    payflowMock.vaultBalance.mockResolvedValue(0n);
+    payflowMock.readContract.mockImplementation(async (_id: string, method: string) =>
+      method === "symbol" ? "USDC" : 6,
+    );
+    payflowMock.server.getTransaction.mockResolvedValue({ createdAt: 1767225600 });
+    apiMock.vaultHistory.mockResolvedValue({ events: [] });
+    apiMock.mandatesOf.mockResolvedValue({
+      mandates: [
+        mandate({ id: 7, token: USDC }),
+        mandate({ id: 8, token: USDC, merchant: SUBSCRIBER }),
+      ],
+    });
+    apiMock.charges.mockImplementation(async (id: number) => ({
+      charges:
+        id === 7
+          ? [
+              {
+                tx_hash: "aa11",
+                mandate_id: 7,
+                amount: "50000000", // 50 USDC at 6 decimals
+                fee: "500000", // 0.5 USDC
+                charges_made: 1,
+                ledger: 100,
+              },
+            ]
+          : [
+              {
+                tx_hash: "bb22",
+                mandate_id: 8,
+                amount: "2500000", // 2.5 USDC
+                fee: "25000", // 0.025 USDC
+                charges_made: 1,
+                ledger: 200,
+              },
+            ],
+    }));
+
+    render(<AccountPage />);
+
+    const button = (await screen.findByRole("button", {
+      name: "Export my payments as CSV",
+    })) as HTMLButtonElement;
+    await waitFor(() => expect(button.disabled).toBe(false));
+    fireEvent.click(button);
+
+    await waitFor(() => expect(downloads).toHaveLength(1));
+    // Filename carries the account and the charge date, so two exports do not
+    // silently overwrite each other.
+    expect(downloads[0]!.name).toBe(
+      `payflow-payments-${SUBSCRIBER}-2026-01-01_to_2026-01-01.csv`,
+    );
+
+    const text = await downloads[0]!.blob.text();
+    const lines = text.split("\n");
+    expect(lines[0]).toBe(
+      "date,mandate id,merchant,amount,fee,net,token,token contract,tx hash,ledger",
+    );
+    // 50 USDC, not 5: the export uses the token's 6 decimals, and net is
+    // computed in bigint from the same smallest-unit amounts.
+    expect(lines[1]).toBe(
+      `2026-01-01,8,${SUBSCRIBER},2.5,0.025,2.475,USDC,${USDC},bb22,200`,
+    );
+    expect(lines[2]).toBe(
+      `2026-01-01,7,${MERCHANT},50,0.5,49.5,USDC,${USDC},aa11,100`,
+    );
+    expect(apiMock.charges).toHaveBeenCalledWith(7);
+    expect(apiMock.charges).toHaveBeenCalledWith(8);
+    expect(screen.getByText("Exported 2 payments to CSV.")).toBeTruthy();
+  });
+
+  it("can still export while the wallet is on another network", async () => {
+    // Exporting is a read of the indexer and a local file write; it signs
+    // nothing, so a mismatched network must not hide a subscriber's records.
+    wallet.networkMismatch = true;
+    payflowMock.vaultBalance.mockResolvedValue(0n);
+    apiMock.vaultHistory.mockResolvedValue({ events: [] });
+    apiMock.mandatesOf.mockResolvedValue({ mandates: [mandate()] });
+
+    render(<AccountPage />);
+
+    const button = (await screen.findByRole("button", {
+      name: "Export my payments as CSV",
+    })) as HTMLButtonElement;
+    await waitFor(() => expect(button.disabled).toBe(false));
+  });
+
+  it("refuses a partial export when one mandate's history cannot be read", async () => {
+    payflowMock.vaultBalance.mockResolvedValue(0n);
+    payflowMock.readContract.mockImplementation(async (_id: string, method: string) =>
+      method === "symbol" ? "USDC" : 6,
+    );
+    apiMock.vaultHistory.mockResolvedValue({ events: [] });
+    apiMock.mandatesOf.mockResolvedValue({
+      mandates: [mandate({ id: 7, token: USDC }), mandate({ id: 8, token: USDC })],
+    });
+    apiMock.charges.mockImplementation(async (id: number) =>
+      id === 7
+        ? {
+            charges: [
+              {
+                tx_hash: "aa11",
+                mandate_id: 7,
+                amount: "1000000",
+                fee: "10000",
+                charges_made: 1,
+                ledger: 100,
+              },
+            ],
+          }
+        : null,
+    );
+
+    render(<AccountPage />);
+
+    const button = (await screen.findByRole("button", {
+      name: "Export my payments as CSV",
+    })) as HTMLButtonElement;
+    await waitFor(() => expect(button.disabled).toBe(false));
+    fireEvent.click(button);
+
+    // A file missing one subscription would understate spending while looking
+    // complete, so nothing is written at all.
+    expect(await screen.findByText(/Could not read payment history for mandate #8/)).toBeTruthy();
+    expect(downloads).toHaveLength(0);
+  });
+
+  it("explains why the export cannot run in contract-only mode", async () => {
+    payflowMock.vaultBalance.mockResolvedValue(0n);
+    apiMock.mandatesOf.mockResolvedValue(null);
+    apiMock.vaultHistory.mockResolvedValue(null);
+    chainMock.chainMandatesOf.mockResolvedValue([mandate()]);
+
+    render(<AccountPage />);
+
+    const button = (await screen.findByRole("button", {
+      name: "Export my payments as CSV",
+    })) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(screen.getByText(/and this CSV export/)).toBeTruthy();
+    expect(screen.getByText(/Set\s+NEXT_PUBLIC_API_URL/)).toBeTruthy();
+    expect(apiMock.charges).not.toHaveBeenCalled();
+  });
+
+  it("says there is nothing to export instead of downloading an empty file", async () => {
+    payflowMock.vaultBalance.mockResolvedValue(0n);
+    payflowMock.readContract.mockImplementation(async (_id: string, method: string) =>
+      method === "symbol" ? "USDC" : 6,
+    );
+    apiMock.vaultHistory.mockResolvedValue({ events: [] });
+    apiMock.mandatesOf.mockResolvedValue({ mandates: [mandate({ token: USDC })] });
+    apiMock.charges.mockResolvedValue({ charges: [] });
+
+    render(<AccountPage />);
+
+    const button = (await screen.findByRole("button", {
+      name: "Export my payments as CSV",
+    })) as HTMLButtonElement;
+    await waitFor(() => expect(button.disabled).toBe(false));
+    fireEvent.click(button);
+
+    expect(await screen.findByText(/No payments to export yet/)).toBeTruthy();
+    expect(downloads).toHaveLength(0);
+  });
+
+  it("discards a load that finishes after the wallet switched accounts", async () => {
+    let resolveFirst: (value: unknown) => void = () => {};
+    const first = new Promise<unknown>((resolve) => {
+      resolveFirst = resolve;
+    });
+    payflowMock.vaultBalance.mockResolvedValue(0n);
+    apiMock.vaultHistory.mockResolvedValue({ events: [] });
+    apiMock.mandatesOf.mockImplementation((subscriber: string) =>
+      subscriber === SUBSCRIBER
+        ? first
+        : Promise.resolve({ mandates: [mandate({ id: 99, subscriber: OTHER })] }),
+    );
+
+    const { rerender } = render(<AccountPage />);
+
+    // The second account's load starts before the first one's reads resolve.
+    wallet.address = OTHER;
+    rerender(<AccountPage />);
+    expect(await screen.findByText("Mandate #99")).toBeTruthy();
+
+    await act(async () => {
+      resolveFirst({ mandates: [mandate({ id: 7 })] });
+    });
+
+    // The stale result must not replace the new account's mandates.
+    expect(screen.queryByText("Mandate #7")).toBeNull();
+    expect(screen.getByText("Mandate #99")).toBeTruthy();
   });
 });

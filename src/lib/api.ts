@@ -251,6 +251,17 @@ export const api = {
     get<{ mandates: ApiMandate[] }>(`/api/mandates?merchant=${merchant}`),
   charges: (mandateId: number) =>
     get<{ charges: ApiCharge[] }>(`/api/mandates/${mandateId}/charges`),
+  charge: async (mandateId: number, txHash: string): Promise<ApiCharge | null> => {
+    const res = await get<{ charges: ApiCharge[] }>(`/api/mandates/${mandateId}/charges`);
+    if (!res) return null;
+    return res.charges.find((c) => c.tx_hash.toLowerCase() === txHash.toLowerCase()) ?? null;
+  },
+  mandate: async (id: number): Promise<ApiMandate | null> => {
+    const res = await get<ApiMandate | { mandate: ApiMandate }>(`/api/mandates/${id}`);
+    if (!res) return null;
+    if ("mandate" in res) return res.mandate;
+    return res;
+  },
   vaultHistory: (address: string) =>
     get<{ events: ApiVaultEvent[] }>(`/api/vaults/${address}/history`),
   merchantSummary: (address: string) =>

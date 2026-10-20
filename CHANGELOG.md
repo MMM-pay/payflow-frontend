@@ -8,10 +8,28 @@ All notable changes to payflow-frontend. The format follows
 
 ### Fixed
 
+- **A successful contract read never released its concurrency slot.**
+  `readContract` takes one of six permits before each simulation, but the
+  success path returned while still holding it, so the seventh read after any
+  six successful reads waited forever and the page stopped loading. Permits are
+  now released in a `finally`, and the backoff sleep no longer holds one.
 - **The publish form accepted any text as a price** and only failed once the
   transaction was simulated, so a merchant paid for a failed attempt. The
   price is validated inline — positive, at most 7 decimal places — and Publish
   stays disabled with a message until it is usable.
+
+### Changed
+
+- **Plans are cached for the session instead of re-read on every visit.** A
+  plan's name, price, period, token and trial are frozen after `create_plan`,
+  so only the `active` flag expires (after 30 seconds); a merchant's own
+  `set_plan_active` drops that plan immediately. Token symbol and decimals were
+  already cached indefinitely. In contract-only mode — the public demo, which
+  has no indexer — the subscribe list drops from 10 RPC calls to 2 on a second
+  visit inside the window at the live registry's 4 plans, and from 50 to 2 at
+  the 24-plan list cap. Each read costs a `getAccount` and a simulation, so a
+  visit is `2 * (1 + plans)` and a repeat is just the `next_plan_id` read; the
+  unit test asserts both counts on fixed 4- and 24-plan contracts.
 
 ### Added
 
