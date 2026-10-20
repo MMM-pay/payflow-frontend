@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { WalletButton } from "@/components/WalletButton";
+import { Activity } from "@/components/Activity";
 import { NetworkMismatchBanner } from "@/components/ui";
 import { config } from "@/lib/config";
 import { useWallet } from "@/lib/wallet";
@@ -158,7 +159,10 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
           </nav>
         </header>
 
-        <main className="flex-1 py-8">{children}</main>
+        <main className="flex-1 space-y-8 py-8">
+          <Activity />
+          {children}
+        </main>
 
         <footer className="border-t border-edge py-6 text-xs text-muted">
           <div className="flex flex-wrap items-center justify-between gap-3">

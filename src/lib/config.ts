@@ -19,6 +19,7 @@ export const config = {
     process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015",
   network: process.env.NEXT_PUBLIC_STELLAR_NETWORK ?? "TESTNET",
   apiUrl: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080",
+  apiConfigured: Boolean(process.env.NEXT_PUBLIC_API_URL?.trim()),
   /**
    * Source account used for read-only contract simulation before a wallet is
    * connected. Simulation never touches this account — it only has to exist on
