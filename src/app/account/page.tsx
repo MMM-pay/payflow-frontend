@@ -28,6 +28,7 @@ import {
   mandatePastDueUntil,
   mandatePauseUntil,
   payflow,
+  server,
   vaultSupportsDepositFor,
   validateRecipient,
 } from "@/lib/payflow";
@@ -80,6 +81,11 @@ export default function AccountPage() {
   const [pauseDate, setPauseDate] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  // Whether the mandate list came from the indexer. Payment history lives only
+  // there, so this is what gates the CSV export.
+  const [mandatesFromApi, setMandatesFromApi] = useState(false);
   // Whether the deployed vault contract supports depositing into another
   // account's vault (payflow-contract#29). null while the probe is in flight.
   const [fundSupport, setFundSupport] = useState<boolean | null>(null);
@@ -87,6 +93,11 @@ export default function AccountPage() {
   const [fundAmount, setFundAmount] = useState("");
   // The recipient awaiting a second-click confirmation — one at a time.
   const [fundFor, setFundFor] = useState<string | null>(null);
+
+  // Read inside async callbacks to detect a wallet account switch mid-load:
+  // the closure's `address` is the account the request started for, which may
+  // no longer be the account whose page is on screen.
+  const addressRef = useRef<string | null>(address);
 
   // The vault holds the configured token; each mandate carries the token it
   // was opened against, which the indexer does not report.
@@ -161,6 +172,7 @@ export default function AccountPage() {
     setInfo(null);
     setError(null);
     setDone(null);
+    setExporting(false);
     void load();
   }, [load]);
 

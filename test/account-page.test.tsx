@@ -57,7 +57,7 @@ vi.mock("@/lib/wallet", () => ({ useWallet: () => wallet }));
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
-    api: { mandatesOf: apiMock.mandatesOf, vaultHistory: apiMock.vaultHistory },
+    api: { mandatesOf: apiMock.mandatesOf, vaultHistory: apiMock.vaultHistory, charges: apiMock.charges },
     checkWebhookUrl: actual.checkWebhookUrl,
   };
 });
