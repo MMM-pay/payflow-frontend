@@ -1,9 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { api, type ApiMandate, type ApiVaultEvent } from "@/lib/api";
 import { buildUpcomingChargesCalendar, CALENDAR_FILENAME } from "@/lib/calendar";
+import {
+  buildPaymentsCsv,
+  downloadCsv,
+  paymentsFilename,
+  type PaymentRow,
+} from "@/lib/csv";
 import {
   chainMandatesOf,
   sortVaultEventsNewestFirst,
@@ -17,8 +23,15 @@ import {
   nextChargeAmount,
   remainingDiscountCharges,
 } from "@/lib/discount";
-import { mandateIsPastDue, mandatePastDueUntil, mandatePauseUntil, payflow } from "@/lib/payflow";
+import {
+  mandateIsPastDue,
+  mandatePastDueUntil,
+  mandatePauseUntil,
+  payflow,
+  server,
+} from "@/lib/payflow";
 import { mandateStatus } from "@/lib/payflow";
+import { createdAtDate, paymentDateRange, paymentRow, sortPaymentsNewestFirst } from "@/lib/payments";
 import { useWallet } from "@/lib/wallet";
 import {
   formatAmount,
@@ -32,7 +45,7 @@ import {
 } from "@/lib/format";
 import { buildChargeSchedule, chargeShortfall } from "@/lib/schedule";
 import { describeTrialEnd } from "@/lib/trial";
-import { metaFor, useTokenMetas } from "@/lib/token";
+import { loadTokenMeta, metaFor, useTokenMetas } from "@/lib/token";
 import { AmountInput } from "@/components/AmountInput";
 import {
   Badge,
@@ -64,6 +77,16 @@ export default function AccountPage() {
   const [pauseDate, setPauseDate] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  // Whether the mandate list came from the indexer. Payment history lives only
+  // there, so this is what gates the CSV export.
+  const [mandatesFromApi, setMandatesFromApi] = useState(false);
+
+  // Read inside async callbacks to detect a wallet account switch mid-load:
+  // the closure's `address` is the account the request started for, which may
+  // no longer be the account whose page is on screen.
+  const addressRef = useRef<string | null>(address);
 
   // The vault holds the configured token; each mandate carries the token it
   // was opened against, which the indexer does not report.
@@ -74,24 +97,38 @@ export default function AccountPage() {
   const vaultMeta = metaFor(metas, config.contracts.token);
 
   const load = useCallback(async () => {
+    addressRef.current = address;
     if (!address) return;
+    const who = address;
     const [bal, res, hist] = await Promise.allSettled([
-      payflow.vaultBalance(address, address, config.contracts.token),
-      api.mandatesOf(address),
-      api.vaultHistory(address),
+      payflow.vaultBalance(who, who, config.contracts.token),
+      api.mandatesOf(who),
+      api.vaultHistory(who),
     ]);
+    // The wallet may have switched accounts while those reads were in flight.
+    // Applying them would show one account's balance under another's address.
+    if (addressRef.current !== who) return;
     if (bal.status === "fulfilled") setBalance(bal.value);
 
     if (res.status === "fulfilled" && res.value) {
       setMandates(res.value.mandates);
+      setMandatesFromApi(true);
     } else {
       // No indexer: read the subscriber's mandates from the contract.
       try {
-        setMandates(await chainMandatesOf(address, address));
+        const fromChain = await chainMandatesOf(who, who);
+        if (addressRef.current !== who) return;
+        setMandates(fromChain);
       } catch {
+        if (addressRef.current !== who) return;
         setMandates([]);
       }
+      setMandatesFromApi(false);
     }
+
+    // A contract fallback above may have awaited long enough for an account
+    // switch; do not attach the old account's history to the new one.
+    if (addressRef.current !== who) return;
 
     // Vault history lives only in the indexer; without a backend there is no
     // contract-side event log to fall back to, so we report what is knowable.
@@ -105,6 +142,18 @@ export default function AccountPage() {
   }, [address]);
 
   useEffect(() => {
+    // A different account means every previous value belongs to someone else:
+    // clear them before the new reads start so no stale row or export survives
+    // a wallet switch. Clearing here (rather than in `load`) keeps the refresh
+    // after a transaction from flashing the page back to skeletons.
+    setBalance(null);
+    setMandates(null);
+    setHistory(null);
+    setIndexerAvailable(false);
+    setMandatesFromApi(false);
+    setInfo(null);
+    setError(null);
+    setDone(null);
     void load();
   }, [load]);
 
@@ -119,6 +168,7 @@ export default function AccountPage() {
     setBusy(key);
     setError(null);
     setDone(null);
+    setInfo(null);
     try {
       setDone(await fn());
       await load();
@@ -247,6 +297,93 @@ export default function AccountPage() {
     }
   }
 
+  /**
+   * The date of a charge's transaction.
+   *
+   * Indexer charges carry a ledger, not a timestamp. The close time is read
+   * from the transaction itself and any failure leaves "—": a payment record
+   * must not invent today's date for a charge that settled months ago.
+   */
+  async function chargeDate(txHash: string): Promise<string> {
+    try {
+      const tx = await server.getTransaction(txHash);
+      if ("createdAt" in tx) return createdAtDate(tx.createdAt as number);
+    } catch {
+      // RPC unavailable or the transaction is older than the node's history.
+    }
+    return "—";
+  }
+
+  /**
+   * Export every charge settled against the subscriber's mandates as CSV.
+   *
+   * Per-charge amounts, fees and hashes exist only in the indexer; contract
+   * state keeps just `charges_made`. The button is therefore disabled in
+   * contract-only mode instead of shipping an empty file. If any mandate's
+   * history cannot be read the whole export aborts: a file that silently omits
+   * a subscription would look complete while understating what was paid.
+   *
+   * Read-only — it signs nothing — so a wallet on the wrong network can still
+   * export. The account-change guards only stop one account's rows from being
+   * written under another account's address.
+   */
+  async function exportPayments() {
+    if (!address || !mandates || !mandatesFromApi) return;
+    const who = address;
+    setExporting(true);
+    setError(null);
+    setInfo(null);
+    try {
+      const histories = await Promise.all(
+        mandates.map(async (mandate) => ({ mandate, result: await api.charges(mandate.id) })),
+      );
+      if (addressRef.current !== who) return;
+
+      const unreadable = histories.filter(({ result }) => result === null);
+      if (unreadable.length > 0) {
+        throw new Error(
+          `Could not read payment history for mandate${unreadable.length === 1 ? "" : "s"} ${unreadable
+            .map(({ mandate }) => `#${mandate.id}`)
+            .join(", ")}. Nothing was exported, so the file cannot omit payments.`,
+        );
+      }
+
+      const dateCache = new Map<string, string>();
+      const rows: PaymentRow[] = [];
+      for (const { mandate, result } of histories) {
+        if (!result) continue;
+        const tokenContract = mandate.token ?? config.contracts.token;
+        // Read the token's metadata here rather than trusting the map rendered
+        // above: decimals must be right even if the page has not finished
+        // loading them, and a mandate in another token must use its own scale.
+        const meta = await loadTokenMeta(tokenContract);
+        for (const charge of result.charges) {
+          let date = dateCache.get(charge.tx_hash);
+          if (date === undefined) {
+            date = await chargeDate(charge.tx_hash);
+            dateCache.set(charge.tx_hash, date);
+          }
+          rows.push(paymentRow(charge, mandate, meta, tokenContract, date));
+        }
+      }
+      if (addressRef.current !== who) return;
+
+      if (rows.length === 0) {
+        setInfo("No payments to export yet. Charges appear here once they settle on-chain.");
+        return;
+      }
+
+      const sorted = sortPaymentsNewestFirst(rows);
+      const { from, to } = paymentDateRange(sorted);
+      downloadCsv(buildPaymentsCsv(sorted), paymentsFilename(who, from, to));
+      setInfo(`Exported ${sorted.length} payment${sorted.length === 1 ? "" : "s"} to CSV.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not build the CSV file.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
   if (!address) {
     return (
       <Panel title="My account">
@@ -288,6 +425,13 @@ export default function AccountPage() {
       </div>
 
       {error && <Notice tone="error">{error}</Notice>}
+      {info && (
+        <Notice tone="info">
+          {/* Announced when the export finishes, so a screen-reader user knows
+              the file was produced without having to hunt for the button. */}
+          <span role="status">{info}</span>
+        </Notice>
+      )}
       {done && (
         <Notice tone="ok">
           Done. Transaction <TxLink hash={done} />
@@ -418,23 +562,56 @@ export default function AccountPage() {
 
       <Panel
         title="My subscriptions"
-        subtitle="Add the next charge of each active mandate to Google or Apple Calendar."
+        subtitle="Add the next charge to your calendar, or export past payments for your records."
         actions={
-          <button
-            type="button"
-            className="btn-ghost whitespace-nowrap"
-            disabled={activeCount === 0}
-            onClick={downloadCalendar}
-            title={
-              activeCount === 0
-                ? "No active subscriptions to add"
-                : "Download an .ics file for Google or Apple Calendar"
-            }
-          >
-            Add to calendar
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="btn-ghost whitespace-nowrap"
+              disabled={activeCount === 0}
+              onClick={downloadCalendar}
+              title={
+                activeCount === 0
+                  ? "No active subscriptions to add"
+                  : "Download an .ics file for Google or Apple Calendar"
+              }
+            >
+              Add to calendar
+            </button>
+            {/*
+              Read-only, so it stays enabled on a mismatched network: exporting
+              records does not need the wallet's network to match the app's.
+              Disabled only when there is nothing it can honestly export.
+            */}
+            <button
+              type="button"
+              className="btn-ghost whitespace-nowrap"
+              disabled={exporting || !mandatesFromApi || (mandates?.length ?? 0) === 0}
+              onClick={() => void exportPayments()}
+              aria-label="Export my payments as CSV"
+              title={
+                !mandatesFromApi
+                  ? "Payment history needs the payflow indexer (set NEXT_PUBLIC_API_URL)"
+                  : (mandates?.length ?? 0) === 0
+                    ? "No subscriptions to export"
+                    : "Download a CSV of every charge against your subscriptions"
+              }
+            >
+              {exporting ? "Exporting…" : "Export CSV"}
+            </button>
+          </div>
         }
       >
+        {!mandatesFromApi && mandates !== null && (
+          <Notice tone="info">
+            Payment history — and this CSV export — come from the payflow indexer,
+            which is not reachable here, so the export is unavailable in
+            contract-only mode. The chain records how many charges each mandate
+            has taken, but not their amounts or transaction hashes. Set
+            NEXT_PUBLIC_API_URL and rebuild to enable it; everything else on this
+            page still works without a backend.
+          </Notice>
+        )}
         {mandates === null ? (
           <SkeletonRows rows={2} label="Loading subscriptions" />
         ) : mandates.length === 0 ? (
