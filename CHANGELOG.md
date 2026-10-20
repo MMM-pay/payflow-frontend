@@ -6,6 +6,22 @@ All notable changes to payflow-frontend. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Service status page at `/status`.** Three independent checks — the
+  Soroban RPC node (latest ledger), the indexer API (`/health` status and
+  ledger lag), and the settlement keeper (last pass, tried vs settled,
+  failures) — each failing on its own so one outage never hides the others.
+  With `NEXT_PUBLIC_API_URL` empty (contract-only mode) the two backend
+  checks read "Not configured" rather than crying wolf, and the page still
+  works: RPC needs no backend. Linked from the main navigation.
+- **Dependabot for npm and GitHub Actions.** Weekly update PRs, with minor
+  and patch bumps grouped into one reviewable PR and majors kept individual.
+- **Vitest v8 coverage for `src/lib`, enforced in CI.** `npm test` now
+  collects coverage over the pure library code and fails under the thresholds
+  recorded in `vitest.config.ts` (set at the suite's current coverage); the
+  CI test job uploads the report as an artifact.
+
 ### Fixed
 
 - **A successful contract read never released its concurrency slot.**

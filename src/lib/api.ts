@@ -159,6 +159,48 @@ export interface RecentCharge {
 }
 
 /**
+ * The indexer half of the backend's `GET /health` (served at the root, not
+ * under `/api`). Optional fields stay optional: an older backend may not
+ * report them, and "cannot say" is not zero.
+ */
+export interface ApiHealthIndexer {
+  cursor: number | null;
+  latestLedger: number | null;
+  /** Ledgers the projection trails the network by; null while starting. */
+  lag: number | null;
+  paused: boolean;
+  freshnessSeconds: number | null;
+  lastRunAt: string | null;
+  lastError: string | null;
+}
+
+/**
+ * Body of the backend's `GET /health` liveness probe. It answers 200 even
+ * while catching up, so the `status` field ("starting" | "ok" | "catching_up")
+ * is the signal, not the HTTP code.
+ */
+export interface ApiHealth {
+  status: string;
+  network?: string;
+  indexer: ApiHealthIndexer | null;
+}
+
+/** One keeper settlement pass, from `GET /api/keeper`. */
+export interface ApiKeeperPass {
+  /** Unix seconds when the pass finished. */
+  time: number;
+  attempted: number;
+  settled: number;
+  failures: { mandateId: number; error: string }[];
+  backoff?: { mandateId: number; failures: number; retryAt: number; retryIn: number }[];
+}
+
+/** Body of `GET /api/keeper`: newest pass first, capped at 20. */
+export interface ApiKeeperHistory {
+  passes: ApiKeeperPass[];
+}
+
+/**
  * The indexer is a convenience, not a source of truth. Every call here is
  * allowed to fail: the UI falls back to reading contract state directly so the
  * app still works when the backend is down.
@@ -229,6 +271,27 @@ export const api = {
     return get<unknown>(`/api/merchants/${address}/churn?bucket=month`);
   },
   due: () => get<{ now: number; due: ApiMandate[] }>("/api/due"),
+  /**
+   * Backend liveness probe, served at the root (`/health`, not `/api/health`).
+   *
+   * Like every call here it resolves to null when the backend is unreachable.
+   * It also short-circuits to null when the build has no backend URL at all —
+   * the public demo is contract-only, and a bare fetch("/health") there would
+   * be a same-origin request against GitHub Pages that can only 404.
+   */
+  health: () => {
+    if (!api.isConfigured()) return Promise.resolve(null);
+    return get<ApiHealth>("/health");
+  },
+  /**
+   * Keeper pass history, served only when the backend runs with the keeper
+   * enabled (`KEEPER_ENABLED=true`). Null therefore means either "backend
+   * down" or "keeper off"; the status page says so rather than guessing.
+   */
+  keeper: () => {
+    if (!api.isConfigured()) return Promise.resolve(null);
+    return get<ApiKeeperHistory>("/api/keeper");
+  },
   /**
    * Per-plan stats, proposed by payflow-backend#29.
    *
