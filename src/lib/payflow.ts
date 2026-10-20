@@ -9,6 +9,13 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 import { config } from "./config";
+import {
+  SIGNATURE_CANCELLED_MESSAGE,
+  isSignatureRejection,
+  translateSignatureError,
+} from "./signature-error";
+
+export { SIGNATURE_CANCELLED_MESSAGE, isSignatureRejection, translateSignatureError };
 
 export const server = new rpc.Server(config.rpcUrl, {
   allowHttp: config.rpcUrl.startsWith("http://"),
@@ -189,7 +196,14 @@ export async function writeContract(
     throw new Error(decodeContractError(err, method));
   }
 
-  const signedXdr = await signXdr(prepared.toXDR());
+  let signedXdr: string;
+  try {
+    signedXdr = await signXdr(prepared.toXDR());
+  } catch (err) {
+    // A declined prompt must not look like a failed payment. Wallets that
+    // throw their own text are rewritten; every other failure is unchanged.
+    translateSignatureError(err);
+  }
   const signed = TransactionBuilder.fromXDR(signedXdr, config.networkPassphrase);
 
   const sent = await server.sendTransaction(signed);
@@ -267,6 +281,7 @@ const VAULT_METHODS = new Set(["deposit", "withdraw", "debit", "balance"]);
  * reason their payment failed, which is a correctness bug rather than copy.
  */
 export function decodeContractError(error: unknown, method: string): string {
+  if (isSignatureRejection(error)) return SIGNATURE_CANCELLED_MESSAGE;
   const text =
     typeof error === "string" ? error : ((error as Error)?.message ?? String(error));
   const match = /Error\(Contract, #(\d+)\)/.exec(text);
