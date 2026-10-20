@@ -408,6 +408,14 @@ export interface Mandate {
    * from payflow-contract#36. Optional because the deployed contract predates it.
    */
   refundable_amount?: bigint;
+  /**
+   * The address a subscriber has proposed to take over this mandate, from
+   * payflow-contract#68. Optional because the deployed contract predates it:
+   * a mandate decoded without the key means that contract cannot service a
+   * transfer, and the UI hides the control rather than building a
+   * transaction the contract would reject.
+   */
+  pending_subscriber?: string;
 }
 
 /**
@@ -418,6 +426,39 @@ export interface Mandate {
 export function mandateStatus(raw: unknown): string {
   if (Array.isArray(raw)) return String(raw[0] ?? "");
   return String(raw ?? "");
+}
+
+/**
+ * The address a transfer is pending to, or null when none is pending.
+ *
+ * Proposed in payflow-contract#68. A contract built before that change
+ * decodes without `pending_subscriber`, so its absence *is* the capability
+ * signal: there is no method to probe and no version to guess at, and
+ * treating null as "no transfer" hides the accept panel exactly when the
+ * contract cannot service it. Read through this helper rather than the raw
+ * field because contract state carries a string while an indexer row may
+ * carry null.
+ */
+export function mandatePendingSubscriber(mandate: unknown): string | null {
+  const value = (mandate as { pending_subscriber?: unknown } | null | undefined)
+    ?.pending_subscriber;
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+/**
+ * Whether the deployed contract supports moving a mandate to a new wallet.
+ *
+ * Proposed in payflow-contract#68. A contract built before that change has
+ * neither the `transfer_mandate` / `accept_mandate_transfer` methods nor the
+ * `pending_subscriber` field on `Mandate`. Since there is no version probe,
+ * we check the field: if the decoded mandate carries the key at all (even
+ * as null), the contract is new enough to service a transfer.
+ */
+export function mandateSupportsTransfer(mandate: unknown): boolean {
+  if (!mandate || typeof mandate !== "object") return false;
+  return Object.prototype.hasOwnProperty.call(mandate, "pending_subscriber");
 }
 
 // ---------------------------------------------------------------------------
@@ -877,5 +918,46 @@ export const payflow = {
       arg.address(source),
       arg.u64(mandateId),
       arg.i128(amount),
+    ]),
+
+  /**
+   * Subscriber side: propose moving this mandate to a new wallet.
+   *
+   * Built against the interface proposed in payflow-contract#68:
+   * `transfer_mandate(subscriber: Address, mandate_id: u64, new_subscriber:
+   * Address)`. The current subscriber authorizes the proposal by signing;
+   * the mandate keeps billing the old wallet until the new one accepts.
+   *
+   * Only call this when `mandateSupportsTransfer` confirms the deployed
+   * contract carries the field.
+   */
+  transferMandate: (
+    source: string,
+    sign: SignXdr,
+    mandateId: number | bigint,
+    newSubscriber: string,
+  ) =>
+    writeContract(config.contracts.subscription, "transfer_mandate", source, sign, [
+      arg.address(source),
+      arg.u64(mandateId),
+      arg.address(newSubscriber),
+    ]),
+
+  /**
+   * New wallet side: accept a pending transfer of a mandate to the caller.
+   *
+   * Built against the interface proposed in payflow-contract#68:
+   * `accept_mandate_transfer(new_subscriber: Address, mandate_id: u64)`. The
+   * receiving wallet authorizes by signing; the contract only accepts when
+   * `pending_subscriber` on the mandate matches the caller.
+   */
+  acceptMandateTransfer: (
+    source: string,
+    sign: SignXdr,
+    mandateId: number | bigint,
+  ) =>
+    writeContract(config.contracts.subscription, "accept_mandate_transfer", source, sign, [
+      arg.address(source),
+      arg.u64(mandateId),
     ]),
 };

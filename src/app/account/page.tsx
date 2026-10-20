@@ -27,6 +27,8 @@ import {
   mandateIsPastDue,
   mandatePastDueUntil,
   mandatePauseUntil,
+  mandatePendingTransfer,
+  mandateSupportsTransfer,
   payflow,
   server,
   vaultSupportsDepositFor,
@@ -93,6 +95,13 @@ export default function AccountPage() {
   const [fundAmount, setFundAmount] = useState("");
   // The recipient awaiting a second-click confirmation — one at a time.
   const [fundFor, setFundFor] = useState<string | null>(null);
+  // The mandate whose transfer form is open, and the new address typed into
+  // it. Like `confirmCancel`, one at a time keeps the pending write clear.
+  const [transferFor, setTransferFor] = useState<number | null>(null);
+  const [transferTo, setTransferTo] = useState("");
+  // Whether the deployed mandate contract supports the two-step transfer
+  // (payflow-contract#68). null while the probe is in flight.
+  const [transferSupport, setTransferSupport] = useState<boolean | null>(null);
 
   // Read inside async callbacks to detect a wallet account switch mid-load:
   // the closure's `address` is the account the request started for, which may
@@ -113,6 +122,11 @@ export default function AccountPage() {
     : null;
   const fundAmountCheck = checkAmount(fundAmount, vaultMeta.decimals);
   const fundStroops = fundAmountCheck.ok ? fundAmountCheck.stroops : 0n;
+
+  /** Whether the new address typed into a transfer form is a valid G… StrKey. */
+  const transferDisplayError = transferTo.trim()
+    ? validateRecipient(transferTo)
+    : null;
 
   const load = useCallback(async () => {
     addressRef.current = address;
@@ -182,6 +196,8 @@ export default function AccountPage() {
     setConfirmCancel(null);
     setPauseFor(null);
     setFundFor(null);
+    setTransferFor(null);
+    setTransferTo("");
   }, [address]);
 
   // Probe whether the deployed vault contract carries deposit_for. The sponsor
@@ -196,6 +212,24 @@ export default function AccountPage() {
     let live = true;
     void vaultSupportsDepositFor(address).then((supported) => {
       if (live) setFundSupport(supported);
+    });
+    return () => {
+      live = false;
+    };
+  }, [address]);
+
+  // Probe whether the deployed mandate contract carries the two-step transfer
+  // (payflow-contract#68). The control stays hidden until the contract answers:
+  // a contract that predates it cannot service the write, so offering it would
+  // only fail at signing time.
+  useEffect(() => {
+    if (!address) {
+      setTransferSupport(null);
+      return;
+    }
+    let live = true;
+    void mandateSupportsTransfer(address).then((supported) => {
+      if (live) setTransferSupport(supported);
     });
     return () => {
       live = false;
@@ -231,6 +265,31 @@ export default function AccountPage() {
     setFundFor(null);
     setFundRecipient("");
     setFundAmount("");
+  }
+
+  /** Open the transfer form for a mandate, defaulting to a blank address. */
+  function openTransfer(mandateId: number) {
+    setTransferFor(mandateId);
+    setTransferTo("");
+    setConfirmCancel(null);
+    setPauseFor(null);
+    setError(null);
+  }
+
+  async function transferConfirmed(mandateId: number) {
+    if (!address || !signXdr || transferDisplayError) return;
+    await run(`transfer-${mandateId}`, () =>
+      payflow.transferMandate(address, signXdr, mandateId, transferTo.trim()),
+    );
+    setTransferFor(null);
+    setTransferTo("");
+  }
+
+  async function acceptTransfer(mandateId: number) {
+    if (!address || !signXdr) return;
+    await run(`accept-${mandateId}`, () =>
+      payflow.acceptMandateTransfer(address, signXdr, mandateId),
+    );
   }
 
   async function handleCancelAll() {
@@ -299,6 +358,16 @@ export default function AccountPage() {
   const pauseSupported = (mandates ?? []).some(
     (m) => mandatePauseUntil(m) !== null,
   );
+
+  /**
+   * Whether the contract behind these mandates can service a transfer.
+   *
+   * The probe in the effect above answers for the deployed contract; the
+   * mandates on screen confirm it too, so a stale probe cannot offer a write
+   * the contract would reject.
+   */
+  const transferAvailable =
+    transferSupport === true && (mandates ?? []).some((m) => mandateSupportsTransfer(m));
 
   function openPausePicker(mandateId: number) {
     setPauseFor(mandateId);
@@ -792,6 +861,7 @@ export default function AccountPage() {
                 const discounted = nextChargeAmount(m);
                 const badge = discountBadge(m);
                 const remaining = remainingDiscountCharges(m);
+                const pending = mandatePendingTransfer(m);
                 // Both of these read from data the page already has, so the
                 // timeline works in contract-only mode: the mandates may come
                 // from chain state and the balance from a vault read.
@@ -841,6 +911,11 @@ export default function AccountPage() {
                           {m.ended_by === "merchant" && (
                             <span className="text-xs text-muted">ended by the merchant</span>
                           )}
+                          {pending && (
+                            <span className="rounded-full bg-accent/15 px-2 py-0.5 text-xs font-medium text-accent">
+                              Transfer pending
+                            </span>
+                          )}
                         </div>
                         <div className="mt-1 text-sm text-muted">
                           {discounted !== null ? (
@@ -887,6 +962,19 @@ export default function AccountPage() {
                         {trial && (
                           <div className="mt-1 text-xs text-accent">
                             {trial}. Cancel before then and you pay nothing.
+                          </div>
+                        )}
+                        {pending && (
+                          <div className="mt-1 text-xs text-muted">
+                            {pending === address ? (
+                              <>This subscription is being transferred to this wallet. Accept it below to take it over.</>
+                            ) : (
+                              <>
+                                Transfer to{" "}
+                                <span className="font-mono truncate">{shortAddress(pending)}</span>{" "}
+                                is pending. The receiving wallet must accept it.
+                              </>
+                            )}
                           </div>
                         )}
                         {isPastDue && pastDueShortfall !== null && (
@@ -948,6 +1036,20 @@ export default function AccountPage() {
                         >
                           {m.status === "Active" ? "Pause" : "Resume"}
                         </button>
+                        {/* Offered only against a contract that carries the
+                            two-step transfer; see `transferAvailable`. */}
+                        {transferAvailable &&
+                          !pending &&
+                          (transferFor === m.id ? null : (
+                            <button
+                              type="button"
+                              className="btn-ghost"
+                              disabled={busy !== null || networkMismatch}
+                              onClick={() => openTransfer(m.id)}
+                            >
+                              Transfer…
+                            </button>
+                          ))}
                         {/* Offered only against a contract that carries
                             pause_until; see `pauseSupported`. */}
                         {pauseSupported &&
@@ -1029,6 +1131,99 @@ export default function AccountPage() {
                           </button>
                         )}
                       </div>
+                    )}
+
+                    {transferAvailable && pending === address && (
+                      <section
+                        className="mt-4 border-t border-edge pt-3"
+                        aria-labelledby={`accept-transfer-${m.id}`}
+                      >
+                        <h3 id={`accept-transfer-${m.id}`} className="text-sm font-medium">
+                          Accept transfer
+                        </h3>
+                        <p className="mt-1 text-xs text-muted">
+                          Another wallet is transferring this subscription to you.
+                          Accepting makes it yours: future charges debit your vault,
+                          so make sure it is funded.
+                        </p>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            className="btn-primary"
+                            disabled={busy !== null || networkMismatch}
+                            onClick={() => void acceptTransfer(m.id)}
+                          >
+                            {busy === `accept-${m.id}` ? "Accepting…" : "Accept transfer"}
+                          </button>
+                        </div>
+                      </section>
+                    )}
+
+                    {transferAvailable && transferFor === m.id && (
+                      <section
+                        className="mt-4 border-t border-edge pt-3"
+                        aria-labelledby={`transfer-${m.id}`}
+                      >
+                        <h3 id={`transfer-${m.id}`} className="text-sm font-medium">
+                          Transfer to a new wallet
+                        </h3>
+                        <p className="mt-1 text-xs text-muted">
+                          The new wallet must accept the transfer before it takes
+                          effect. Its vault must be funded — charges will debit it
+                          once the transfer completes.
+                        </p>
+                        <div className="mt-2 flex flex-wrap items-end gap-3">
+                          <div className="min-w-[14rem] flex-1">
+                            <label className="label" htmlFor={`transfer-to-${m.id}`}>
+                              New wallet address
+                            </label>
+                            <input
+                              id={`transfer-to-${m.id}`}
+                              className="input"
+                              placeholder="GABC…"
+                              value={transferTo}
+                              onChange={(e) => setTransferTo(e.target.value)}
+                              aria-invalid={Boolean(transferDisplayError)}
+                              aria-describedby={
+                                transferDisplayError ? `transfer-to-error-${m.id}` : undefined
+                              }
+                              disabled={busy !== null}
+                            />
+                            {transferDisplayError && (
+                              <p
+                                id={`transfer-to-error-${m.id}`}
+                                className="mt-1 text-sm text-danger"
+                              >
+                                {transferDisplayError}
+                              </p>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            className="btn-primary"
+                            disabled={
+                              busy !== null ||
+                              networkMismatch ||
+                              Boolean(transferDisplayError) ||
+                              !transferTo.trim()
+                            }
+                            onClick={() => void transferConfirmed(m.id)}
+                          >
+                            {busy === `transfer-${m.id}` ? "Transferring…" : "Transfer"}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            disabled={busy !== null}
+                            onClick={() => {
+                              setTransferFor(null);
+                              setTransferTo("");
+                            }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </section>
                     )}
                   </div>
 
