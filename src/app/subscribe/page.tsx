@@ -12,15 +12,14 @@ import { formatTrialLength, trialBadge, trialSeconds } from "@/lib/trial";
 import { planAvailability } from "@/lib/availability";
 import { metaFor, useTokenMetas } from "@/lib/token";
 import { Empty, MerchantAccount, Notice, Panel, SkeletonPlanCards, TxLink } from "@/components/ui";
+import { useAction } from "@/lib/useAction";
 
 export default function SubscribePage() {
   const { address, networkMismatch, signXdr } = useWallet();
   const [plans, setPlans] = useState<ApiPlan[] | null>(null);
   const [maxCharges, setMaxCharges] = useState<Record<number, string>>({});
-  const [busy, setBusy] = useState<number | null>(null);
   const [direct, setDirect] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<string | null>(null);
+  const { busy, error, done, run, setError } = useAction<number, string>();
   // The plan just subscribed to, so the confirmation can say when the trial it
   // advertised actually ends. The mandate id is not returned by `subscribe`, so
   // this is the only place the trial length is known at signing time.
@@ -75,10 +74,7 @@ export default function SubscribePage() {
       setError(blocked);
       return;
     }
-    setBusy(plan.id);
-    setError(null);
-    setDone(null);
-    try {
+    await run(plan.id, async () => {
       const raw = maxCharges[plan.id]?.trim();
       const limit = raw ? Number(raw) : 0;
       if (!Number.isInteger(limit) || limit < 0) {
@@ -101,18 +97,14 @@ export default function SubscribePage() {
         if (closed) throw new Error(closed);
         return signXdr(xdr);
       }, plan.id, limit);
-      setDone(hash);
       setDoneTrial(
         trialSeconds(plan) > 0
           ? { plan: plan.name || `Plan #${plan.id}`, seconds: trialSeconds(plan) }
           : null,
       );
       await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(null);
-    }
+      return hash;
+    });
   }
 
   const active = (plans ?? []).filter((p) => p.active === 1);
@@ -122,7 +114,7 @@ export default function SubscribePage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Available plans</h1>
         <p className="mt-1 text-sm text-muted">
-          Subscribing opens a mandate. Fund your vault on the{" "}
+          Subscribing opens a mandate. Fund your vault on the {" "}
           <Link href="/account" className="text-accent hover:underline">
             account page
           </Link>{" "}
@@ -164,8 +156,7 @@ export default function SubscribePage() {
             }
           >
             Nothing has been published on this deployment yet. Publish a plan
-            from the merchant page — it is written straight to the contract, so
-            it appears here with or without the indexer.
+            from the merchant page — it is written straight to the contract, so it appears here with or without the indexer.
           </Empty>
         ) : (
           <Empty
