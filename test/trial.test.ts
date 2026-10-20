@@ -174,7 +174,8 @@ describe("describeTrialEnd", () => {
     const text = describeTrialEnd(mandate(), NOW);
     expect(text).toContain(formatDate(NOW + 14 * DAY));
     expect(text).toContain("Free trial ends");
-    expect(text).toContain("in 14d");
+    // Issue #45 spells the relative part out; the exact date is above.
+    expect(text).toContain("in 14 days");
   });
 
   it("switches to the past once the trial is over but no charge has settled", () => {

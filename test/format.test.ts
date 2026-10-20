@@ -1,15 +1,23 @@
 import { describe, expect, it } from "vitest";
 import {
+  amountError,
   BPS_DENOMINATOR,
+  canonicalAmount,
   checkAmount,
   DECIMALS,
   feeSplit,
   formatAmount,
+  formatExactTime,
   formatFeeBps,
   formatPeriod,
   formatWhen,
   fromStroops,
   MAX_FEE_BPS,
+  minPauseDate,
+  normaliseAmountInput,
+  parseAmount,
+  parsePauseDate,
+  resumeDate,
   shortAddress,
   toStroops,
   XLM,
@@ -197,10 +205,21 @@ describe("checkAmount", () => {
   });
 
   it("rejects text that could never be a price", () => {
-    for (const bad of ["abc", "-1", "+1", "1e5", "1,5", ".5", "1.2.3", "1 000", "0x10"]) {
+    // "1,5" and "1 000" used to live here; locale-aware parsing (issue #46)
+    // makes both legitimate prices, so they are accepted below instead.
+    for (const bad of ["abc", "-1", "+1", "1e5", "1.2.3", "1,2,3", "0x10"]) {
       const result = checkAmount(bad);
       expect(result.ok, `"${bad}" must be rejected`).toBe(false);
     }
+  });
+
+  it("accepts the separators the user's locale uses", () => {
+    // Issue #46: comma-decimal and dot-decimal spellings are the same money.
+    expect(checkAmount("1,5")).toEqual({ ok: true, stroops: 15_000_000n });
+    expect(checkAmount("1,234.5")).toEqual({ ok: true, stroops: 12_345_000_000n });
+    expect(checkAmount("1.234,5")).toEqual({ ok: true, stroops: 12_345_000_000n });
+    // A leading mark is how a comma-decimal keyboard starts a value.
+    expect(checkAmount(".5")).toEqual({ ok: true, stroops: 5_000_000n });
   });
 
   it("rejects more decimal places than the token can represent", () => {
@@ -367,22 +386,192 @@ describe("shortAddress", () => {
 });
 
 describe("formatWhen", () => {
-  const now = Date.now();
+  // Pinned clock: the words must be stable regardless of when CI runs.
+  const now = Date.UTC(2026, 9, 19, 12, 0, 0);
   const at = (deltaMs: number) => Math.floor((now + deltaMs) / 1000);
 
   it("renders a missing timestamp as a dash", () => {
-    expect(formatWhen(0)).toBe("—");
+    expect(formatWhen(0, now)).toBe("—");
   });
 
   it("describes due and overdue charges distinctly", () => {
-    expect(formatWhen(at(0))).toMatch(/due now|just now/);
-    expect(formatWhen(at(-5 * 60_000))).toBe("5m ago");
-    expect(formatWhen(at(5 * 60_000))).toBe("in 5m");
+    expect(formatWhen(at(0), now)).toMatch(/due now|just now/);
+    expect(formatWhen(at(-5 * 60_000), now)).toBe("5 minutes ago");
+    expect(formatWhen(at(5 * 60_000), now)).toBe("in 5 minutes");
   });
 
-  it("scales units upward", () => {
-    expect(formatWhen(at(3 * 3_600_000))).toBe("in 3h");
-    expect(formatWhen(at(3 * 86_400_000))).toBe("in 3d");
-    expect(formatWhen(at(-2 * 86_400_000))).toBe("2d ago");
+  it("scales units upward, spelled out for reading at a glance", () => {
+    // Issue #45: "in 3d" was easy to misread; the exact time lives in the
+    // tooltip rendered by <TimeAgo>, not in this string.
+    expect(formatWhen(at(3 * 3_600_000), now)).toBe("in 3 hours");
+    expect(formatWhen(at(3 * 86_400_000), now)).toBe("in 3 days");
+    expect(formatWhen(at(-2 * 86_400_000), now)).toBe("2 days ago");
+  });
+
+  it("uses the singular", () => {
+    expect(formatWhen(at(60_000), now)).toBe("in 1 minute");
+    expect(formatWhen(at(3_600_000), now)).toBe("in 1 hour");
+    expect(formatWhen(at(-86_400_000), now)).toBe("1 day ago");
+  });
+});
+
+describe("formatExactTime", () => {
+  it("renders a missing timestamp as a dash", () => {
+    expect(formatExactTime(0)).toBe("—");
+  });
+
+  it("renders the exact local date and time, not a relative phrase", () => {
+    const ts = Math.floor(Date.UTC(2026, 9, 19, 12, 0, 0) / 1000);
+    const text = formatExactTime(ts);
+    expect(text).toContain("2026");
+    expect(text).toMatch(/\d{1,2}:\d{2}/);
+    expect(text).not.toMatch(/in \d|ago/);
+  });
+});
+
+describe("canonicalAmount / parseAmount (locale separators)", () => {
+  // Issue #46: both "1.234,5" and "1,234.5" must reach the contract as the
+  // same bigint. 1234.5 XLM at 7 decimals is 12_345_000_000 stroops.
+  it("parses dot-decimal and comma-decimal styles to the same amount", () => {
+    expect(parseAmount("1,234.5")).toBe(12_345_000_000n);
+    expect(parseAmount("1.234,5")).toBe(12_345_000_000n);
+    expect(parseAmount("1,5")).toBe(15_000_000n);
+    expect(parseAmount("1.5")).toBe(15_000_000n);
+  });
+
+  it("treats a lone separator followed by three digits as grouping", () => {
+    // "1,234" is one thousand two hundred thirty-four in both conventions.
+    expect(parseAmount("1,234")).toBe(12_340_000_000n);
+    expect(parseAmount("1.234.567")).toBe(12_345_670_000_000n);
+  });
+
+  it("accepts non-breaking space grouping", () => {
+    expect(parseAmount("1\u00a0234,5")).toBe(12_345_000_000n);
+    expect(parseAmount("1\u202f234.5")).toBe(12_345_000_000n);
+  });
+
+  it("keeps bigint precision at full length", () => {
+    expect(parseAmount("1000000000")).toBe(10_000_000_000_000_000n);
+    expect(parseAmount("0,0000001")).toBe(1n);
+  });
+
+  it("honours the token's decimals", () => {
+    expect(parseAmount("1,5", 6)).toBe(1_500_000n);
+    expect(() => parseAmount("1,00000001")).toThrow(/decimal places/);
+    expect(() => toStroops("1.0000001", 6)).toThrow(/at most 6/i);
+  });
+
+  it("rejects garbage exactly like toStroops does", () => {
+    for (const bad of ["", "   ", "abc", "-1", "1.2.3", "1,2,3", "1e5", "1,,"]) {
+      expect(() => parseAmount(bad), `"${bad}" must be rejected`).toThrow();
+      expect(canonicalAmount(bad), `"${bad}" must not canonicalise`).toBeNull();
+    }
+  });
+
+  it("canonicalises to plain dot-decimal form", () => {
+    expect(canonicalAmount("1,234.5")).toBe("1234.5");
+    expect(canonicalAmount("1.234,5")).toBe("1234.5");
+    expect(canonicalAmount("1,234")).toBe("1234");
+    expect(canonicalAmount(".5")).toBe("0.5");
+  });
+});
+
+describe("normaliseAmountInput", () => {
+  it("keeps what the user typed", () => {
+    expect(normaliseAmountInput("1,234.5")).toBe("1,234.5");
+    expect(normaliseAmountInput("1.234,5")).toBe("1.234,5");
+    expect(normaliseAmountInput("1,234.56")).toBe("1,234.56");
+  });
+
+  it("keeps over-precision visible so the error can explain it", () => {
+    // Truncating silently would change the amount the user asked for;
+    // amountError reports the extra places instead. Four decimal places can
+    // only be a fraction, so this input is unambiguous even though grouping
+    // makes "1,234.567" read as the whole number 1234567.
+    expect(normaliseAmountInput("1,234.5678")).toBe("1,234.5678");
+    expect(amountError("1,234.5678", 2)).toMatch(/at most 2 decimal places/i);
+  });
+
+  it("lets a mid-keystroke separator stand", () => {
+    expect(normaliseAmountInput("1,")).toBe("1,");
+    expect(normaliseAmountInput(",5")).toBe(",5");
+  });
+
+  it("drops letters and other junk", () => {
+    expect(normaliseAmountInput("12a3")).toBe("123");
+    expect(normaliseAmountInput("abc")).toBe("");
+  });
+
+  it("keeps a whole-number token's typed fraction so the error can explain it", () => {
+    // "5.5" must never become "55" — that would silently double the amount.
+    expect(normaliseAmountInput("5.5")).toBe("5.5");
+    expect(amountError("5.5", 0)).toMatch(/at most 0 decimal places/i);
+  });
+});
+
+describe("amountError", () => {
+  it("accepts both separator styles and empty input", () => {
+    expect(amountError("")).toBeNull();
+    expect(amountError("1,234.5")).toBeNull();
+    expect(amountError("1.234,5")).toBeNull();
+    expect(amountError("1,5")).toBeNull();
+  });
+
+  it("treats a trailing separator as still being typed", () => {
+    // "12." and ",5" are mid-keystroke, not errors worth a red banner.
+    expect(amountError("12.")).toBeNull();
+    expect(amountError(",5")).toBeNull();
+  });
+
+  it("explains why a value cannot be submitted", () => {
+    expect(amountError("abc")).toMatch(/positive number/i);
+    expect(amountError("1,00000001")).toMatch(/decimal places/i);
+    expect(amountError("1,5", 0)).toMatch(/decimal places/i);
+  });
+});
+
+describe("pause dates", () => {
+  it("reads a date picker value as midnight UTC on that day", () => {
+    // "Pause until 2026-10-25" resumes at the start of the 25th, and every
+    // reader sees the same instant.
+    expect(parsePauseDate("2026-10-25")).toBe(Date.UTC(2026, 9, 25) / 1000);
+    expect(parsePauseDate("  2026-01-01  ")).toBe(Date.UTC(2026, 0, 1) / 1000);
+  });
+
+  it("rejects a value a date picker could not produce", () => {
+    for (const bad of ["", "  ", "tomorrow", "2026-10", "25/10/2026", "2026-10-25T00:00"]) {
+      expect(parsePauseDate(bad), `"${bad}"`).toBeNull();
+    }
+  });
+
+  it("rejects a date that does not exist rather than rolling it over", () => {
+    // Date.UTC happily turns 31 February into 3 March.
+    expect(parsePauseDate("2026-02-31")).toBeNull();
+    expect(parsePauseDate("2026-13-01")).toBeNull();
+    expect(parsePauseDate("2026-00-10")).toBeNull();
+    expect(parsePauseDate("2026-04-31")).toBeNull();
+    expect(parsePauseDate("2024-02-29")).not.toBeNull(); // a real leap day
+    expect(parsePauseDate("2026-02-29")).toBeNull(); // not a leap year
+  });
+
+  it("offers tomorrow as the earliest date, in UTC", () => {
+    const now = Date.UTC(2026, 9, 25, 23, 59, 59);
+    expect(minPauseDate(now)).toBe("2026-10-26");
+    expect(minPauseDate(Date.UTC(2026, 9, 25, 0, 0, 0))).toBe("2026-10-26");
+    // Month boundary rolls over.
+    expect(minPauseDate(Date.UTC(2026, 11, 31, 12))).toBe("2027-01-01");
+  });
+
+  it("renders a future resume as a calendar date", () => {
+    const now = Date.UTC(2026, 9, 25);
+    expect(resumeDate(Date.UTC(2026, 9, 30) / 1000, now)).toBe("2026-10-30");
+  });
+
+  it("shows nothing for a resume that has already passed or is absent", () => {
+    const now = Date.UTC(2026, 9, 25);
+    expect(resumeDate(Date.UTC(2026, 9, 24) / 1000, now)).toBeNull();
+    expect(resumeDate(now / 1000, now)).toBeNull();
+    expect(resumeDate(null, now)).toBeNull();
+    expect(resumeDate(Number.NaN, now)).toBeNull();
   });
 });

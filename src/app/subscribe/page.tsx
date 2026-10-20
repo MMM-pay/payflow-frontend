@@ -1,16 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { api, type ApiPlan } from "@/lib/api";
 import { chainPlans } from "@/lib/chain";
 import { config } from "@/lib/config";
 import { payflow } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
-import { formatPeriod, fromStroops } from "@/lib/format";
+import { formatDate, formatWhen, formatPeriod, fromStroops } from "@/lib/format";
 import { formatTrialLength, trialBadge, trialSeconds } from "@/lib/trial";
+import { planAvailability } from "@/lib/availability";
 import { metaFor, useTokenMetas } from "@/lib/token";
-import { AddressLink, Empty, Notice, Panel, SkeletonPlanCards, TxLink } from "@/components/ui";
+import { Empty, MerchantAccount, Notice, Panel, SkeletonPlanCards, TxLink } from "@/components/ui";
 
 export default function SubscribePage() {
   const { address, networkMismatch, signXdr } = useWallet();
@@ -25,29 +26,40 @@ export default function SubscribePage() {
   // this is the only place the trial length is known at signing time.
   const [doneTrial, setDoneTrial] = useState<{ plan: string; seconds: number } | null>(null);
 
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
+  const request = useRef(0);
+  const walletState = useRef({ address, networkMismatch });
+  walletState.current = { address, networkMismatch };
+
   // Each plan can name a different token, so the cards read their own.
   const metas = useTokenMetas((plans ?? []).map((p) => p.token));
 
   const load = useCallback(async () => {
+    const generation = ++request.current;
     const res = await api.plans();
-    if (res) {
-      setPlans(res.plans);
-      setDirect(false);
-      return;
-    }
-    // No indexer: enumerate straight from the registry.
+    let loaded: ApiPlan[];
     try {
-      setPlans(await chainPlans(address ?? config.readSource));
-      setDirect(true);
+      loaded = res ? res.plans : await chainPlans(address ?? config.readSource);
     } catch {
-      setPlans([]);
-      setDirect(true);
+      loaded = [];
     }
+    if (generation === request.current) {
+      setPlans(loaded);
+      setDirect(!res);
+    }
+    return loaded;
   }, [address]);
 
   useEffect(() => {
     void load();
+    const pending = request;
+    return () => { pending.current++; };
   }, [load]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   async function subscribe(plan: ApiPlan) {
     if (!address) {
@@ -56,6 +68,11 @@ export default function SubscribePage() {
     }
     if (networkMismatch) {
       setError("Switch your wallet to the correct network first.");
+      return;
+    }
+    const blocked = planAvailability(plan).reason;
+    if (blocked) {
+      setError(blocked);
       return;
     }
     setBusy(plan.id);
@@ -67,7 +84,23 @@ export default function SubscribePage() {
       if (!Number.isInteger(limit) || limit < 0) {
         throw new Error("Charge limit must be a whole number, or 0 for open-ended.");
       }
-      const hash = await payflow.subscribe(address, signXdr, plan.id, limit);
+      // Re-read before signing: another subscriber may have taken the last seat.
+      // The contract remains authoritative for races after this read.
+      const latest = (await load()).find((p) => p.id === plan.id);
+      if (walletState.current.address !== address || walletState.current.networkMismatch) {
+        throw new Error("Wallet changed. Check your wallet and try again.");
+      }
+      if (!latest || latest.active !== 1) throw new Error("This plan is no longer available.");
+      const reason = planAvailability(latest).reason;
+      if (reason) throw new Error(reason);
+      const hash = await payflow.subscribe(address, async (xdr) => {
+        if (walletState.current.address !== address || walletState.current.networkMismatch) {
+          throw new Error("Wallet changed. Check your wallet and try again.");
+        }
+        const closed = planAvailability(latest).reason;
+        if (closed) throw new Error(closed);
+        return signXdr(xdr);
+      }, plan.id, limit);
       setDone(hash);
       setDoneTrial(
         trialSeconds(plan) > 0
@@ -121,14 +154,39 @@ export default function SubscribePage() {
       {plans === null ? (
         <SkeletonPlanCards label="Loading plans" />
       ) : active.length === 0 ? (
-        <Empty>
-          No active plans yet. Publish one from the merchant page to see it here.
-        </Empty>
+        (plans ?? []).length === 0 ? (
+          <Empty
+            title="No plans yet"
+            action={
+              <Link href="/merchant" className="btn-primary">
+                Publish a plan
+              </Link>
+            }
+          >
+            Nothing has been published on this deployment yet. Publish a plan
+            from the merchant page — it is written straight to the contract, so
+            it appears here with or without the indexer.
+          </Empty>
+        ) : (
+          <Empty
+            title="No active plans right now"
+            action={
+              <Link href="/merchant" className="btn-primary">
+                Publish a plan
+              </Link>
+            }
+          >
+            Every plan on this list is deactivated, so there is nothing to
+            subscribe to at the moment. Check back later, or publish your own
+            plan from the merchant page.
+          </Empty>
+        )
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">
           {active.map((plan) => {
             const meta = metaFor(metas, plan.token);
             const badge = trialBadge(plan);
+            const availability = planAvailability(plan, now);
             return (
             <Panel key={plan.id} title={plan.name || `Plan #${plan.id}`}>
               <div className="space-y-3">
@@ -153,9 +211,26 @@ export default function SubscribePage() {
                   )}
                 </div>
 
-                <div className="flex items-center justify-between text-sm">
+                {availability.until !== null && (
+                  <p className="text-sm text-muted">
+                    Available until <time dateTime={new Date(availability.until * 1000).toISOString()}>
+                      {formatDate(availability.until)} ({formatWhen(availability.until, now * 1000)})
+                    </time>
+                  </p>
+                )}
+                {availability.seats !== null && (
+                  <p className="text-sm text-accent">{availability.seats} {availability.seats === 1 ? "seat" : "seats"} left</p>
+                )}
+                {availability.countUnavailable && (
+                  <p className="text-sm text-muted">Remaining seats are unavailable from this source. Availability is checked by the contract when subscribing.</p>
+                )}
+                {availability.reason && (
+                  <p id={`availability-${plan.id}`} className="text-sm text-muted">{availability.reason}</p>
+                )}
+
+                <div className="flex items-center justify-between gap-2 text-sm">
                   <span className="text-muted">Merchant</span>
-                  <AddressLink value={plan.merchant} />
+                  <MerchantAccount value={plan.merchant} />
                 </div>
 
                 <div>
@@ -177,8 +252,12 @@ export default function SubscribePage() {
                 <button
                   type="button"
                   className="btn-primary w-full"
-                  disabled={busy === plan.id || !address || networkMismatch}
-                  onClick={() => void subscribe(plan)}
+                  disabled={busy !== null || !address || networkMismatch || availability.reason !== null}
+                  aria-describedby={availability.reason ? `availability-${plan.id}` : undefined}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void subscribe(plan);
+                  }}
                 >
                   {busy === plan.id ? "Confirming…" : networkMismatch ? "Wrong network" : address ? "Subscribe" : "Connect wallet"}
                 </button>

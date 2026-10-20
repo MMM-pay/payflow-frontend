@@ -110,10 +110,15 @@ export function checkAmount(input: string, decimals = DECIMALS): AmountCheck {
   if (trimmed === "") {
     return { ok: false, message: "Enter an amount." };
   }
-  if (!/^\d+(\.\d*)?$/.test(trimmed)) {
+  // Accept the separators the user's locale uses ("1,234.5", "1.234,5"),
+  // then apply the strict dot-decimal rules below to the canonical form.
+  // A trailing mark ("1.") canonicalises unchanged, so an unfinished entry
+  // still passes exactly as it did before locale parsing existed.
+  const canonical = canonicalAmount(trimmed);
+  if (canonical === null || !/^\d+(\.\d*)?$/.test(canonical)) {
     return { ok: false, message: "Enter a positive number, for example 2.5." };
   }
-  const [whole = "0", frac = ""] = trimmed.split(".");
+  const [whole = "0", frac = ""] = canonical.split(".");
   if (frac.length > places) {
     return { ok: false, message: `At most ${places} decimal places.` };
   }
@@ -229,13 +234,22 @@ export function formatDate(unixSeconds: number): string {
   return `${d.getUTCDate()} ${month} ${d.getUTCFullYear()}`;
 }
 
+function relativePhrase(count: number, unit: string, future: boolean): string {
+  const text = count === 1 ? `1 ${unit}` : `${count} ${unit}s`;
+  return future ? `in ${text}` : `${text} ago`;
+}
+
 /**
- * A rough "in 5m" / "3d ago" rendering of a timestamp.
+ * A timestamp as plain-language relative time: "in 3 days", "2 hours ago".
+ * The old "in 3d" form is hard to read at a glance; the exact local time
+ * belongs in the tooltip, which `TimeAgo` in `src/components/ui.tsx` renders
+ * alongside this.
  *
  * `nowMs` is injectable so a caller that already holds its own reference time —
- * a test, or anything rendering a past instant — cannot have the two disagree.
- * Without it, asking "is this in the future?" and then asking "how far?" can
- * straddle a boundary and produce "Free trial ended 3 days ago (in 2h)".
+ * a test, or the trial copy composing several timestamps — cannot have the two
+ * disagree. Without it, asking "is this in the future?" and then asking "how
+ * far?" can straddle a boundary and produce "Free trial ended 3 days ago
+ * (in 2 hours)".
  */
 export function formatWhen(unixSeconds: number, nowMs: number = Date.now()): string {
   if (!unixSeconds) return "—";
@@ -243,9 +257,148 @@ export function formatWhen(unixSeconds: number, nowMs: number = Date.now()): str
   const abs = Math.abs(delta);
   const mins = Math.round(abs / 60_000);
   if (mins < 1) return delta >= 0 ? "due now" : "just now";
-  if (mins < 60) return delta >= 0 ? `in ${mins}m` : `${mins}m ago`;
+  if (mins < 60) return relativePhrase(mins, "minute", delta >= 0);
   const hours = Math.round(mins / 60);
-  if (hours < 24) return delta >= 0 ? `in ${hours}h` : `${hours}h ago`;
+  if (hours < 24) return relativePhrase(hours, "hour", delta >= 0);
   const days = Math.round(hours / 24);
-  return delta >= 0 ? `in ${days}d` : `${days}d ago`;
+  return relativePhrase(days, "day", delta >= 0);
+}
+
+/**
+ * The same instant at its exact local time, e.g. "19 Oct 2026, 14:05", for
+ * the tooltip that accompanies a relative time.
+ */
+export function formatExactTime(unixSeconds: number): string {
+  if (!unixSeconds) return "—";
+  return new Date(unixSeconds * 1000).toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
+/**
+ * The `.`-decimal canonical form of a user-typed amount, or `null` when the
+ * input is not a single number.
+ *
+ * Users type the separators their own locale uses: "1,234.5" (dot decimal,
+ * comma grouping), "1.234,5" (comma decimal, dot grouping), or just "1,5".
+ * The last separator is the decimal mark unless the whole input matches the
+ * thousands-grouping pattern, so "1,234" and "1.234.567" are whole grouped
+ * numbers — the same disambiguation spreadsheet and banking software use.
+ * Earlier separators must then be valid grouping ("1.2.3" is rejected).
+ */
+export function canonicalAmount(input: string): string | null {
+  const stripped = input.replace(/[\s\u00a0\u202f]/g, "");
+  if (!stripped || !/^[\d.,]+$/.test(stripped)) return null;
+
+  // "1,234" / "1.234.567": every separator groups thousands, none is decimal.
+  if (/^\d{1,3}([.,]\d{3})+$/.test(stripped)) {
+    return stripped.replace(/[.,]/g, "");
+  }
+
+  const last = Math.max(stripped.lastIndexOf("."), stripped.lastIndexOf(","));
+  if (last === -1) return stripped;
+  const head = stripped.slice(0, last);
+  const tail = stripped.slice(last + 1);
+  // The part before the decimal mark may only group thousands.
+  if (!/^(?:\d{1,3}(?:[.,]\d{3})*|\d+)?$/.test(head) || !/^\d*$/.test(tail)) {
+    return null;
+  }
+  return `${head.replace(/[.,]/g, "") || "0"}.${tail}`;
+}
+
+/**
+ * Locale-aware sibling of `toStroops`: accepts the separators the user's
+ * locale uses and normalises them before the strict parser runs, so
+ * "1.234,5" and "1,234.5" both convert to the same bigint. Amounts must stay
+ * bigint end to end — no step here touches `Number`.
+ */
+export function parseAmount(input: string, decimals = DECIMALS): bigint {
+  const canonical = canonicalAmount(input);
+  if (canonical === null) {
+    throw new Error("Enter a positive number, for example 2.5");
+  }
+  return toStroops(canonical, decimals);
+}
+
+/**
+ * Restrict what an amount field displays: digits plus at most one decimal
+ * mark (either character — users type what their keyboard has). Grouping
+ * separators typed before the last mark are kept verbatim so "1,234."
+ * stays "1,234." while the user keeps typing.
+ *
+ * The fraction is deliberately *not* truncated to the token's decimals.
+ * Silently dropping digits changes the amount the user asked for without
+ * saying so; the extra places stay visible and `amountError` explains that
+ * the token cannot represent them. Exported for `AmountInput` and its tests.
+ */
+export function normaliseAmountInput(raw: string): string {
+  const stripped = raw.replace(/[\s\u00a0\u202f]/g, "");
+  const last = Math.max(stripped.lastIndexOf("."), stripped.lastIndexOf(","));
+  if (last === -1) return stripped.replace(/\D/g, "");
+  const head = stripped.slice(0, last).replace(/[^\d.,]/g, "");
+  const mark = stripped[last];
+  const frac = stripped.slice(last + 1).replace(/\D/g, "");
+  return frac ? `${head}${mark}${frac}` : `${head}${mark}`;
+}
+
+/**
+ * Why an amount field cannot be submitted, or `null` when it can — including
+ * when it is empty or the user is mid-keystroke on a trailing separator.
+ */
+export function amountError(input: string, decimals = DECIMALS): string | null {
+  const stripped = input.replace(/[\s\u00a0\u202f]/g, "");
+  if (!stripped) return null;
+  // A bare trailing separator ("12.", ",") is someone still typing, not a
+  // mistake yet; anything else must parse cleanly before the form submits.
+  if (/^\d+[.,]$|^[.,]$/.test(stripped)) return null;
+  try {
+    parseAmount(stripped, decimals);
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}
+
+/**
+ * The Unix time a date picker's `YYYY-MM-DD` means: midnight UTC on that day.
+ *
+ * A date with no time in it is ambiguous, and a mandate's resume has to read
+ * the same to everyone looking at it, so this is pinned to UTC rather than the
+ * viewer's timezone. "Pause until 2026-10-25" therefore resumes at the start
+ * of the 25th.
+ */
+export function parsePauseDate(value: string): number | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+  const [, year = "", month = "", day = ""] = match;
+  const ms = Date.UTC(Number(year), Number(month) - 1, Number(day));
+  // Date.UTC rolls 31 February over into March, so check it came back whole.
+  const back = new Date(ms);
+  if (back.getUTCFullYear() !== Number(year)) return null;
+  if (back.getUTCMonth() !== Number(month) - 1) return null;
+  if (back.getUTCDate() !== Number(day)) return null;
+  return Math.floor(ms / 1000);
+}
+
+/**
+ * The earliest date a pause can run until, as a date picker value: tomorrow.
+ *
+ * Today cannot be chosen because a date means midnight UTC, which has already
+ * passed by the time the transaction lands.
+ */
+export function minPauseDate(now: number = Date.now()): string {
+  return new Date(now + 86_400_000).toISOString().slice(0, 10);
+}
+
+/**
+ * A resume timestamp as a calendar date, or null when there is no future
+ * resume to show. Returned as `YYYY-MM-DD` rather than a locale string so the
+ * page does not disagree with itself between readers.
+ */
+export function resumeDate(unixSeconds: number | null, now: number = Date.now()): string | null {
+  if (unixSeconds === null || !Number.isFinite(unixSeconds)) return null;
+  const at = unixSeconds * 1000;
+  if (at <= now) return null;
+  return new Date(at).toISOString().slice(0, 10);
 }

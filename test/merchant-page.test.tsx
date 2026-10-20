@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import MerchantPage from "@/app/merchant/page";
 
 /**
@@ -23,9 +23,13 @@ const wallet = vi.hoisted(() => ({
 }));
 
 const apiMock = vi.hoisted(() => ({
+  isConfigured: vi.fn(() => true),
   plans: vi.fn(),
   mandatesFor: vi.fn(),
   merchantSummary: vi.fn(),
+  merchantRevenue: vi.fn(),
+  merchantChurn: vi.fn(),
+  planStats: vi.fn(),
 }));
 
 const payflowMock = vi.hoisted(() => ({
@@ -40,6 +44,7 @@ const chainMock = vi.hoisted(() => ({
   chainMandatesFor: vi.fn(),
   chainMerchantSummary: vi.fn(),
   chainPlansOf: vi.fn(),
+  chainPlanSubscriberCount: vi.fn(),
   endable: vi.fn(() => false),
 }));
 
@@ -53,9 +58,14 @@ const MERCHANT = "GCH5VHWNS24VI75HLDBHK4SSJ2E5XZA5IB6XEZTNE4BJH7AKZI6Z3MHU";
 beforeEach(() => {
   wallet.address = MERCHANT;
   wallet.networkMismatch = false;
+  apiMock.isConfigured.mockReturnValue(true);
   apiMock.plans.mockResolvedValue({ plans: [] });
   apiMock.mandatesFor.mockResolvedValue({ mandates: [] });
   apiMock.merchantSummary.mockResolvedValue(null);
+  apiMock.merchantRevenue.mockResolvedValue(null);
+  apiMock.merchantChurn.mockResolvedValue(null);
+  apiMock.planStats.mockResolvedValue(null);
+  chainMock.chainPlanSubscriberCount.mockResolvedValue(null);
   payflowMock.feeBps.mockResolvedValue(100); // 1%
   payflowMock.createPlan.mockResolvedValue("tx-hash");
   chainMock.chainMerchantSummary.mockReturnValue({
@@ -88,7 +98,9 @@ describe("MerchantPage publish form", () => {
     expect(empty.disabled).toBe(true);
     expect(screen.queryByText("Enter an amount.")).toBeNull();
 
-    fireEvent.change(screen.getByLabelText(/price/i), { target: { value: "abc" } });
+    // Letters are stripped at the keyboard now, so the garbage that reaches
+    // the parser is a malformed number like 1.2.3 (issue #46's filter).
+    fireEvent.change(screen.getByLabelText(/price/i), { target: { value: "1.2.3" } });
     expect(
       (screen.getByRole("button", { name: /publish plan/i }) as HTMLButtonElement).disabled,
     ).toBe(true);
@@ -111,6 +123,21 @@ describe("MerchantPage publish form", () => {
     expect(screen.getByText(/At most 7 decimal places\./i)).toBeTruthy();
   });
 
+  it("accepts the separators the merchant's locale uses", async () => {
+    // Issue #46: a comma-decimal keyboard produces "1,5" or "1.234,5";
+    // both must publish the same bigint as their dot-decimal twins.
+    render(<MerchantPage />);
+
+    const publish = await fillPrice("1.234,5");
+    expect(publish.disabled).toBe(false);
+
+    fireEvent.click(publish);
+    await waitFor(() => expect(payflowMock.createPlan).toHaveBeenCalled());
+    expect(payflowMock.createPlan.mock.calls[0]?.[2]).toMatchObject({
+      amount: 12_345_000_000n,
+    });
+  });
+
   it("rejects a price of zero, which the contract would reject too", async () => {
     render(<MerchantPage />);
 
@@ -122,7 +149,7 @@ describe("MerchantPage publish form", () => {
 
   it("marks the field invalid and points it at the message for screen readers", async () => {
     render(<MerchantPage />);
-    await fillPrice("nope");
+    await fillPrice("1.2.3");
 
     const field = screen.getByLabelText(/price/i);
     expect(field.getAttribute("aria-invalid")).toBe("true");
@@ -174,5 +201,197 @@ describe("MerchantPage publish form", () => {
     expect(screen.getByRole("button", { name: /publish plan/i }).hasAttribute("disabled")).toBe(
       false,
     );
+  });
+});
+
+function plan(over: Partial<import("@/lib/api").ApiPlan> = {}): import("@/lib/api").ApiPlan {
+  return {
+    id: 1,
+    merchant: MERCHANT,
+    name: "Pro Monthly",
+    token: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    amount: "10000000",
+    period: 2_592_000,
+    active: 1,
+    ledger: 1000,
+    ...over,
+  };
+}
+
+/** Find the plan card that contains the given plan name, scoped for queries. */
+async function planCardByName(name: string) {
+  const nameEl = await screen.findByText(name);
+  return within(nameEl.closest("div.border-edge") as HTMLElement);
+}
+
+describe("MerchantPage plan stats", () => {
+  it("shows subscriber count, collected, and cancellations from the API", async () => {
+    apiMock.plans.mockResolvedValue({ plans: [plan({ id: 3 })] });
+    apiMock.planStats.mockResolvedValue({
+      subscriber_count: 42,
+      total_collected: "420000000",
+      cancellations: 5,
+    });
+
+    render(<MerchantPage />);
+
+    const card = await planCardByName("Pro Monthly");
+    // Subscriber count, Collected (42 XLM = 420000000 stroops), Cancellations.
+    await waitFor(() => expect(card.getByText("42")).toBeTruthy());
+    expect(card.getByText(/Subscribers/)).toBeTruthy();
+    expect(card.getByText(/Collected/)).toBeTruthy();
+    expect(card.getByText(/42 XLM/)).toBeTruthy();
+    expect(card.getByText(/Cancellations/)).toBeTruthy();
+    expect(card.getByText("5")).toBeTruthy();
+  });
+
+  it("shows only subscriber count in contract-only mode when the contract supports it", async () => {
+    // API down for plans and for plan stats; contract fallback returns plans
+    // and a subscriber count.
+    apiMock.plans.mockResolvedValue(null);
+    chainMock.chainPlansOf.mockResolvedValue([plan({ id: 7 })]);
+    apiMock.planStats.mockResolvedValue(null);
+    chainMock.chainPlanSubscriberCount.mockResolvedValue(9);
+
+    render(<MerchantPage />);
+
+    const card = await planCardByName("Pro Monthly");
+    await waitFor(() => expect(card.getByText("9")).toBeTruthy());
+    expect(card.getByText(/Subscribers/)).toBeTruthy();
+    // total_collected and cancellations require the indexer; they must not
+    // appear when only the contract is available.
+    expect(card.queryByText(/Collected/)).toBeNull();
+    expect(card.queryByText(/Cancellations/)).toBeNull();
+  });
+
+  it("hides the stats block entirely when neither the API nor the contract can supply counts", async () => {
+    apiMock.plans.mockResolvedValue({ plans: [plan({ id: 2 })] });
+    apiMock.planStats.mockResolvedValue(null);
+    chainMock.chainPlanSubscriberCount.mockResolvedValue(null);
+
+    render(<MerchantPage />);
+
+    // Wait for the plan card itself to appear and for stats to settle.
+    const card = await planCardByName("Pro Monthly");
+    await waitFor(() => {
+      expect(card.queryByText(/Subscribers/)).toBeNull();
+      expect(card.queryByText(/Collected/)).toBeNull();
+      expect(card.queryByText(/Cancellations/)).toBeNull();
+    });
+  });
+
+  function churnResponse(merchant = MERCHANT) {
+    return {
+      merchant,
+      bucket: "month",
+      buckets: [
+        { bucket: "2026-10", started: 5, cancelled: 1, ended: 1, completed: 1, net: 2 },
+      ],
+      totals: { started: 5, cancelled: 1, ended: 1, completed: 1, net: 2 },
+    };
+  }
+
+  describe("MerchantChurnPanel", () => {
+    it("shows the required monthly metrics in an accessible table", async () => {
+      apiMock.merchantChurn.mockResolvedValue(churnResponse());
+      render(<MerchantPage />);
+
+      const table = await screen.findByRole("table");
+      expect(within(table).getByRole("columnheader", { name: "Month (UTC)" })).toBeTruthy();
+      expect(within(table).getByRole("columnheader", { name: "Started" })).toBeTruthy();
+      expect(
+        within(table).getByRole("columnheader", { name: "Subscriber cancellations" }),
+      ).toBeTruthy();
+      expect(within(table).getByRole("columnheader", { name: "Merchant-ended" })).toBeTruthy();
+      expect(within(table).getByRole("columnheader", { name: "Completed" })).toBeTruthy();
+      expect(
+        within(table).getByRole("columnheader", { name: "Net subscriber change" }),
+      ).toBeTruthy();
+      expect(within(table).getByRole("rowheader", { name: "2026-10" })).toBeTruthy();
+      expect(within(table).getByText("5")).toBeTruthy();
+      expect(within(table).getAllByText("1")).toHaveLength(3);
+      expect(within(table).getByText("+2 (increase)")).toBeTruthy();
+      expect(apiMock.merchantChurn).toHaveBeenCalledWith(MERCHANT);
+    });
+
+    it("shows loading and empty states", async () => {
+      let resolveChurn!: (body: unknown) => void;
+      apiMock.merchantChurn.mockReturnValue(
+        new Promise((resolve) => {
+          resolveChurn = resolve;
+        }),
+      );
+      render(<MerchantPage />);
+
+      expect(screen.getByText("Loading monthly subscriber activity…")).toBeTruthy();
+      resolveChurn({
+        merchant: MERCHANT,
+        bucket: "month",
+        buckets: [],
+        totals: { started: 0, cancelled: 0, ended: 0, completed: 0, net: 0 },
+      });
+      expect(await screen.findByText("No subscription activity in this report")).toBeTruthy();
+    });
+
+    it("does not retain the previous merchant's metrics after an account switch", async () => {
+      const otherMerchant = "GOTHER";
+      let resolveNext!: (body: unknown) => void;
+      apiMock.merchantChurn
+        .mockResolvedValueOnce(churnResponse())
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              resolveNext = resolve;
+            }),
+        );
+      const { rerender } = render(<MerchantPage />);
+
+      expect(await screen.findByText("2026-10")).toBeTruthy();
+      wallet.address = otherMerchant;
+      rerender(<MerchantPage />);
+
+      await waitFor(() => expect(apiMock.merchantChurn).toHaveBeenLastCalledWith(otherMerchant));
+      expect(screen.queryByText("2026-10")).toBeNull();
+      expect(screen.getByText("Loading monthly subscriber activity…")).toBeTruthy();
+
+      resolveNext({
+        ...churnResponse(otherMerchant),
+        buckets: [{ bucket: "2026-11", started: 7, cancelled: 0, ended: 0, completed: 0, net: 7 }],
+        totals: { started: 7, cancelled: 0, ended: 0, completed: 0, net: 7 },
+      });
+      expect(await screen.findByText("2026-11")).toBeTruthy();
+      expect(screen.queryByText("2026-10")).toBeNull();
+    });
+
+    it("explains unavailable and malformed backend responses", async () => {
+      apiMock.merchantChurn.mockResolvedValue(null);
+      const { unmount } = render(<MerchantPage />);
+      expect(await screen.findByText("Historical churn analytics unavailable")).toBeTruthy();
+
+      unmount();
+      apiMock.merchantChurn.mockResolvedValue({ unexpected: true });
+      render(<MerchantPage />);
+      expect(await screen.findByText(/incomplete or inconsistent churn report/)).toBeTruthy();
+    });
+  });
+
+  it("amounts formatted from strings with bigint, never floats", async () => {
+    // 50 million stroops = 5 XLM at 7 decimals. The total_collected string is
+    // parsed by fromStroops via BigInt(raw), so large amounts stay exact — a
+    // float conversion would lose precision beyond Number.MAX_SAFE_INTEGER.
+    // Using 5 XLM (not 1 XLM like the plan price) avoids a duplicate match.
+    apiMock.plans.mockResolvedValue({ plans: [plan({ id: 4 })] });
+    apiMock.planStats.mockResolvedValue({
+      subscriber_count: 1,
+      total_collected: "50000000",
+      cancellations: 0,
+    });
+
+    render(<MerchantPage />);
+
+    const card = await planCardByName("Pro Monthly");
+    // The Collected value must read "5 XLM" — exact, from a bigint path.
+    await waitFor(() => expect(card.getByText(/5 XLM/)).toBeTruthy());
+    expect(card.getByText(/Subscribers/)).toBeTruthy();
   });
 });

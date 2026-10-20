@@ -48,6 +48,8 @@ export const config = {
   /** Ordered list of RPC endpoints to try in turn. */
   rpcUrls:
     rpcUrls as readonly string[],
+  /** Horizon serves account `home_domain`s (stellar.toml names); RPC does not. */
+  horizonUrl: process.env.NEXT_PUBLIC_HORIZON_URL ?? "https://horizon-testnet.stellar.org",
   networkPassphrase:
     process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015",
   network: process.env.NEXT_PUBLIC_STELLAR_NETWORK ?? "TESTNET",

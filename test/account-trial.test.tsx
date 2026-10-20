@@ -23,7 +23,7 @@ const wallet = vi.hoisted(() => ({
   signXdr: vi.fn(),
 }));
 
-const apiMock = vi.hoisted(() => ({ mandatesOf: vi.fn() }));
+const apiMock = vi.hoisted(() => ({ mandatesOf: vi.fn(), vaultHistory: vi.fn() }));
 const payflowMock = vi.hoisted(() => ({
   vaultBalance: vi.fn(),
   deposit: vi.fn(),
@@ -34,8 +34,17 @@ const payflowMock = vi.hoisted(() => ({
 const chainMock = vi.hoisted(() => ({ chainMandatesOf: vi.fn() }));
 
 vi.mock("@/lib/wallet", () => ({ useWallet: () => wallet }));
-vi.mock("@/lib/api", () => ({ api: { mandatesOf: apiMock.mandatesOf } }));
-vi.mock("@/lib/payflow", () => ({ payflow: payflowMock }));
+vi.mock("@/lib/api", () => ({
+  api: { mandatesOf: apiMock.mandatesOf, vaultHistory: apiMock.vaultHistory },
+}));
+vi.mock("@/lib/payflow", () => ({
+  payflow: payflowMock,
+  // This page's tests predate payflow-contract#41; the dated pause stays off.
+  mandatePauseUntil: () => null,
+  // payflow-contract#34 not shipped; past-due stays off.
+  mandateIsPastDue: () => false,
+  mandatePastDueUntil: () => null,
+}));
 vi.mock("@/lib/chain", () => ({ chainMandatesOf: chainMock.chainMandatesOf }));
 
 const SUBSCRIBER = "GAP6QFLXQD73URCC3EXU2WOQHIAREPCGMSIMKF5PFLLI5TR6HTMNDTIE";
@@ -66,6 +75,7 @@ beforeEach(() => {
   wallet.networkMismatch = false;
   payflowMock.vaultBalance.mockResolvedValue(0n);
   apiMock.mandatesOf.mockReset();
+  apiMock.vaultHistory.mockReset();
   chainMock.chainMandatesOf.mockReset();
 });
 
@@ -83,7 +93,8 @@ describe("AccountPage free trials", () => {
     expect(await screen.findByText("Mandate #7")).toBeTruthy();
     const text = document.body.textContent ?? "";
     expect(text).toContain("Free trial ends");
-    expect(text).toContain("in 14d");
+    // Issue #45 spells relative times out; the exact date is beside it.
+    expect(text).toContain("in 14 days");
     expect(text).toContain("Cancel before then and you pay nothing.");
   });
 
