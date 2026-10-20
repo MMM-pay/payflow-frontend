@@ -79,7 +79,7 @@ export function mandateToApi(mandate: Mandate): ApiMandate {
     ...(mandate.pause_until !== undefined
       ? { pause_until: Number(mandate.pause_until) }
       : {}),
-    // Only present once payflow-contract#37 mirrors the discount onto the
+    // Only present once payflow-contract#37 adds the discount to the
     // mandate; a contract without the fields cannot say, and a zero would
     // claim there is no discount where there is one.
     ...(mandate.discount_bps !== undefined
@@ -163,7 +163,7 @@ export async function chainPlansOf(source: string, merchant: string): Promise<Ap
  * Read the open-mandate count for a single plan from contract state.
  *
  * Returns null when the deployed contract predates `plan_subscriber_count`
- * (payflow-contract#25), so the caller can hide the stat rather than show
+ * (payflow-contract+25), so the caller can hide the stat rather than show
  * a misleading zero.
  *
  * Exported for tests.
@@ -175,7 +175,7 @@ export async function chainPlanSubscriberCount(
   try {
     return await payflow.planSubscriberCount(source, planId);
   } catch {
-    // Old contracts do not expose this getter. Return null so the UI can
+    // Old contracts do not expose this getter. Return null so the UI
     // hide the subscriber count rather than claim it is zero.
     return null;
   }
@@ -311,24 +311,9 @@ export function vaultEventLabel(event: ApiVaultEvent): string {
   }
 }
 
-/** Signed decimal-string amount for display: deposits are positive, withdrawals
- * and debits are negative. Amounts stay in smallest units until formatted, so
- * no floating point is ever used for money. */
+/** Signed decimal-string amount for display: deposits are positive, withdrawal
+ * and debits are negative. */
 export function vaultEventAmount(event: ApiVaultEvent): string {
-  const sign = vaultEventIsCredit(event) ? "+" : "-";
-  return `${sign}${fromStroops(event.amount)}`;
+  const amount = fromStroops(BigInt(event.amount));
+  return vaultEventIsCredit(event) ? amount : `-${amount}`;
 }
-
-/** Tone class key for colour-coding: deposits are "ok" (green), withdrawals
- * and debits are "error" (rose). Colour is an enhancement; the text label and
- * sign carry the meaning. */
-export function vaultEventTone(event: ApiVaultEvent): "ok" | "error" {
-  return vaultEventIsCredit(event) ? "ok" : "error";
-}
-
-/** Return a new array of vault events sorted newest first by ledger. */
-export function sortVaultEventsNewestFirst(events: ApiVaultEvent[]): ApiVaultEvent[] {
-  return [...events].sort((a, b) => b.ledger - a.ledger);
-}
-
-
