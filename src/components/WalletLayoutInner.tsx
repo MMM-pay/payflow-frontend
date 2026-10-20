@@ -1,11 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { WalletButton } from "@/components/WalletButton";
 import { NetworkMismatchBanner } from "@/components/ui";
+import { Search } from "@/components/Search";
 import {
   APP_VERSION,
   COMMIT_HASH,
@@ -43,6 +45,7 @@ function isCurrent(pathname: string, href: string): boolean {
 export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
   const { networkMismatch, walletNetwork, address } = useWallet();
   const pathname = usePathname();
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const toggleRef = useRef<HTMLButtonElement>(null);
@@ -58,6 +61,26 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
       walletDisplayName = walletName;
     }
   }
+
+  // "/" focuses the search field from anywhere on the page, unless the user
+  // is already typing into an input, textarea, or contenteditable element.
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target?.isContentEditable) {
+        return;
+      }
+      const input = document.getElementById("global-search") as HTMLInputElement | null;
+      if (!input) return;
+      event.preventDefault();
+      input.focus();
+      input.select();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   const handleCopyDebugInfo = async () => {
     const debugInfo = buildDebugInfo(
@@ -134,6 +157,10 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
               </nav>
             </div>
 
+            <div className="hidden min-w-0 flex-1 justify-center px-2 md:flex">
+              <Search onNavigate={(href) => router.push(href)} />
+            </div>
+
             <div className="flex shrink-0 items-center gap-2">
               <ThemeToggle />
               <WalletButton />
@@ -173,6 +200,10 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
                 )}
               </button>
             </div>
+          </div>
+
+          <div className="mt-3 md:hidden">
+            <Search onNavigate={(href) => router.push(href)} />
           </div>
 
           <nav

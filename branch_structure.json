@@ -1,0 +1,18 @@
+{
+  "default_branch": "main",
+  "branches": [
+    "feat/issue-103-feat-search-plans-merchants-and-mandates",
+    "main",
+    "origin"
+  ],
+  "parent": {
+    "feat/issue-103-feat-search-plans-merchants-and-mandates": "main",
+    "main": null,
+    "origin": "main"
+  },
+  "order": [
+    "main",
+    "feat/issue-103-feat-search-plans-merchants-and-mandates",
+    "origin"
+  ]
+}
