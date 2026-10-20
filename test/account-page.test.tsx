@@ -35,6 +35,7 @@ const payflowMock = vi.hoisted(() => ({
   vaultBalance: vi.fn(),
   deposit: vi.fn(),
   withdraw: vi.fn(),
+  depositFor: vi.fn(),
   setPaused: vi.fn(),
   pauseUntil: vi.fn(),
   cancel: vi.fn(),
@@ -46,6 +47,8 @@ const payflowHelpers = vi.hoisted(() => ({
   mandatePauseUntil: vi.fn(),
   mandateIsPastDue: vi.fn(() => false),
   mandatePastDueUntil: vi.fn(() => null),
+  vaultSupportsDepositFor: vi.fn(),
+  validateRecipient: vi.fn(),
 }));
 
 const chainMock = vi.hoisted(() => ({
@@ -53,6 +56,7 @@ const chainMock = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/wallet", () => ({ useWallet: () => wallet }));
+
 vi.mock("@/lib/api", () => ({
   api: {
     isConfigured: apiMock.isConfigured,
@@ -61,6 +65,7 @@ vi.mock("@/lib/api", () => ({
     charges: apiMock.charges,
     stream: apiMock.stream,
   },
+  checkWebhookUrl: vi.fn(),
 }));
 vi.mock("@/lib/payflow", () => ({
   payflow: payflowMock,
@@ -153,7 +158,16 @@ beforeEach(async () => {
   // Default: the deployed contract has no pause_until, so the picker is hidden.
   payflowHelpers.mandatePauseUntil.mockReset();
   payflowHelpers.mandatePauseUntil.mockReturnValue(null);
+  // Default: the deployed contract has no deposit_for, so the sponsor panel is hidden.
+  payflowHelpers.vaultSupportsDepositFor.mockReset();
+  payflowHelpers.vaultSupportsDepositFor.mockResolvedValue(false);
+  payflowHelpers.validateRecipient.mockReset();
   payflowMock.cancel.mockReset();
+  payflowMock.deposit.mockReset();
+  payflowMock.depositFor.mockReset();
+  payflowMock.withdraw.mockReset();
+  payflowMock.setPaused.mockReset();
+  payflowMock.pauseUntil.mockReset();
   payflowMock.readContract.mockReset();
   chainMock.chainMandatesOf.mockReset();
   // The token metadata cache is module-level and outlives a single render.

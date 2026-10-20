@@ -33,12 +33,14 @@ const payflowMock = vi.hoisted(() => ({
   vaultBalance: vi.fn(),
   deposit: vi.fn(),
   withdraw: vi.fn(),
+  depositFor: vi.fn(),
   setPaused: vi.fn(),
   cancel: vi.fn(),
 }));
 const chainMock = vi.hoisted(() => ({ chainMandatesOf: vi.fn() }));
 
 vi.mock("@/lib/wallet", () => ({ useWallet: () => wallet }));
+
 vi.mock("@/lib/api", () => ({
   api: {
     isConfigured: apiMock.isConfigured,
@@ -46,6 +48,7 @@ vi.mock("@/lib/api", () => ({
     vaultHistory: apiMock.vaultHistory,
     stream: apiMock.stream,
   },
+  checkWebhookUrl: vi.fn(),
 }));
 vi.mock("@/lib/payflow", () => ({
   payflow: payflowMock,
@@ -54,6 +57,8 @@ vi.mock("@/lib/payflow", () => ({
   // payflow-contract#34 not shipped; past-due stays off.
   mandateIsPastDue: () => false,
   mandatePastDueUntil: () => null,
+  // payflow-contract#29 not shipped; the sponsor panel stays off.
+  vaultSupportsDepositFor: async () => false,
 }));
 vi.mock("@/lib/chain", () => ({ chainMandatesOf: chainMock.chainMandatesOf }));
 
@@ -84,6 +89,10 @@ beforeEach(() => {
   wallet.address = SUBSCRIBER;
   wallet.networkMismatch = false;
   payflowMock.vaultBalance.mockResolvedValue(0n);
+  payflowMock.deposit.mockReset();
+  payflowMock.withdraw.mockReset();
+  payflowMock.setPaused.mockReset();
+  payflowMock.cancel.mockReset();
   apiMock.mandatesOf.mockReset();
   apiMock.vaultHistory.mockReset();
   chainMock.chainMandatesOf.mockReset();

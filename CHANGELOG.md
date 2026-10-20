@@ -33,6 +33,16 @@ All notable changes to payflow-frontend. The format follows
 
 ### Added
 
+- **Accessible dialog primitive.** `Dialog` in `src/components/ui.tsx` moves
+  focus into the panel when it opens, keeps it inside while the dialog stays
+  open, closes on Escape or its own dismiss button, and hands focus back to
+  whatever opened it. The panel is labelled by its title through `aria-modal`
+  and `aria-labelledby`, so a screen reader announces what is being confirmed
+  before any action. Confirmations are inline buttons today and the account
+  page falls back to `window.confirm`, which cannot be styled, labelled, or
+  kept in reach on a phone; this is the primitive those calls switch to. It
+  holds no data of its own, so it behaves the same with and without
+  `NEXT_PUBLIC_API_URL` configured and in contract-only mode.
 - **Pause until a date on the account page.** A subscriber can choose the day
   billing resumes, and a paused mandate shows that date. The control is hidden
   unless the mandate data carries `pause_until`, so a deployed contract that
