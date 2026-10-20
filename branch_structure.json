@@ -1,0 +1,18 @@
+{
+  "default_branch": "main",
+  "branches": [
+    "feat/issue-67-feat-merchant-onboarding-checklist",
+    "main",
+    "origin"
+  ],
+  "parent": {
+    "feat/issue-67-feat-merchant-onboarding-checklist": "main",
+    "main": null,
+    "origin": "main"
+  },
+  "order": [
+    "main",
+    "feat/issue-67-feat-merchant-onboarding-checklist",
+    "origin"
+  ]
+}

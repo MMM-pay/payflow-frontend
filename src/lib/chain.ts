@@ -139,6 +139,10 @@ async function newestIds(
  * The registry has no "list all" function (that is the gap the indexer fills),
  * but ids are sequential and `next_plan_id` says where they end, so this reads
  * the newest few. Bounded deliberately: an unbounded read would hammer RPC.
+ *
+ * Each record comes from `payflow.getPlan`, which caches it for the session, so
+ * a second visit re-reads only `next_plan_id` — the one value that a newly
+ * published plan changes.
  */
 export async function chainPlans(source: string): Promise<ApiPlan[]> {
   const next = Number(await payflow.nextPlanId(source));

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { api, type ApiMandate, type ApiPlan, type MerchantSummary } from "@/lib/api";
+import { api, checkWebhookUrl, type ApiMandate, type ApiPlan, type ApiWebhook, type MerchantSummary, type StreamEvent } from "@/lib/api";
 import { RevenueChart } from "@/components/RevenueChart";
 import { buildCsv, downloadCsv, exportFilename, type ChargeRow } from "@/lib/csv";
 import { fillBuckets, parseRevenue, type BucketSize, type RevenuePoint } from "@/lib/revenue";
@@ -17,12 +17,14 @@ import {
   remainingDiscountCharges,
   supportsDiscounts,
 } from "@/lib/discount";
-import { MAX_NAME_LEN, mandateRefundableAmount, mandateSupportsRefund, nameByteLength, payflow, server } from "@/lib/payflow";
+import { MAX_NAME_LEN, mandatePauseUntil, mandateRefundableAmount, mandateSupportsRefund, nameByteLength, payflow, server } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
+import { useStream } from "@/lib/stream";
 import {
   checkAmount,
   feeSplit,
   formatAmount,
+  formatDate,
   formatFeeBps,
   formatPeriod,
   fromStroops,
@@ -192,6 +194,274 @@ function MerchantChurnPanel({
             </tbody>
           </table>
         </div>
+      )}
+    </Panel>
+  );
+}
+
+/**
+ * Events the backend can deliver to a merchant's webhook endpoints.
+ *
+ * Kept as a fixed list so the merchant cannot invent events the backend does
+ * not send — payflow-backend#5 defines the final set.
+ */
+const WEBHOOK_EVENTS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "charge", label: "Charge settled" },
+  { value: "refund", label: "Refund issued" },
+  { value: "mandate_ended", label: "Mandate ended" },
+];
+
+/**
+ * Webhook settings: register, list and test HTTPS endpoints the backend
+ * POSTs charge events to. Hidden entirely when the backend does not serve
+ * the webhook endpoints (NEXT_PUBLIC_API_URL unset, or a 404 from the indexer).
+ */
+function WebhooksPanel({
+  merchant,
+  apiConfigured,
+}: {
+  merchant: string;
+  apiConfigured: boolean;
+}) {
+  const [webhooks, setWebhooks] = useState<ApiWebhook[] | null>(null);
+  const [url, setUrl] = useState("");
+  const [events, setEvents] = useState<string[]>([]);
+  const [showSecret, setShowSecret] = useState<{ id: string; secret: string } | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!apiConfigured) {
+      setWebhooks(null);
+      return;
+    }
+    setWebhooks(null);
+    let live = true;
+    void api.webhooks(merchant).then((list) => {
+      if (live) setWebhooks(list);
+    });
+    return () => {
+      live = false;
+    };
+  }, [apiConfigured, merchant]);
+
+  if (!apiConfigured) return null;
+
+  const urlCheck = checkWebhookUrl(url);
+  const usable = urlCheck.ok && events.length > 0;
+
+  async function addWebhook() {
+    if (!urlCheck.ok || events.length === 0) return;
+    setBusy("webhook-add");
+    setError(null);
+    setDone(null);
+    try {
+      const created = await api.addWebhook(merchant, { url: urlCheck.url, events });
+      if (!created) {
+        setError("The backend could not create the webhook.");
+        return;
+      }
+      setShowSecret({ id: created.id, secret: created.secret ?? "" });
+      setWebhooks((prev) => (prev ? [...prev, created] : [created]));
+      setUrl("");
+      setEvents([]);
+      setDone("Webhook created.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function deleteWebhook(id: string) {
+    setBusy(`webhook-delete-${id}`);
+    try {
+      const ok = await api.deleteWebhook(merchant, id);
+      if (!ok) {
+        setError("The backend could not delete the webhook.");
+        return;
+      }
+      setWebhooks((prev) => (prev ? prev.filter((w) => w.id !== id) : prev));
+      setDone("Webhook deleted.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+      setConfirmDelete(null);
+    }
+  }
+
+  async function testWebhook(id: string) {
+    setBusy(`webhook-test-${id}`);
+    try {
+      const ok = await api.testWebhook(merchant, id);
+      if (!ok) {
+        setError("The test event could not be sent.");
+        return;
+      }
+      setDone("Test event sent.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function toggleEvent(value: string) {
+    setEvents((prev) => (prev.includes(value) ? prev.filter((e) => e !== value) : [...prev, value]));
+  }
+
+  return (
+    <Panel
+      title="Webhook settings"
+      subtitle="Endpoints the backend POSTs charge events to. Each request is signed with a secret shown once when the webhook is created."
+    >
+      {error && <Notice tone="error">{error}</Notice>}
+      {done && <Notice tone="ok">{done}</Notice>}
+      {webhooks === null ? (
+        <SkeletonRows rows={2} label="Loading webhooks" />
+      ) : (
+        <>
+          <div className="mt-3 rounded-lg border border-edge p-3">
+            <p className="text-sm font-medium">Add a webhook</p>
+            <div className="mt-2 flex flex-wrap items-end gap-3">
+              <div className="min-w-[16rem] flex-1">
+                <label className="label" htmlFor="webhook-url">
+                  URL
+                </label>
+                <input
+                  id="webhook-url"
+                  className="input"
+                  placeholder="https://hooks.example.com/payflow"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  disabled={busy === "webhook-add"}
+                  aria-invalid={url.length > 0 && !urlCheck.ok}
+                  aria-describedby={
+                    url.length > 0 && !urlCheck.ok ? "webhook-url-error" : undefined
+                  }
+                />
+                {url.length > 0 && !urlCheck.ok && (
+                  <p id="webhook-url-error" className="mt-1 text-sm text-danger">
+                    {urlCheck.message}
+                  </p>
+                )}
+              </div>
+              <div className="min-w-[14rem] flex-1">
+                <p className="text-sm font-medium mb-2">Events</p>
+                <div className="space-y-1">
+                  {WEBHOOK_EVENTS.map((option) => (
+                    <label key={option.value} className="flex items-start gap-2">
+                      <input
+                        type="checkbox"
+                        checked={events.includes(option.value)}
+                        onChange={() => toggleEvent(option.value)}
+                        disabled={busy === "webhook-add"}
+                      />
+                      {option.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={busy === "webhook-add" || !usable}
+                onClick={addWebhook}
+              >
+                {busy === "webhook-add" ? "Adding…" : "Add webhook"}
+              </button>
+            </div>
+          </div>
+
+          {showSecret && (
+            <div className="mt-3 rounded-lg border border-accent/40 bg-accent/10 p-3">
+              <p className="text-sm font-medium">Signing secret (shown once)</p>
+              <div className="mt-2 flex items-end gap-2">
+                <input
+                  id="webhook-secret"
+                  className="input mono flex-1"
+                  readOnly
+                  value={showSecret.secret}
+                  aria-label="Copy the signing secret"
+                />
+                <CopyButton value={showSecret.secret} label="signing secret" />
+              </div>
+              <p className="mt-1 text-xs text-muted">
+                Copy it now — the backend never returns this secret again.
+              </p>
+            </div>
+          )}
+
+          <div className="mt-4 space-y-3">
+            {webhooks.length === 0 ? (
+              <Empty
+                title="No webhooks yet"
+              >
+                Register an endpoint above so the backend can POST charge
+                events to your own systems. Events are delivered over https
+                and signed with the webhook{"'s"} secret.
+              </Empty>
+            ) : (
+              webhooks.map((w) => (
+                <div key={w.id} className="rounded-lg border border-edge p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="font-medium mono truncate" title={w.url}>
+                        {w.url}
+                      </div>
+                      <div className="mt-1 text-xs text-muted">
+                        {w.events.join(", ")} · {formatDate(w.created_at)}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {confirmDelete === w.id ? (
+                        <>
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            disabled={busy !== null}
+                            onClick={() => setConfirmDelete(null)}
+                          >
+                            Keep
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-danger"
+                            disabled={busy !== null}
+                            onClick={() => void deleteWebhook(w.id)}
+                          >
+                            {busy === `webhook-delete-${w.id}` ? "Deleting…" : "Delete"}
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn-ghost text-danger"
+                          disabled={busy !== null}
+                          onClick={() => setConfirmDelete(w.id)}
+                          aria-label={`Delete webhook ${w.url}`}
+                        >
+                          Delete
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        disabled={busy !== null}
+                        onClick={() => void testWebhook(w.id)}
+                      >
+                        {busy === `webhook-test-${w.id}` ? "Testing…" : "Send test"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </>
       )}
     </Panel>
   );
@@ -422,6 +692,9 @@ export default function MerchantPage() {
   const [busy, setBusy] = useState<string | null>(null);
   // Ending is permanent, so the End button asks for a second click.
   const [confirmEnd, setConfirmEnd] = useState<number | null>(null);
+  // Pausing is reversible, so the Pause button asks for a second click
+  // when the merchant is pausing (not resuming).
+  const [confirmPause, setConfirmPause] = useState<number | null>(null);
   /**
    * The mandate whose discount form is open. One at a time: the form carries
    * two fields, and a page full of them is unreadable.
@@ -441,6 +714,17 @@ export default function MerchantPage() {
    * button that cannot work has been misled.
    */
   const [discountSupport, setDiscountSupport] = useState(false);
+
+  /**
+   * Whether the deployed contract supports merchant-initiated pauses.
+   *
+   * The control is hidden until it can: the contract must have the
+   * `set_paused` method (which it does on all deployments) and the
+   * mandate must carry `pause_until` to know if it's paused by the merchant.
+   * We check the first mandate to determine support.
+   */
+  const [pauseSupport, setPauseSupport] = useState(false);
+
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
@@ -460,6 +744,10 @@ export default function MerchantPage() {
       setOnboardingDismissed(false);
     }
   }, []);
+
+  // Track who paused each mandate: "subscriber" | "merchant" | undefined
+  // Updated by the SSE stream when available.
+  const [pausedBy, setPausedBy] = useState<Map<number, "subscriber" | "merchant">>(new Map());
 
   // Plans are published in the configured token; mandates carry their own.
   const metas = useTokenMetas([
@@ -582,6 +870,37 @@ export default function MerchantPage() {
     setBalances(b);
   }, [address]);
 
+  // SSE stream for live updates (payflow-backend#19)
+  useStream({
+    address,
+    role: "merchant",
+    onEvent: useCallback((event: StreamEvent) => {
+      if (event.type === "mandate_pause") {
+        setPausedBy((prev) => {
+          const next = new Map(prev);
+          next.set(event.mandate_id, event.by);
+          return next;
+        });
+      }
+      if (event.type === "mandate_status") {
+        setPausedBy((prev) => {
+          const next = new Map(prev);
+          // If status becomes Active, the pause is over
+          if (event.status === "Active") {
+            next.delete(event.mandate_id);
+          }
+          return next;
+        });
+      }
+      // For other events (charge, discount, end), trigger a reload
+      // to get fresh data from the indexer
+      if (event.type === "charge" || event.type === "mandate_discount" || event.type === "mandate_end") {
+        void load();
+      }
+    }, [load]),
+    enabled: api.isConfigured(),
+  });
+
   useEffect(() => {
     void load();
   }, [load]);
@@ -642,6 +961,40 @@ export default function MerchantPage() {
       })
       .catch(() => {
         if (live) setRefundSupport(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [address, mandates]);
+
+  /**
+   * Whether the deployed contract supports merchant-initiated pauses.
+   *
+   * The indexer does not project pause_until yet, so one mandate
+   * is read from the chain to answer the question the same way in both modes.
+   */
+  useEffect(() => {
+    const row = mandates?.[0];
+    if (!address || !row) {
+      setPauseSupport(false);
+      return;
+    }
+    // The contract has always had `set_paused`; what we need to know is
+    // whether the mandate carries `pause_until` so we can distinguish
+    // merchant pauses from subscriber pauses. If the field is present,
+    // the control can be shown.
+    if (mandatePauseUntil(row) !== null) {
+      setPauseSupport(true);
+      return;
+    }
+    let live = true;
+    void payflow
+      .getMandate(address, row.id)
+      .then((mandate) => {
+        if (live) setPauseSupport(mandatePauseUntil(mandate) !== null);
+      })
+      .catch(() => {
+        if (live) setPauseSupport(false);
       });
     return () => {
       live = false;
@@ -1217,6 +1570,20 @@ export default function MerchantPage() {
                             {badge}
                           </span>
                         )}
+                        {pauseSupport && m.status === "Paused" && (
+                          <>
+                            {pausedBy.get(m.id) === "merchant" && (
+                              <span className="text-xs text-muted">paused by you</span>
+                            )}
+                            {pausedBy.get(m.id) === "subscriber" && (
+                              <span className="text-xs text-muted">paused by subscriber</span>
+                            )}
+                            {/* Fallback when SSE hasn't told us yet: show generic pause indicator */}
+                            {pausedBy.get(m.id) === undefined && m.pause_until !== undefined && (
+                              <span className="text-xs text-muted">paused</span>
+                            )}
+                          </>
+                        )}
                         {m.ended_by === "merchant" && (
                           <span className="text-xs text-muted">ended by you</span>
                         )}
@@ -1289,6 +1656,50 @@ export default function MerchantPage() {
                           >
                             {discountFor === m.id ? "Close" : "Discount"}
                           </button>
+                        )}
+                        {pauseSupport && endable(m) && (
+                          <>
+                            {confirmPause === m.id ? (
+                              <>
+                                <button
+                                  type="button"
+                                  className="btn-ghost"
+                                  disabled={busy !== null}
+                                  onClick={() => setConfirmPause(null)}
+                                >
+                                  Keep
+                                </button>
+                                <button
+                                  type="button"
+                                  className={m.status === "Active" ? "btn-primary" : "btn-ghost"}
+                                  disabled={busy !== null || networkMismatch}
+                                  onClick={() =>
+                                    void run(`pause-${m.id}`, () =>
+                                      payflow.setPaused(address, signXdr, m.id, m.status === "Active"),
+                                    ).then(() => setConfirmPause(null))
+                                  }
+                                >
+                                  {busy === `pause-${m.id}`
+                                    ? m.status === "Active"
+                                      ? "Pausing…"
+                                      : "Resuming…"
+                                    : m.status === "Active"
+                                      ? "Confirm: pause"
+                                      : "Confirm: resume"}
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                type="button"
+                                className={m.status === "Active" ? "btn-primary" : "btn-ghost"}
+                                disabled={busy !== null || networkMismatch}
+                                onClick={() => setConfirmPause(m.id)}
+                                aria-label={m.status === "Active" ? `Pause subscription #${m.id}` : `Resume subscription #${m.id}`}
+                              >
+                                {m.status === "Active" ? "Pause" : "Resume"}
+                              </button>
+                            )}
+                          </>
                         )}
                         {refundSupport && endable(m) && (
                           <button
@@ -1390,6 +1801,8 @@ export default function MerchantPage() {
           </div>
         )}
       </Panel>
+
+      <WebhooksPanel merchant={address} apiConfigured={api.isConfigured()} />
     </div>
   );
 }
