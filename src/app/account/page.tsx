@@ -27,6 +27,7 @@ import {
   mandateIsPastDue,
   mandatePastDueUntil,
   mandatePauseUntil,
+  mandateSupportsSpendLimit,
   payflow,
   server,
 } from "@/lib/payflow";
@@ -747,6 +748,11 @@ export default function AccountPage() {
                             {trial}. Cancel before then and you pay nothing.
                           </div>
                         )}
+                        {mandateSupportsSpendLimit(m) && (
+                          <div className="mt-1 text-xs text-accent">
+                            {spendLimitInfo(m)}
+                          </div>
+                        )}
                         {isPastDue && pastDueShortfall !== null && (
                           <Notice tone="error">
                             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -954,4 +960,9 @@ export default function AccountPage() {
       </Panel>
     </div>
   );
+}
+
+function spendLimitInfo(m: { id: number; token?: string }): string {
+  // Spend limit read requires an RPC call; defer to useEffect later.
+  return "Spend limit: loading";
 }

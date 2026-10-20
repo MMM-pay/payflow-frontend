@@ -51,6 +51,7 @@ vi.mock("@/lib/payflow", () => ({
   // payflow-contract#34 not shipped; past-due stays off.
   mandateIsPastDue: () => false,
   mandatePastDueUntil: () => null,
+  mandateSupportsSpendLimit: vi.fn(() => false),
 }));
 vi.mock("@/lib/chain", () => ({ chainMandatesOf: chainMock.chainMandatesOf }));
 vi.mock("@/lib/toml", () => ({ useOrgName: () => null }));

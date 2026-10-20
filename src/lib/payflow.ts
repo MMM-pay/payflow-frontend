@@ -329,6 +329,8 @@ export function nameByteLength(name: string): number {
   return new TextEncoder().encode(name).length;
 }
 
+export { nativeToScVal };
+
 export interface Plan {
   id: bigint;
   merchant: string;
@@ -559,6 +561,28 @@ export function mandateSupportsRefund(mandate: unknown): boolean {
   const value = (mandate as { refundable_amount?: unknown } | null | undefined)?.refundable_amount;
   return typeof value === "bigint" || typeof value === "number" || typeof value === "string";
 }
+
+/**
+ * Whether the deployed contract supports spend limits on mandates.
+ * A contract built before payflow-contract#28 does not have the
+ * `set_spend_limit` / `get_spend_limit` methods, so this returns false — the
+ * UI hides the control rather than building a transaction the contract would
+ * reject.
+ */
+export function mandateSupportsSpendLimit(mandate: unknown): boolean {
+  const value = (mandate as { spend_limit?: unknown } | null | undefined)?.spend_limit;
+  return typeof value !== "undefined" && value !== null;
+}/**
+   * Read the current spend limit for a mandate.
+   * Returns `null` when the contract predates payflow-contract#28.
+   */
+export async function getSpendLimit(source: string, mandateId: number | bigint): Promise<number | null> {
+  const result = await readContract<number | null>(config.contracts.subscription, "get_spend_limit", source, [
+    arg.u64(mandateId),
+  ]);
+  return result;
+}
+
 
 /**
  * The maximum amount that can be refunded on this mandate, in the token's
@@ -823,5 +847,39 @@ export const payflow = {
       arg.address(source),
       arg.u64(mandateId),
       arg.i128(amount),
+    ]),
+
+  // --- spend-limit interface (payflow-contract#28) ---
+  /**
+   * Set a per-subscriber spend limit on a subscription mandate.
+   * `amount` is in stroops (smallest token unit). `window_secs` is the
+   * re-charge window. Set `amount` to 0 to disable the limit.
+   */
+  setSpendLimit: (
+    source: string,
+    sign: SignXdr,
+    mandateId: number | bigint,
+    amount: bigint,
+    windowSecs: number,
+  ) =>
+    writeContract(
+      config.contracts.subscription,
+      "set_spend_limit",
+      source,
+      sign,
+      [
+        arg.u64(mandateId),
+        arg.i128(amount),
+        arg.u32(windowSecs),
+      ],
+    ),
+
+  /**
+   * Read the current spend limit for a mandate.
+   * Returns `null` when the contract predates payflow-contract#28.
+   */
+  getSpendLimit: (source: string, mandateId: number | bigint) =>
+    readContract<number | null>(config.contracts.subscription, "get_spend_limit", source, [
+      arg.u64(mandateId),
     ]),
 };
