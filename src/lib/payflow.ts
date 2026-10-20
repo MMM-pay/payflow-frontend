@@ -9,10 +9,150 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 import { config } from "./config";
+import {
+  SIGNATURE_CANCELLED_MESSAGE,
+  isSignatureRejection,
+  translateSignatureError,
+} from "./signature-error";
+
+export { SIGNATURE_CANCELLED_MESSAGE, isSignatureRejection, translateSignatureError };
 
 export const server = new rpc.Server(config.rpcUrl, {
   allowHttp: config.rpcUrl.startsWith("http://"),
 });
+
+/**
+ * Semaphore to limit concurrent contract simulations.
+ * Prevents hammering the RPC endpoint when many reads fire in parallel.
+ */
+class Semaphore {
+  private permits: number;
+  private waiters: Array<() => void> = [];
+
+  constructor(permits: number) {
+    this.permits = permits;
+  }
+
+  async acquire(): Promise<void> {
+    if (this.permits > 0) {
+      this.permits -= 1;
+      return;
+    }
+    return new Promise((resolve) => {
+      this.waiters.push(resolve);
+    });
+  }
+
+  release(): void {
+    this.permits += 1;
+    const next = this.waiters.shift();
+    if (next) {
+      this.permits -= 1;
+      next();
+    }
+  }
+}
+
+/**
+ * Maximum concurrent contract simulations (reads).
+ * Writes are never limited here — they are user-initiated and serialized by the wallet.
+ */
+export const MAX_CONCURRENT_READS = 6;
+
+const readSemaphore = new Semaphore(MAX_CONCURRENT_READS);
+
+/**
+ * Error types that should trigger a retry.
+ * Only applied to reads — writes are never retried.
+ */
+function isRetryableError(error: unknown): boolean {
+  if (error instanceof TypeError && error.message.includes("fetch")) {
+    // Network error (e.g., offline, DNS, CORS)
+    return true;
+  }
+  if (error instanceof Response) {
+    // HTTP error from fetch
+    return error.status === 429 || error.status === 503;
+  }
+  // The stellar-sdk wraps RPC errors; check for rate limit / unavailable in message
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes("429") ||
+    message.includes("503") ||
+    message.toLowerCase().includes("rate limit") ||
+    message.toLowerCase().includes("service unavailable")
+  );
+}
+
+/**
+ * Exponential backoff with jitter.
+ * attempt: 0-based attempt number (0 = first retry)
+ */
+function backoffDelay(attempt: number): number {
+  const baseMs = 250; // 250ms, 500ms, 1000ms...
+  const maxMs = 2000;
+  const exponential = Math.min(baseMs * 2 ** attempt, maxMs);
+  // Full jitter: random value in [0, exponential]
+  return Math.random() * exponential;
+}
+
+/**
+ * Read contract state via simulation with retry on rate limits and transient errors.
+ *
+ * `sourceAddress` only has to be an account that exists on the network — the
+ * simulation never runs an operation against it.
+ *
+ * Retries up to 3 times (4 total attempts) on 429, 503, and network errors.
+ * Never retries writes — callers must use `writeContract` for state changes.
+ */
+export async function readContract<T>(
+  contractId: string,
+  method: string,
+  sourceAddress: string,
+  args: xdr.ScVal[] = [],
+): Promise<T> {
+  let lastError: unknown;
+  const maxAttempts = 4; // 1 initial + 3 retries
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    await readSemaphore.acquire();
+    try {
+      const account = await server.getAccount(sourceAddress);
+      const tx = new TransactionBuilder(account, {
+        fee: BASE_FEE,
+        networkPassphrase: config.networkPassphrase,
+      })
+        .addOperation(new Contract(contractId).call(method, ...args))
+        .setTimeout(30)
+        .build();
+
+      const sim = await server.simulateTransaction(tx);
+
+      if (rpc.Api.isSimulationError(sim)) {
+        throw new Error(decodeContractError(sim.error, method));
+      }
+      if (!("result" in sim) || !sim.result) {
+        throw new Error(`${method}: simulation returned no result`);
+      }
+      return scValToNative(sim.result.retval) as T;
+    } catch (err) {
+      lastError = err;
+      // Release semaphore before checking retry or throwing
+      readSemaphore.release();
+
+      const isLastAttempt = attempt === maxAttempts - 1;
+      if (isLastAttempt || !isRetryableError(err)) {
+        throw err;
+      }
+      // Wait before retrying
+      await new Promise((r) => setTimeout(r, backoffDelay(attempt)));
+      // Loop continues, will re-acquire semaphore
+    }
+  }
+
+  // Should never reach here, but TypeScript needs it
+  throw lastError;
+}
 
 /** Signs a transaction XDR and returns the signed XDR. Supplied by the wallet. */
 export type SignXdr = (xdrString: string) => Promise<string>;
@@ -25,38 +165,6 @@ export const arg = {
   bool: (v: boolean): xdr.ScVal => nativeToScVal(v, { type: "bool" }),
   string: (v: string): xdr.ScVal => nativeToScVal(v, { type: "string" }),
 };
-
-/**
- * Read contract state via simulation. Costs nothing and submits nothing.
- *
- * `sourceAddress` only has to be an account that exists on the network — the
- * simulation never runs an operation against it.
- */
-export async function readContract<T>(
-  contractId: string,
-  method: string,
-  sourceAddress: string,
-  args: xdr.ScVal[] = [],
-): Promise<T> {
-  const account = await server.getAccount(sourceAddress);
-  const tx = new TransactionBuilder(account, {
-    fee: BASE_FEE,
-    networkPassphrase: config.networkPassphrase,
-  })
-    .addOperation(new Contract(contractId).call(method, ...args))
-    .setTimeout(30)
-    .build();
-
-  const sim = await server.simulateTransaction(tx);
-
-  if (rpc.Api.isSimulationError(sim)) {
-    throw new Error(decodeContractError(sim.error, method));
-  }
-  if (!("result" in sim) || !sim.result) {
-    throw new Error(`${method}: simulation returned no result`);
-  }
-  return scValToNative(sim.result.retval) as T;
-}
 
 /**
  * Submit a state-changing call.
@@ -88,7 +196,14 @@ export async function writeContract(
     throw new Error(decodeContractError(err, method));
   }
 
-  const signedXdr = await signXdr(prepared.toXDR());
+  let signedXdr: string;
+  try {
+    signedXdr = await signXdr(prepared.toXDR());
+  } catch (err) {
+    // A declined prompt must not look like a failed payment. Wallets that
+    // throw their own text are rewritten; every other failure is unchanged.
+    translateSignatureError(err);
+  }
   const signed = TransactionBuilder.fromXDR(signedXdr, config.networkPassphrase);
 
   const sent = await server.sendTransaction(signed);
@@ -166,6 +281,7 @@ const VAULT_METHODS = new Set(["deposit", "withdraw", "debit", "balance"]);
  * reason their payment failed, which is a correctness bug rather than copy.
  */
 export function decodeContractError(error: unknown, method: string): string {
+  if (isSignatureRejection(error)) return SIGNATURE_CANCELLED_MESSAGE;
   const text =
     typeof error === "string" ? error : ((error as Error)?.message ?? String(error));
   const match = /Error\(Contract, #(\d+)\)/.exec(text);
@@ -219,6 +335,17 @@ export interface Plan {
   amount: bigint;
   period: bigint;
   active: boolean;
+  /**
+   * Free trial in seconds, 0 meaning none — from payflow-contract#9, which has
+   * not shipped. Optional because a contract built before that change decodes
+   * to a map with no `trial` key, and reporting 0 there would claim a trial
+   * does not exist rather than that we cannot tell.
+   */
+  trial?: bigint;
+  /** Proposed payflow-contract#26; absent on older deployments. */
+  available_until?: bigint;
+  /** Proposed payflow-contract#25; 0 means unlimited. */
+  max_subscribers?: number;
 }
 
 /** Mirrors MAX_PAGE in the contracts: the most ids one index call returns. */
@@ -238,11 +365,46 @@ export interface Mandate {
   max_charges: number;
   fee_bps: number;
   /**
+   * The discount the merchant set on this mandate, in basis points.
+   *
+   * Optional on purpose: payflow-contract#37 has not shipped, so a contract
+   * built before it returns a `Mandate` map without these keys. Absent means
+   * "this contract cannot say", which is not the same as "no discount" — see
+   * `supportsDiscounts` in `lib/discount`.
+   */
+  discount_bps?: number;
+  /** How many charges the discount covers. */
+  discount_charges?: number;
+  /** How many of those charges have been settled. */
+  discount_charges_made?: number;
+  /**
    * A `#[contracttype]` enum variant without data is encoded as a vector
    * holding its name, so this decodes as `["Active"]`, not `"Active"`. Use
    * `mandateStatus` to read it.
    */
   status: string | string[];
+  /**
+   * The trial frozen into the mandate at subscribe time, from
+   * payflow-contract#9. Optional for the same reason as `Plan.trial`.
+   */
+  trial?: bigint;
+  /**
+   * When a paused mandate resumes, from payflow-contract#41. Optional because
+   * the deployed contract predates it: a mandate decoded without the key means
+   * that contract cannot service a pause-until, and the UI hides the control
+   * rather than building a transaction the contract would reject.
+   */
+  pause_until?: bigint;
+  /**
+   * When a past-due mandate's grace period ends, from payflow-contract#34.
+   * Optional because the deployed contract predates it.
+   */
+  past_due_until?: bigint;
+  /**
+   * The net amount the merchant received that can be refunded to the subscriber,
+   * from payflow-contract#36. Optional because the deployed contract predates it.
+   */
+  refundable_amount?: bigint;
 }
 
 /**
@@ -255,7 +417,92 @@ export function mandateStatus(raw: unknown): string {
   return String(raw ?? "");
 }
 
+/**
+ * When a mandate resumes, or null when the contract does not report it.
+ *
+ * A contract built before payflow-contract#41 decodes without `pause_until`,
+ * so its absence *is* the capability signal: there is no method to probe and
+ * no version to guess at, and treating null as "no such feature" hides the
+ * date picker exactly when the contract cannot service it. Read through this
+ * helper rather than the raw field because contract state carries a bigint
+ * while an indexer row carries a number.
+ */
+export function mandatePauseUntil(mandate: unknown): number | null {
+  const value = (mandate as { pause_until?: unknown } | null | undefined)?.pause_until;
+  const seconds =
+    typeof value === "bigint"
+      ? Number(value)
+      : typeof value === "number"
+        ? value
+        : Number.NaN;
+  return Number.isFinite(seconds) ? seconds : null;
+}
+
+/**
+ * Whether a mandate is past due (vault could not cover a due charge).
+ *
+ * Proposed in payflow-contract#34. A contract built before that change decodes
+ * without the `PastDue` status variant, so this returns false — the UI hides
+ * the past-due badge and notice rather than guessing at support.
+ */
+export function mandateIsPastDue(mandate: unknown): boolean {
+  return mandateStatus(mandate) === "PastDue";
+}
+
+/**
+ * When the past-due grace period ends, or null when the contract does not
+ * report it or the mandate is not past due.
+ *
+ * Proposed in payflow-contract#34 as `past_due_until`. Absent means the
+ * contract cannot say, which the UI treats as "no grace period visible".
+ */
+export function mandatePastDueUntil(mandate: unknown): number | null {
+  const value = (mandate as { past_due_until?: unknown } | null | undefined)?.past_due_until;
+  const seconds =
+    typeof value === "bigint"
+      ? Number(value)
+      : typeof value === "number"
+        ? value
+        : Number.NaN;
+  return Number.isFinite(seconds) ? seconds : null;
+}
+
+/**
+ * Whether the deployed contract supports refunds on mandates.
+ *
+ * Proposed in payflow-contract#36. A contract built before that change does
+ * not have the `refund` method, so calling it would fail. The UI hides the
+ * refund button rather than building a transaction the contract would reject.
+ *
+ * Since there's no version probe, we check if the contract's `Mandate` type
+ * carries a `refundable_amount` field (proposed as part of the refund feature).
+ * If the field is absent, the contract cannot say, and the control stays hidden.
+ */
+export function mandateSupportsRefund(mandate: unknown): boolean {
+  const value = (mandate as { refundable_amount?: unknown } | null | undefined)?.refundable_amount;
+  return typeof value === "bigint" || typeof value === "number" || typeof value === "string";
+}
+
+/**
+ * The maximum amount that can be refunded on this mandate, in the token's
+ * smallest unit. Returns null when the contract cannot say.
+ *
+ * Proposed in payflow-contract#36 as `refundable_amount`. This represents the
+ * net amount the merchant received (after fees) that can be refunded to the
+ * subscriber.
+ */
+export function mandateRefundableAmount(mandate: unknown): bigint | null {
+  const value = (mandate as { refundable_amount?: unknown } | null | undefined)?.refundable_amount;
+  if (typeof value === "bigint") return value;
+  if (typeof value === "number") return BigInt(value);
+  return null;
+}
+
 export const payflow = {
+  // Proposed read interface for #25's open-mandate counter. Callers must
+  // tolerate missing support until the contract ships this getter.
+  planSubscriberCount: (source: string, planId: number | bigint) =>
+    readContract<number>(config.contracts.subscription, "plan_subscriber_count", source, [arg.u64(planId)]),
   // --- plan registry ---
   getPlan: (source: string, planId: number | bigint) =>
     readContract<Plan>(config.contracts.planRegistry, "get_plan", source, [
@@ -265,15 +512,26 @@ export const payflow = {
   createPlan: (
     source: string,
     sign: SignXdr,
-    params: { token: string; amount: bigint; period: number; name: string },
+    params: { token: string; amount: bigint; period: number; name: string; trial?: number },
   ) =>
-    writeContract(config.contracts.planRegistry, "create_plan", source, sign, [
-      arg.address(source),
-      arg.address(params.token),
-      arg.i128(params.amount),
-      arg.u64(params.period),
-      arg.string(params.name),
-    ]),
+    writeContract(
+      config.contracts.planRegistry,
+      "create_plan",
+      source,
+      sign,
+      [
+        arg.address(source),
+        arg.address(params.token),
+        arg.i128(params.amount),
+        arg.u64(params.period),
+        arg.string(params.name),
+        // `trial` is appended only when the caller supplies one. The deployed
+        // contract predates payflow-contract#9 and takes five arguments; adding
+        // a sixth would make every publish fail. Callers pass it only after
+        // `supportsTrials` confirms the contract answers with the field.
+        ...(params.trial === undefined ? [] : [arg.u64(params.trial)]),
+      ],
+    ),
 
   setPlanActive: (
     source: string,
@@ -409,14 +667,72 @@ export const payflow = {
     paused: boolean,
   ) =>
     writeContract(config.contracts.subscription, "set_paused", source, sign, [
-      arg.address(source),
       arg.u64(mandateId),
       arg.bool(paused),
+    ]),
+
+  /**
+   * Subscriber side: pause billing until a point in time, from the interface
+   * proposed in payflow-contract#41. Only callable against a contract that
+   * carries `pause_until` — see `mandatePauseUntil`, which is how the UI
+   * decides whether to offer this at all.
+   */
+  pauseUntil: (
+    source: string,
+    sign: SignXdr,
+    mandateId: number | bigint,
+    untilUnixSeconds: number,
+  ) =>
+    writeContract(config.contracts.subscription, "pause_until", source, sign, [
+      arg.address(source),
+      arg.u64(mandateId),
+      arg.u64(untilUnixSeconds),
+    ]),
+
+  /**
+   * Merchant side: attach a discount to one of the merchant's mandates.
+   *
+   * Built against the interface proposed in payflow-contract#37: the
+   * discount is a rate in basis points and covers a number of charges. The
+   * contract charges the discounted amount for those charges and the full
+   * price afterwards; a discount can only lower the price.
+   */
+  setDiscount: (
+    source: string,
+    sign: SignXdr,
+    mandateId: number | bigint,
+    discountBps: number,
+    discountCharges: number,
+  ) =>
+    writeContract(config.contracts.subscription, "set_discount", source, sign, [
+      arg.u64(mandateId),
+      arg.u32(discountBps),
+      arg.u32(discountCharges),
     ]),
 
   /** Permissionless: anyone may settle a due mandate. */
   charge: (source: string, sign: SignXdr, mandateId: number | bigint) =>
     writeContract(config.contracts.subscription, "charge", source, sign, [
       arg.u64(mandateId),
+    ]),
+
+  /**
+   * Merchant side: issue a refund on one of the merchant's mandates.
+   *
+   * Built against the interface proposed in payflow-contract#36: the refund
+   * is linked to a mandate and specifies the amount to return to the
+   * subscriber. The amount is capped at what the merchant received (net of
+   * fees) for that mandate.
+   */
+  refund: (
+    source: string,
+    sign: SignXdr,
+    mandateId: number | bigint,
+    amount: bigint,
+  ) =>
+    writeContract(config.contracts.subscription, "refund", source, sign, [
+      arg.address(source),
+      arg.u64(mandateId),
+      arg.i128(amount),
     ]),
 };

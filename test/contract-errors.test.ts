@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { decodeContractError, nameByteLength } from "@/lib/payflow";
+import {
+  SIGNATURE_CANCELLED_MESSAGE,
+  decodeContractError,
+  isSignatureRejection,
+  nameByteLength,
+} from "@/lib/payflow";
 
 /**
  * Soroban surfaces failures as `Error(Contract, #N)`, where N is scoped to the
@@ -69,6 +74,12 @@ describe("decodeContractError", () => {
     );
   });
 
+  it("does not treat a network rejection as a cancelled signature", () => {
+    const network = new Error('deposit rejected: {"result":"tx_failed"}');
+    expect(isSignatureRejection(network)).toBe(false);
+    expect(decodeContractError(network, "deposit")).toBe(network.message);
+  });
+
   it("accepts a bare string as well as an Error", () => {
     expect(decodeContractError("Error(Contract, #6)", "charge")).toMatch(/not due yet/i);
   });
@@ -77,6 +88,55 @@ describe("decodeContractError", () => {
     for (const input of [undefined, null, "", {}]) {
       expect(decodeContractError(input, "charge").length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("wallet signature rejection", () => {
+  // Freighter (SEP-43) throws an Error whose message is the raw wallet text.
+  // https://docs.freighter.app/extension-freighter-api/signing
+  const freighter = new Error("The user rejected this request.");
+
+  // Albedo rejects with a plain object, not an Error.
+  // @albedo-link/intent `actionRejectedByUser`.
+  const albedo = {
+    message: "Action request was rejected by the user.",
+    code: -4,
+  };
+
+  it("maps Freighter's rejection text to the friendly message", () => {
+    expect(isSignatureRejection(freighter)).toBe(true);
+    expect(decodeContractError(freighter, "subscribe")).toBe(SIGNATURE_CANCELLED_MESSAGE);
+  });
+
+  it("maps Albedo's rejection object to the friendly message", () => {
+    expect(isSignatureRejection(albedo)).toBe(true);
+    expect(decodeContractError(albedo, "deposit")).toBe(SIGNATURE_CANCELLED_MESSAGE);
+  });
+
+  it("maps a nested Freighter error payload that only carries code -4", () => {
+    const nested = { error: { message: "Cancelled", code: -4 } };
+    expect(isSignatureRejection(nested)).toBe(true);
+    expect(decodeContractError(nested, "charge")).toBe(SIGNATURE_CANCELLED_MESSAGE);
+  });
+
+  it("maps an older Freighter decline string", () => {
+    expect(isSignatureRejection("User declined access")).toBe(true);
+    expect(decodeContractError("User declined access", "withdraw")).toBe(
+      SIGNATURE_CANCELLED_MESSAGE,
+    );
+  });
+
+  it("does not treat the friendly message itself as another rejection", () => {
+    expect(isSignatureRejection(new Error(SIGNATURE_CANCELLED_MESSAGE))).toBe(false);
+  });
+
+  it("leaves a wallet failure that is not a cancellation alone", () => {
+    const internal = Object.assign(
+      new Error("The wallet encountered an internal error. Please try again."),
+      { code: -1 },
+    );
+    expect(isSignatureRejection(internal)).toBe(false);
+    expect(decodeContractError(internal, "withdraw")).toBe(internal.message);
   });
 });
 

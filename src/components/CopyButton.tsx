@@ -75,7 +75,7 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
       <button
         type="button"
         onClick={() => void handleCopy()}
-        className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted transition hover:bg-white/10 hover:text-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted transition hover:bg-fg/10 hover:text-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         aria-label={state === "copied" ? `${label} copied` : `Copy ${label}`}
         title={`Copy ${label}`}
       >

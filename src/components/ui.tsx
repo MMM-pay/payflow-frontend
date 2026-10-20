@@ -1,21 +1,27 @@
+"use client";
+
 import type { ReactNode } from "react";
 import { CopyButton } from "@/components/CopyButton";
 import { explorerBase } from "@/lib/config";
-import { shortAddress } from "@/lib/format";
+import { formatExactTime, formatWhen, shortAddress } from "@/lib/format";
+import { useOrgName } from "@/lib/toml";
 
 export function Panel({
+  id,
   title,
   subtitle,
   children,
   actions,
 }: {
+  /** Optional DOM id, e.g. an anchor target for in-page links. */
+  id?: string;
   title?: string;
   subtitle?: string;
   children: ReactNode;
   actions?: ReactNode;
 }) {
   return (
-    <section className="panel">
+    <section className="panel" id={id}>
       {(title || actions) && (
         <header className="mb-4 flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -60,7 +66,7 @@ export function Skeleton({ className = "" }: { className?: string }) {
   return (
     <span
       aria-hidden="true"
-      className={`block rounded bg-white/10 motion-safe:animate-pulse ${className}`}
+      className={`block rounded bg-fg/10 motion-safe:animate-pulse ${className}`}
     />
   );
 }
@@ -119,13 +125,13 @@ export function SkeletonPlanCards({ cards = 4, label = "Loading plans" }: { card
 
 const BADGE_TONES: Record<string, string> = {
   Active: "bg-accent/15 text-accent",
-  Paused: "bg-amber-400/15 text-amber-300",
-  Cancelled: "bg-rose-400/15 text-rose-300",
-  Completed: "bg-sky-400/15 text-sky-300",
+  Paused: "bg-warn/15 text-warn",
+  Cancelled: "bg-danger/15 text-danger",
+  Completed: "bg-info/15 text-info",
 };
 
 export function Badge({ status }: { status: string }) {
-  const tone = BADGE_TONES[status] ?? "bg-white/10 text-slate-300";
+  const tone = BADGE_TONES[status] ?? "bg-fg/10 text-soft";
   return (
     <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${tone}`}>{status}</span>
   );
@@ -148,6 +154,45 @@ export function AddressLink({ value, kind = "account" }: { value: string; kind?:
   );
 }
 
+/**
+ * A timestamp as relative text ("in 3 days") with the exact local time in the
+ * tooltip — and, unlike a bare `title`, in text a screen reader reads out too.
+ */
+export function TimeAgo({ value }: { value: number }) {
+  if (!value) return <span className="text-muted">—</span>;
+  const exact = formatExactTime(value);
+  return (
+    <time dateTime={new Date(value * 1000).toISOString()} title={exact}>
+      {formatWhen(value)}
+      <span className="sr-only"> ({exact})</span>
+    </time>
+  );
+}
+
+/**
+ * A merchant's address alongside the name they publish in their stellar.toml.
+ * The name is self-declared — the protocol cannot verify it — so that is said
+ * out loud in the tooltip and to screen readers, never implied to be vetted.
+ * When no name resolves, this is just the address, exactly as before.
+ */
+export function MerchantAccount({ value }: { value: string }) {
+  const name = useOrgName(value);
+  return (
+    <span className="inline-flex max-w-full flex-wrap items-center gap-x-1.5 align-middle">
+      {name && (
+        <span
+          className="max-w-full truncate font-medium"
+          title="Self-declared by the merchant in their stellar.toml"
+        >
+          {name}
+          <span className="sr-only"> (self-declared merchant name)</span>
+        </span>
+      )}
+      <AddressLink value={value} />
+    </span>
+  );
+}
+
 export function TxLink({ hash }: { hash: string }) {
   return (
     <span className="inline-flex max-w-full items-center gap-1 align-middle">
@@ -166,17 +211,40 @@ export function TxLink({ hash }: { hash: string }) {
 
 export function Notice({ tone, children }: { tone: "error" | "ok" | "info"; children: ReactNode }) {
   const tones = {
-    error: "border-rose-500/40 bg-rose-500/10 text-rose-200",
+    error: "border-danger/40 bg-danger/10 text-danger",
     ok: "border-accent/40 bg-accent/10 text-accent",
-    info: "border-edge bg-white/5 text-muted",
+    info: "border-edge bg-fg/5 text-muted",
   } as const;
   return (
     <div className={`rounded-lg border px-3 py-2 text-sm ${tones[tone]}`}>{children}</div>
   );
 }
 
-export function Empty({ children }: { children: ReactNode }) {
-  return <p className="py-8 text-center text-sm text-muted">{children}</p>;
+/**
+ * An empty state that says what is missing, why, and what to do next.
+ *
+ * `title` names the situation, `children` explains it, and `action` offers the
+ * next step — usually a `Link` or button. A title- and action-less usage
+ * still works for transitional states like "Loading…".
+ */
+export function Empty({
+  title,
+  children,
+  action,
+}: {
+  title?: string;
+  children: ReactNode;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="rounded-lg border border-dashed border-edge px-4 py-8 text-center">
+      {title && <p className="text-sm font-medium text-slate-200">{title}</p>}
+      <p className={`mx-auto max-w-prose text-sm text-muted ${title ? "mt-1" : ""}`}>
+        {children}
+      </p>
+      {action && <div className="mt-4 flex flex-wrap justify-center gap-2">{action}</div>}
+    </div>
+  );
 }
 
 
@@ -189,9 +257,9 @@ export function NetworkMismatchBanner({
 }) {
   if (!walletNetwork) return null;
   return (
-    <div className="flex items-center justify-between gap-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+    <div className="flex items-center justify-between gap-4 rounded-lg border border-warn/40 bg-warn/10 px-4 py-3 text-sm text-warn">
       <div className="flex items-center gap-2">
-        <span className="text-amber-400">⚠</span>
+        <span aria-hidden="true">⚠</span>
         <span>
           <strong>Network mismatch detected.</strong> Your wallet is connected to a different
           network than this app. Switch to{" "}
