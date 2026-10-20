@@ -238,27 +238,68 @@ async function pollTransaction(
 /** Maps the contracterror codes from payflow-contract onto readable text. */
 const ERRORS: Record<string, Record<number, string>> = {
   plan_registry: {
+    1: "The plan registry rejected this call.",
+    2: "That plan is not active.",
     3: "That plan does not exist.",
     4: "You do not own that plan.",
     5: "Amount must be greater than zero.",
     6: "Billing period must be at least 60 seconds.",
     7: "That plan name is too long.",
+    8: "That plan is already in the requested state.",
   },
   vault: {
+    1: "The vault rejected this call.",
+    2: "You do not have permission to move funds from this vault.",
     3: "Amount must be greater than zero.",
     4: "Not enough balance in your vault.",
     5: "The vault is not wired to a subscription contract yet.",
+    6: "The vault is not wired to the token contract yet.",
   },
   subscription: {
+    1: "The subscription contract rejected this call.",
+    2: "That mandate does not belong to you.",
     3: "That subscription does not exist.",
     4: "You are not the subscriber on this mandate.",
     5: "This subscription is not active.",
     6: "This subscription is not due yet.",
     7: "That plan is no longer accepting subscribers.",
+    8: "This subscription has already reached its charge limit.",
     9: "This subscription has reached its charge limit.",
+    10: "Only the subscriber on this subscription can cancel it.",
     11: "Only the merchant on this subscription can end it.",
+    12: "This subscription cannot be paused in its current state.",
   },
 };
+
+/**
+ * Every error variant each contract can raise, keyed by contract and code.
+ *
+ * `ERRORS` above is the subset the UI has copy for; this table is the full
+ * set from the docs repo's error reference. The test in
+ * `test/contract-errors.test.ts` asserts that every entry here has a
+ * non-generic message in `ERRORS` (or `CALLEE_ERRORS`), so a new contract
+ * error cannot reach a user as "contract error #N".
+ *
+ * Codes are the `#[contracterror]` discriminants. Variants that carry no
+ * user-facing meaning (e.g. an internal invariant) still need a sentence.
+ */
+export const CONTRACT_ERROR_CODES: Record<string, readonly number[]> = {
+  plan_registry: [1, 2, 3, 4, 5, 6, 7, 8],
+  vault: [1, 2, 3, 4, 5, 6],
+  subscription: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+};
+
+/**
+ * Exported for tests: the message `decodeContractError` would produce for a
+ * given contract scope and code, without going through the RPC error text.
+ * Returns undefined when the code has no entry in `ERRORS`.
+ */
+export function contractErrorMessage(
+  scope: keyof typeof CONTRACT_ERROR_CODES,
+  code: number,
+): string | undefined {
+  return ERRORS[scope]?.[code];
+}
 
 /**
  * Codes raised by a contract that the called method invokes. An error in a

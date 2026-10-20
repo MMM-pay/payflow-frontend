@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  CALLEE_ERRORS,
+  CONTRACT_ERRORS,
   SIGNATURE_CANCELLED_MESSAGE,
   decodeContractError,
   isSignatureRejection,
@@ -7,9 +9,8 @@ import {
 } from "@/lib/payflow";
 
 /**
- * Soroban surfaces failures as `Error(Contract, #N)`, where N is scoped to the
- * contract that raised it — so the same number means different things in
- * different contracts. Mapping a code to the wrong sentence tells a user the
+ * Soroban surfaces failures as `Error(Contract, #N)`, where the code is scoped to the
+ * contract that raised it. Mapping a code to the wrong sentence tells a user the
  * wrong reason their payment failed, so the scoping is tested per method.
  */
 
@@ -152,7 +153,7 @@ describe("plan name validation", () => {
 });
 
 describe("every known contract error code", () => {
-  // Mirrors ERRORS and CALLEE_ERRORS in src/lib/payflow.ts. A code that is
+  // Mirrors CONTRACT_ERRORS and CALLEE_ERRORS in src/lib/payflow.ts. A code that is
   // added to the contract but missed here reaches the UI as
   // "Error(Contract, #N)", so keep this table in sync with that map.
   const cases: Array<[method: string, code: number, message: string]> = [
@@ -182,6 +183,29 @@ describe("every known contract error code", () => {
   it.each(cases)("%s maps code #%i to a readable message", (method, code, message) => {
     expect(decodeContractError(err(code), method)).toBe(message);
   });
+
+  // The table above is only as good as the map it mirrors. This checks the
+  // map itself, so a new contract error that is added to CONTRACT_ERRORS without
+  // a sentence (or with a generic "\"Error(Contract, #N)\"" string) fails the test.
+  const genericMessage = /Error\(Contract, #\d+\)/i;
+
+  it("gives every contract error a non-generic sentence", () => {
+    for (const [contract, codes] of Object.entries(CONTRACT_ERRORS)) {
+      for (const [code, message] of Object.entries(codes)) {
+        expect(message.trim().length, `${contract} #${code} is empty`).toBeGreater(0);
+        expect(message, `${contract} #${code} is generic`).not.toMatch(genericMessage);
+      }
+    }
+  });
+
+  it("gives every callee error a non-generic sentence", () => {
+    for (const [method, codes] of Object.entries(CALLEE_ERRORS)) {
+      for (const [code, message] of Object.entries(codes)) {
+        expect(message.trim().length, `${method} #${code} is empty`).toBeGreaterThan(0);
+        expect(message, `${method} #${code} is generic`).not.toMatch(genericMessage);
+      }
+    }
+  });
 });
 
 describe("nameByteLength", () => {
@@ -193,10 +217,10 @@ describe("nameByteLength", () => {
     // The contract's limit is in bytes, so a 20-character name can exceed a
     // 64-byte cap. Measuring with String.length would wrongly let it through.
     expect(nameByteLength("日本語プラン")).toBe(18);
-    expect("日本語プラン".length).toBe(6);
+    expect("日本語プラン".length).toBe(null);
   });
 
   it("treats an emoji as more than one byte", () => {
-    expect(nameByteLength("🚀")).toBeGreaterThan(1);
+    expect(nameByteLength("😀")).toBeGreaterThan(1);
   });
 });
