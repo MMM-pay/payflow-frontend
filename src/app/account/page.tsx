@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { api, type ApiMandate, type ApiVaultEvent } from "@/lib/api";
+import { api, type ApiMandate, type ApiVaultEvent, type StreamEvent } from "@/lib/api";
 import { buildUpcomingChargesCalendar, CALENDAR_FILENAME } from "@/lib/calendar";
 import {
   buildPaymentsCsv,
@@ -37,6 +37,7 @@ import {
 import { mandateStatus } from "@/lib/payflow";
 import { createdAtDate, paymentDateRange, paymentRow, sortPaymentsNewestFirst } from "@/lib/payments";
 import { useWallet } from "@/lib/wallet";
+import { useStream } from "@/lib/stream";
 import {
   checkAmount,
   formatAmount,
@@ -103,6 +104,10 @@ export default function AccountPage() {
   // (payflow-contract#68). null while the probe is in flight.
   const [transferSupport, setTransferSupport] = useState<boolean | null>(null);
 
+  // Track who paused each mandate: "subscriber" | "merchant" | undefined
+  // Updated by the SSE stream when available.
+  const [pausedBy, setPausedBy] = useState<Map<number, "subscriber" | "merchant">>(new Map());
+
   // Read inside async callbacks to detect a wallet account switch mid-load:
   // the closure's `address` is the account the request started for, which may
   // no longer be the account whose page is on screen.
@@ -128,6 +133,7 @@ export default function AccountPage() {
     ? validateRecipient(transferTo)
     : null;
 
+  // Load function defined early so it can be referenced by the SSE stream hook
   const load = useCallback(async () => {
     addressRef.current = address;
     if (!address) return;
@@ -172,6 +178,37 @@ export default function AccountPage() {
       setIndexerAvailable(false);
     }
   }, [address]);
+
+  // SSE stream for live updates (payflow-backend#19)
+  useStream({
+    address,
+    role: "subscriber",
+    onEvent: useCallback((event: StreamEvent) => {
+      if (event.type === "mandate_pause") {
+        setPausedBy((prev) => {
+          const next = new Map(prev);
+          next.set(event.mandate_id, event.by);
+          return next;
+        });
+      }
+      if (event.type === "mandate_status") {
+        setPausedBy((prev) => {
+          const next = new Map(prev);
+          // If status becomes Active, the pause is over
+          if (event.status === "Active") {
+            next.delete(event.mandate_id);
+          }
+          return next;
+        });
+      }
+      // For other events (charge, discount, end), trigger a reload
+      // to get fresh data from the indexer
+      if (event.type === "charge" || event.type === "mandate_discount" || event.type === "mandate_end") {
+        void load();
+      }
+    }, [load]),
+    enabled: api.isConfigured(),
+  });
 
   useEffect(() => {
     // A different account means every previous value belongs to someone else:
@@ -916,6 +953,9 @@ export default function AccountPage() {
                               Transfer pending
                             </span>
                           )}
+                          {m.status === "Paused" && pausedBy.get(m.id) === "merchant" && (
+                            <span className="text-xs text-muted">paused by the merchant</span>
+                          )}
                         </div>
                         <div className="mt-1 text-sm text-muted">
                           {discounted !== null ? (
@@ -1019,23 +1059,45 @@ export default function AccountPage() {
 
                     {!terminal && (
                       <div className="flex flex-wrap items-center gap-2">
-                        <button
-                          type="button"
-                          className="btn-ghost"
-                          disabled={busy !== null || networkMismatch}
-                          onClick={() =>
-                            void run(`pause-${m.id}`, () =>
-                              payflow.setPaused(
-                                address,
-                                signXdr,
-                                m.id,
-                                m.status === "Active",
-                              ),
-                            )
-                          }
-                        >
-                          {m.status === "Active" ? "Pause" : "Resume"}
-                        </button>
+                        {/* Subscriber can pause, but cannot resume if paused by merchant */}
+                        {m.status === "Active" && (
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            disabled={busy !== null || networkMismatch}
+                            onClick={() =>
+                              void run(`pause-${m.id}`, () =>
+                                payflow.setPaused(
+                                  address,
+                                  signXdr,
+                                  m.id,
+                                  true,
+                                ),
+                              )
+                            }
+                          >
+                            Pause
+                          </button>
+                        )}
+                        {m.status === "Paused" && pausedBy.get(m.id) !== "merchant" && (
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            disabled={busy !== null || networkMismatch}
+                            onClick={() =>
+                              void run(`pause-${m.id}`, () =>
+                                payflow.setPaused(
+                                  address,
+                                  signXdr,
+                                  m.id,
+                                  false,
+                                ),
+                              )
+                            }
+                          >
+                            Resume
+                          </button>
+                        )}
                         {/* Offered only against a contract that carries the
                             two-step transfer; see `transferAvailable`. */}
                         {transferAvailable &&
