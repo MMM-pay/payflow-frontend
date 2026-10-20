@@ -8,7 +8,27 @@ import { buildCsv, downloadCsv, exportFilename, type ChargeRow } from "@/lib/csv
 import { fillBuckets, parseRevenue, type BucketSize, type RevenuePoint } from "@/lib/revenue";
 import { parseMerchantChurn, type MerchantChurnMonth } from "@/lib/churn";
 import { chainMandatesFor, chainMerchantSummary, chainPlanSubscriberCount, chainPlansOf, endable, mandateFunding } from "@/lib/chain";
-import { config } from "@/lib/config";
+import { config, type ConfiguredToken } from "@/lib/config";
+import { VirtualList } from "@/components/VirtualList";
+
+const DEFAULT_TOKENS: readonly ConfiguredToken[] = [
+  {
+    id: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    symbol: "XLM",
+    name: "Stellar Lumens",
+    decimals: 7,
+  },
+  {
+    id: "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+    symbol: "USDC",
+    name: "USD Coin",
+    decimals: 6,
+    classicAsset: {
+      code: "USDC",
+      issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+    },
+  },
+];
 import {
   checkDiscountBps,
   checkDiscountCharges,
@@ -728,13 +748,22 @@ export default function MerchantPage() {
   // Updated by the SSE stream when available.
   const [pausedBy, setPausedBy] = useState<Map<number, "subscriber" | "merchant">>(new Map());
 
-  // Plans are published in the configured token; mandates carry their own.
+  const tokens: readonly ConfiguredToken[] =
+    (config as unknown as { tokens?: ConfiguredToken[] }).tokens ?? DEFAULT_TOKENS;
+
+  const [selectedToken, setSelectedToken] = useState(
+    config.contracts.token || tokens[0]?.id || "",
+  );
+
+  // Plans can be published in any configured token; mandates carry their own.
   const metas = useTokenMetas([
     config.contracts.token,
+    selectedToken,
+    ...tokens.map((t) => t.id),
     ...(plans ?? []).map((p) => p.token),
     ...(mandates ?? []).map((m) => m.token ?? config.contracts.token),
   ]);
-  const tokenMeta = metaFor(metas, config.contracts.token);
+  const tokenMeta = metaFor(metas, selectedToken);
 
   // The contract rejects a name over MAX_NAME_LEN bytes, so catch it here
   // rather than letting the user pay for a transaction that will fail.
@@ -1200,6 +1229,24 @@ export default function MerchantPage() {
         subtitle="Price and period are frozen into every mandate opened against this plan. To change them, publish a new plan."
       >
         <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-[8rem] flex-1">
+            <label className="label" htmlFor="plan-token">
+              Token
+            </label>
+            <select
+              id="plan-token"
+              className="input"
+              value={selectedToken}
+              onChange={(e) => setSelectedToken(e.target.value)}
+              disabled={busy !== null}
+            >
+              {tokens.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.symbol} — {t.name}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="min-w-[10rem] flex-1">
             <AmountInput
               id="price"
@@ -1287,7 +1334,7 @@ export default function MerchantPage() {
               if (!priceCheck.ok) return;
               void run("create", () =>
                 payflow.createPlan(address, signXdr, {
-                  token: config.contracts.token,
+                  token: selectedToken,
                   amount: priceCheck.stroops,
                   period,
                   name: name.trim(),
@@ -1346,8 +1393,14 @@ export default function MerchantPage() {
             Subscribers can open a mandate against it as soon as it confirms.
           </Empty>
         ) : (
-          <div className="space-y-3">
-            {plans.map((p) => {
+          <VirtualList
+            items={plans}
+            threshold={100}
+            itemHeight={180}
+            keyExtractor={(p) => p.id}
+            listAriaLabel="Plans"
+            className="space-y-3"
+            renderItem={(p) => {
               const meta = metaFor(metas, p.token);
               const stats = planStats[p.id];
               // stats === undefined → still loading (key absent from the map)
@@ -1435,8 +1488,8 @@ export default function MerchantPage() {
                   </button>
                 </div>
               );
-            })}
-          </div>
+            }}
+          />
         )}
       </Panel>
 
@@ -1478,8 +1531,14 @@ export default function MerchantPage() {
             a glance.
           </Empty>
         ) : (
-          <div className="space-y-3">
-            {mandates.map((m) => {
+          <VirtualList
+            items={mandates}
+            threshold={100}
+            itemHeight={160}
+            keyExtractor={(m) => m.id}
+            listAriaLabel="Subscribers"
+            className="space-y-3"
+            renderItem={(m) => {
               const due = m.status === "Active" && m.next_charge * 1000 <= Date.now();
               const meta = metaFor(metas, m.token ?? config.contracts.token);
               const balance = balances[m.subscriber] ?? null;
@@ -1730,8 +1789,8 @@ export default function MerchantPage() {
                   )}
                 </div>
               );
-            })}
-          </div>
+            }}
+          />
         )}
       </Panel>
 

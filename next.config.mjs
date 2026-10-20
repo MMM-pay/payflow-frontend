@@ -37,6 +37,7 @@ const nextConfig = {
   env: {
     NEXT_PUBLIC_APP_VERSION: appVersion,
     NEXT_PUBLIC_COMMIT_HASH: commitHash,
+    NEXT_PUBLIC_BASE_PATH: basePath,
   },
 };
 
