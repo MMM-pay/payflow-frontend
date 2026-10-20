@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { api, checkWebhookUrl, type ApiMandate, type ApiPlan, type ApiWebhook, type MerchantSummary } from "@/lib/api";
+import { api, checkWebhookUrl, type ApiMandate, type ApiPlan, type ApiWebhook, type MerchantSummary, type StreamEvent } from "@/lib/api";
 import { RevenueChart } from "@/components/RevenueChart";
 import { buildCsv, downloadCsv, exportFilename, type ChargeRow } from "@/lib/csv";
 import { fillBuckets, parseRevenue, type BucketSize, type RevenuePoint } from "@/lib/revenue";
@@ -17,7 +17,7 @@ import {
   remainingDiscountCharges,
   supportsDiscounts,
 } from "@/lib/discount";
-import { MAX_NAME_LEN, mandateRefundableAmount, mandateSupportsRefund, nameByteLength, payflow, server } from "@/lib/payflow";
+import { MAX_NAME_LEN, mandatePauseUntil, mandateRefundableAmount, mandateSupportsRefund, nameByteLength, payflow, server } from "@/lib/payflow";
 import {
   checkProfileName,
   checkProfileUrl,
@@ -28,6 +28,7 @@ import {
   type MerchantProfile,
 } from "@/lib/profile";
 import { useWallet } from "@/lib/wallet";
+import { useStream } from "@/lib/stream";
 import {
   checkAmount,
   feeSplit,
@@ -849,6 +850,9 @@ export default function MerchantPage() {
   const [busy, setBusy] = useState<string | null>(null);
   // Ending is permanent, so the End button asks for a second click.
   const [confirmEnd, setConfirmEnd] = useState<number | null>(null);
+  // Pausing is reversible, so the Pause button asks for a second click
+  // when the merchant is pausing (not resuming).
+  const [confirmPause, setConfirmPause] = useState<number | null>(null);
   /**
    * The mandate whose discount form is open. One at a time: the form carries
    * two fields, and a page full of them is unreadable.
@@ -868,6 +872,17 @@ export default function MerchantPage() {
    * button that cannot work has been misled.
    */
   const [discountSupport, setDiscountSupport] = useState(false);
+
+  /**
+   * Whether the deployed contract supports merchant-initiated pauses.
+   *
+   * The control is hidden until it can: the contract must have the
+   * `set_paused` method (which it does on all deployments) and the
+   * mandate must carry `pause_until` to know if it's paused by the merchant.
+   * We check the first mandate to determine support.
+   */
+  const [pauseSupport, setPauseSupport] = useState(false);
+
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   /**
@@ -877,6 +892,10 @@ export default function MerchantPage() {
    */
   const [profile, setProfile] = useState<MerchantProfile>(emptyProfile);
   const [profileSupported, setProfileSupported] = useState(false);
+
+  // Track who paused each mandate: "subscriber" | "merchant" | undefined
+  // Updated by the SSE stream when available.
+  const [pausedBy, setPausedBy] = useState<Map<number, "subscriber" | "merchant">>(new Map());
 
   // Plans are published in the configured token; mandates carry their own.
   const metas = useTokenMetas([
@@ -1005,6 +1024,37 @@ export default function MerchantPage() {
     setBalances(b);
   }, [address]);
 
+  // SSE stream for live updates (payflow-backend#19)
+  useStream({
+    address,
+    role: "merchant",
+    onEvent: useCallback((event: StreamEvent) => {
+      if (event.type === "mandate_pause") {
+        setPausedBy((prev) => {
+          const next = new Map(prev);
+          next.set(event.mandate_id, event.by);
+          return next;
+        });
+      }
+      if (event.type === "mandate_status") {
+        setPausedBy((prev) => {
+          const next = new Map(prev);
+          // If status becomes Active, the pause is over
+          if (event.status === "Active") {
+            next.delete(event.mandate_id);
+          }
+          return next;
+        });
+      }
+      // For other events (charge, discount, end), trigger a reload
+      // to get fresh data from the indexer
+      if (event.type === "charge" || event.type === "mandate_discount" || event.type === "mandate_end") {
+        void load();
+      }
+    }, [load]),
+    enabled: api.isConfigured(),
+  });
+
   useEffect(() => {
     void load();
   }, [load]);
@@ -1065,6 +1115,40 @@ export default function MerchantPage() {
       })
       .catch(() => {
         if (live) setRefundSupport(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [address, mandates]);
+
+  /**
+   * Whether the deployed contract supports merchant-initiated pauses.
+   *
+   * The indexer does not project pause_until yet, so one mandate
+   * is read from the chain to answer the question the same way in both modes.
+   */
+  useEffect(() => {
+    const row = mandates?.[0];
+    if (!address || !row) {
+      setPauseSupport(false);
+      return;
+    }
+    // The contract has always had `set_paused`; what we need to know is
+    // whether the mandate carries `pause_until` so we can distinguish
+    // merchant pauses from subscriber pauses. If the field is present,
+    // the control can be shown.
+    if (mandatePauseUntil(row) !== null) {
+      setPauseSupport(true);
+      return;
+    }
+    let live = true;
+    void payflow
+      .getMandate(address, row.id)
+      .then((mandate) => {
+        if (live) setPauseSupport(mandatePauseUntil(mandate) !== null);
+      })
+      .catch(() => {
+        if (live) setPauseSupport(false);
       });
     return () => {
       live = false;
@@ -1627,6 +1711,20 @@ export default function MerchantPage() {
                             {badge}
                           </span>
                         )}
+                        {pauseSupport && m.status === "Paused" && (
+                          <>
+                            {pausedBy.get(m.id) === "merchant" && (
+                              <span className="text-xs text-muted">paused by you</span>
+                            )}
+                            {pausedBy.get(m.id) === "subscriber" && (
+                              <span className="text-xs text-muted">paused by subscriber</span>
+                            )}
+                            {/* Fallback when SSE hasn't told us yet: show generic pause indicator */}
+                            {pausedBy.get(m.id) === undefined && m.pause_until !== undefined && (
+                              <span className="text-xs text-muted">paused</span>
+                            )}
+                          </>
+                        )}
                         {m.ended_by === "merchant" && (
                           <span className="text-xs text-muted">ended by you</span>
                         )}
@@ -1699,6 +1797,50 @@ export default function MerchantPage() {
                           >
                             {discountFor === m.id ? "Close" : "Discount"}
                           </button>
+                        )}
+                        {pauseSupport && endable(m) && (
+                          <>
+                            {confirmPause === m.id ? (
+                              <>
+                                <button
+                                  type="button"
+                                  className="btn-ghost"
+                                  disabled={busy !== null}
+                                  onClick={() => setConfirmPause(null)}
+                                >
+                                  Keep
+                                </button>
+                                <button
+                                  type="button"
+                                  className={m.status === "Active" ? "btn-primary" : "btn-ghost"}
+                                  disabled={busy !== null || networkMismatch}
+                                  onClick={() =>
+                                    void run(`pause-${m.id}`, () =>
+                                      payflow.setPaused(address, signXdr, m.id, m.status === "Active"),
+                                    ).then(() => setConfirmPause(null))
+                                  }
+                                >
+                                  {busy === `pause-${m.id}`
+                                    ? m.status === "Active"
+                                      ? "Pausing…"
+                                      : "Resuming…"
+                                    : m.status === "Active"
+                                      ? "Confirm: pause"
+                                      : "Confirm: resume"}
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                type="button"
+                                className={m.status === "Active" ? "btn-primary" : "btn-ghost"}
+                                disabled={busy !== null || networkMismatch}
+                                onClick={() => setConfirmPause(m.id)}
+                                aria-label={m.status === "Active" ? `Pause subscription #${m.id}` : `Resume subscription #${m.id}`}
+                              >
+                                {m.status === "Active" ? "Pause" : "Resume"}
+                              </button>
+                            )}
+                          </>
                         )}
                         {refundSupport && endable(m) && (
                           <button

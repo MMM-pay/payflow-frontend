@@ -198,6 +198,72 @@ export interface RecentCharge {
 }
 
 /**
+ * Events emitted by the backend SSE stream (payflow-backend#19).
+ *
+ * The stream is scoped to a single wallet address (subscriber or merchant).
+ * Each event carries the mandate id it pertains to so the UI can update
+ * the affected row in place without a full reload.
+ */
+export type StreamEventType =
+  | "charge"
+  | "mandate_status"
+  | "mandate_pause"
+  | "mandate_discount"
+  | "mandate_end";
+
+export interface StreamEventBase {
+  type: StreamEventType;
+  mandate_id: number;
+  /** Unix seconds when the event was indexed. */
+  timestamp: number;
+}
+
+export interface StreamChargeEvent extends StreamEventBase {
+  type: "charge";
+  /** The charge that was settled. */
+  charge: ApiCharge;
+}
+
+export interface StreamMandateStatusEvent extends StreamEventBase {
+  type: "mandate_status";
+  /** The new status: "Active", "Paused", "Cancelled", "Completed". */
+  status: string;
+  /** Who initiated the status change: "subscriber" or "merchant". */
+  by: "subscriber" | "merchant";
+}
+
+export interface StreamMandatePauseEvent extends StreamEventBase {
+  type: "mandate_pause";
+  /** Unix seconds when the pause ends, or null for an indefinite pause. */
+  pause_until: number | null;
+  /** Who initiated the pause: "subscriber" or "merchant". */
+  by: "subscriber" | "merchant";
+}
+
+export interface StreamMandateDiscountEvent extends StreamEventBase {
+  type: "mandate_discount";
+  /** New discount rate in basis points. */
+  discount_bps: number;
+  /** How many charges the discount covers. */
+  discount_charges: number;
+  /** How many discounted charges have been settled so far. */
+  discount_charges_made: number;
+}
+
+export interface StreamMandateEndEvent extends StreamEventBase {
+  type: "mandate_end";
+  /** Who ended the mandate: "subscriber" or "merchant". */
+  by: "subscriber" | "merchant";
+}
+
+export type StreamEvent =
+  | StreamChargeEvent
+  | StreamMandateStatusEvent
+  | StreamMandatePauseEvent
+  | StreamMandateDiscountEvent
+  | StreamMandateEndEvent;
+
+/**
  * The indexer is a convenience, not a source of truth. Every call here is
  * allowed to fail: the UI falls back to reading contract state directly so the
  * app still works when the backend is down.
@@ -325,4 +391,32 @@ export const api = {
    */
   recentCharges: (limit = 10) =>
     get<{ charges: RecentCharge[] }>(`/api/recent?limit=${limit}`),
+
+  /**
+   * Open an SSE stream for live updates scoped to the given address.
+   *
+   * The backend must be configured (NEXT_PUBLIC_API_URL set) and the deployed
+   * backend must serve the `/api/stream` endpoint (payflow-backend#19).
+   * Returns null when either condition is not met — the caller must not
+   * attempt to open a stream in contract-only mode.
+   *
+   * The returned EventSource emits `message` events with JSON bodies matching
+   * the `StreamEvent` union. The caller is responsible for closing the stream
+   * when the component unmounts or the tab is hidden.
+   */
+  stream: (
+    address: string,
+    role: "subscriber" | "merchant",
+  ): EventSource | null => {
+    if (!api.isConfigured()) return null;
+    const params = new URLSearchParams();
+    params.set(role, address);
+    const url = `${config.apiUrl}/api/stream?${params.toString()}`;
+    try {
+      return new EventSource(url);
+    } catch {
+      // EventSource not supported (e.g., non-browser test env)
+      return null;
+    }
+  },
 };
