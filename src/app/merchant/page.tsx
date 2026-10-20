@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { api, type ApiMandate, type ApiPlan, type MerchantSummary } from "@/lib/api";
 import { RevenueChart } from "@/components/RevenueChart";
@@ -33,6 +33,7 @@ import { metaFor, useTokenMetas } from "@/lib/token";
 import { supportsTrials, trialBadge, TRIAL_OPTIONS } from "@/lib/trial";
 import { AmountInput } from "@/components/AmountInput";
 import { CopyButton } from "@/components/CopyButton";
+import { OnboardingChecklist } from "@/components/OnboardingChecklist";
 import { AddressLink, Badge, Empty, Notice, Panel, SkeletonRows, Stat, TimeAgo, TxLink } from "@/components/ui";
 
 const PERIOD_OPTIONS = [
@@ -45,6 +46,9 @@ const PERIOD_OPTIONS = [
 
 /** How far back the revenue chart looks, in days. */
 const REVENUE_WINDOW_DAYS = 90;
+
+/** localStorage key for the dismissed onboarding checklist. */
+const ONBOARDING_DISMISSED_KEY = "payflow:merchant:onboarding-dismissed";
 
 /**
  * "subscriber pays X, you receive Y after the Z% fee".
@@ -440,6 +444,23 @@ export default function MerchantPage() {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
+  /**
+   * Whether the merchant has dismissed the onboarding checklist.
+   *
+   * Read after mount so the statically prerendered markup (no localStorage)
+   * and the hydrated one cannot disagree. `null` means "not yet read".
+   */
+  const [onboardingDismissed, setOnboardingDismissed] = useState<boolean | null>(null);
+  useEffect(() => {
+    try {
+      setOnboardingDismissed(window.localStorage.getItem(ONBOARDING_DISMISSED_KEY) === "1");
+    } catch {
+      // Storage can be unavailable (private mode, disabled cookies); treat
+      // that as "not dismissed" so the checklist still shows.
+      setOnboardingDismissed(false);
+    }
+  }, []);
+
   // Plans are published in the configured token; mandates carry their own.
   const metas = useTokenMetas([
     config.contracts.token,
@@ -462,6 +483,30 @@ export default function MerchantPage() {
   const showPriceError = priceError !== null && (priceTouched || price.trim() !== "");
   const split = priceCheck.ok ? feeSplit(priceCheck.stroops, feeBps ?? 0) : null;
   const trialSupported = (plans ?? []).some(supportsTrials);
+
+  /**
+   * Onboarding checklist state, derived from data already loaded above.
+   *
+   * - fundWallet: the merchant's own XLM/asset balance is not read here, so
+   *   this is inferred from whether any write has succeeded — a merchant who
+   *   has published a plan or has a mandate has necessarily funded the
+   *   account. Before that, the item stays open and links to Friendbot.
+   * - publishPlan: at least one plan exists.
+   * - shareLink: the merchant has opened the public page at least once; we
+   *   cannot observe a share, so this ticks when the public page is opened
+   *   from the dashboard (tracked in localStorage).
+   * - firstSubscriber: at least one mandate exists.
+   */
+  const onboarding = useMemo(() => {
+    const hasPlan = (plans?.length ?? 0) > 0;
+    const hasSubscriber = (mandates?.length ?? 0) > 0;
+    return {
+      fundWallet: hasPlan || hasSubscriber,
+      publishPlan: hasPlan,
+      shareLink: sharedLink,
+      firstSubscriber: hasSubscriber,
+    };
+  }, [plans, mandates, sharedLink]);
 
   const load = useCallback(async () => {
     if (!address) return;
@@ -759,6 +804,21 @@ export default function MerchantPage() {
 
   return (
     <div className="space-y-6">
+      {onboardingDismissed === false && (
+        <OnboardingChecklist
+          address={address}
+          state={onboarding}
+          onDismiss={() => {
+            setOnboardingDismissed(true);
+            try {
+              window.localStorage.setItem(ONBOARDING_DISMISSED_KEY, "1");
+            } catch {
+              // Best-effort: dismissal still applies for this session.
+            }
+          }}
+        />
+      )}
+
       <MerchantChurnPanel
         key={address}
         merchant={address}
@@ -970,6 +1030,13 @@ export default function MerchantPage() {
             <Link
               href={`/m/?address=${address}`}
               className="btn-ghost whitespace-nowrap"
+              onClick={() => {
+                try {
+                  window.localStorage.setItem("payflow:merchant:shared-link", "1");
+                } catch {
+                  // Best-effort: the checklist item simply stays open.
+                }
+              }}
             >
               Public page
             </Link>
