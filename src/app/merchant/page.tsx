@@ -6,9 +6,18 @@ import { api, type ApiMandate, type ApiPlan, type MerchantSummary } from "@/lib/
 import { RevenueChart } from "@/components/RevenueChart";
 import { buildCsv, downloadCsv, exportFilename, type ChargeRow } from "@/lib/csv";
 import { fillBuckets, parseRevenue, type BucketSize, type RevenuePoint } from "@/lib/revenue";
-import { chainMandatesFor, chainMerchantSummary, chainPlansOf, endable, mandateFunding } from "@/lib/chain";
+import { parseMerchantChurn, type MerchantChurnMonth } from "@/lib/churn";
+import { chainMandatesFor, chainMerchantSummary, chainPlanSubscriberCount, chainPlansOf, endable, mandateFunding } from "@/lib/chain";
 import { config } from "@/lib/config";
-import { MAX_NAME_LEN, nameByteLength, payflow, server } from "@/lib/payflow";
+import {
+  checkDiscountBps,
+  checkDiscountCharges,
+  discountedAmount,
+  discountBadge,
+  remainingDiscountCharges,
+  supportsDiscounts,
+} from "@/lib/discount";
+import { MAX_NAME_LEN, mandateRefundableAmount, mandateSupportsRefund, nameByteLength, payflow, server } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
 import {
   checkAmount,
@@ -62,11 +71,332 @@ function FeePreview({
   );
 }
 
+type ChurnPanelState =
+  | { status: "loading" }
+  | { status: "unavailable" }
+  | { status: "error" }
+  | { status: "data"; months: MerchantChurnMonth[] };
+
+function MerchantChurnPanel({
+  merchant,
+  apiConfigured,
+}: {
+  merchant: string;
+  apiConfigured: boolean;
+}) {
+  const [state, setState] = useState<ChurnPanelState>({ status: "loading" });
+
+  useEffect(() => {
+    if (!apiConfigured) {
+      setState({ status: "unavailable" });
+      return;
+    }
+
+    let live = true;
+    setState({ status: "loading" });
+    void api
+      .merchantChurn(merchant)
+      .then((body) => {
+        if (!live) return;
+        if (body === null) {
+          setState({ status: "unavailable" });
+          return;
+        }
+        const months = parseMerchantChurn(body, merchant);
+        setState(months === null ? { status: "error" } : { status: "data", months });
+      })
+      .catch(() => {
+        if (live) setState({ status: "unavailable" });
+      });
+
+    return () => {
+      live = false;
+    };
+  }, [apiConfigured, merchant]);
+
+  if (!apiConfigured) {
+    return (
+      <Notice tone="info">
+        Historical churn analytics require the payflow backend. Configure NEXT_PUBLIC_API_URL
+        to enable this report; contract-only mode does not retain historical lifecycle events.
+      </Notice>
+    );
+  }
+
+  return (
+    <Panel
+      title="Monthly subscriber activity"
+      subtitle="Counts are subscriptions (mandates), bucketed by event time. Net change is started minus subscriber cancellations, merchant endings, and completed subscriptions."
+    >
+      {state.status === "loading" ? (
+        <SkeletonRows rows={2} label="Loading monthly subscriber activity" />
+      ) : state.status === "unavailable" ? (
+        <Empty title="Historical churn analytics unavailable">
+          The payflow backend is not reachable or does not serve this report yet. Contract state
+          cannot reconstruct historical subscription activity.
+        </Empty>
+      ) : state.status === "error" ? (
+        <Notice tone="error">
+          The backend returned an incomplete or inconsistent churn report, so these metrics are
+          hidden rather than shown as misleading counts.
+        </Notice>
+      ) : state.months.length === 0 ? (
+        <Empty title="No subscription activity in this report">
+          No lifecycle events were returned for the reported monthly buckets.
+        </Empty>
+      ) : (
+        <div
+          className="overflow-x-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          role="region"
+          aria-label="Monthly subscriber activity table"
+          tabIndex={0}
+        >
+          <table className="w-full min-w-[760px] text-left text-sm">
+            <caption className="sr-only">
+              Monthly subscription starts, departures, completions, and net change. Completed
+              subscriptions are included in the net calculation.
+            </caption>
+            <thead>
+              <tr className="border-b border-edge text-muted">
+                <th scope="col" className="py-2 pr-3 font-medium">Month (UTC)</th>
+                <th scope="col" className="py-2 pr-3 text-right font-medium">Started</th>
+                <th scope="col" className="py-2 pr-3 text-right font-medium">
+                  Subscriber cancellations
+                </th>
+                <th scope="col" className="py-2 pr-3 text-right font-medium">Merchant-ended</th>
+                <th scope="col" className="py-2 pr-3 text-right font-medium">Completed</th>
+                <th scope="col" className="py-2 text-right font-medium">Net subscriber change</th>
+              </tr>
+            </thead>
+            <tbody>
+              {state.months.map((month) => (
+                <tr key={month.bucket} className="border-b border-edge last:border-0">
+                  <th scope="row" className="py-2 pr-3 font-medium">{month.bucket}</th>
+                  <td className="py-2 pr-3 text-right tabular-nums">{month.started}</td>
+                  <td className="py-2 pr-3 text-right tabular-nums">{month.cancelled}</td>
+                  <td className="py-2 pr-3 text-right tabular-nums">{month.ended}</td>
+                  <td className="py-2 pr-3 text-right tabular-nums">{month.completed}</td>
+                  <td className="py-2 text-right tabular-nums">
+                    {month.net > 0
+                      ? `+${month.net} (increase)`
+                      : month.net < 0
+                        ? `${month.net} (decrease)`
+                        : "0 (no change)"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+/**
+ * The discount a merchant can attach to one mandate.
+ *
+ * The rate is a percentage the merchant types; it is converted to basis
+ * points in integer arithmetic, and the preview says what the subscriber pays
+ * while the discount runs and what they pay after it. The discount can only
+ * lower the price, so the preview never shows more than the plan's price.
+ */
+function DiscountForm({
+  amount,
+  meta,
+  busy,
+  onCancel,
+  onApply,
+}: {
+  amount: bigint;
+  meta: TokenMeta;
+  busy: boolean;
+  onCancel: () => void;
+  onApply: (bps: number, charges: number) => void;
+}) {
+  const [percent, setPercent] = useState("10");
+  const [charges, setCharges] = useState("3");
+  const bpsCheck = checkDiscountBps(percent);
+  const chargesCheck = checkDiscountCharges(charges);
+  const usable = bpsCheck.ok && chargesCheck.ok;
+
+  return (
+    <div className="mt-3 rounded-lg border border-edge p-3">
+      <p className="text-sm font-medium">Discount this mandate</p>
+      <div className="mt-2 flex flex-wrap items-end gap-3">
+        <div className="min-w-[7rem] flex-1">
+          <label className="label" htmlFor="discount-percent">
+            Discount (%)
+          </label>
+          <input
+            id="discount-percent"
+            className="input"
+            inputMode="decimal"
+            placeholder="10"
+            value={percent}
+            onChange={(e) => setPercent(e.target.value)}
+            aria-invalid={!bpsCheck.ok}
+            aria-describedby={bpsCheck.ok ? undefined : "discount-percent-error"}
+            disabled={busy}
+          />
+        </div>
+        <div className="min-w-[9rem] flex-1">
+          <label className="label" htmlFor="discount-charges">
+            Charges to cover
+          </label>
+          <input
+            id="discount-charges"
+            className="input"
+            inputMode="numeric"
+            placeholder="3"
+            value={charges}
+            onChange={(e) => setCharges(e.target.value)}
+            aria-invalid={!chargesCheck.ok}
+            aria-describedby={chargesCheck.ok ? undefined : "discount-charges-error"}
+            disabled={busy}
+          />
+        </div>
+        <button
+          type="button"
+          className="btn-primary"
+          disabled={busy || !usable}
+          onClick={() => {
+            if (!bpsCheck.ok || !chargesCheck.ok) return;
+            onApply(bpsCheck.bps, chargesCheck.charges);
+          }}
+        >
+          {busy ? "Applying…" : "Apply discount"}
+        </button>
+        <button type="button" className="btn-ghost" disabled={busy} onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+
+      {!bpsCheck.ok && (
+        <p id="discount-percent-error" className="mt-2 text-sm text-danger">
+          {bpsCheck.message}
+        </p>
+      )}
+      {!chargesCheck.ok && (
+        <p id="discount-charges-error" className="mt-2 text-sm text-danger">
+          {chargesCheck.message}
+        </p>
+      )}
+
+      {bpsCheck.ok && chargesCheck.ok && (
+        <p className="mt-2 text-sm text-muted">
+          Subscriber pays {formatAmount(discountedAmount(amount, bpsCheck.bps), meta)}{" "}
+          for the next {chargesCheck.charges === 1 ? "charge" : `${chargesCheck.charges} charges`},{" "}
+          then {formatAmount(amount, meta)}.
+          {discountedAmount(amount, bpsCheck.bps) === 0n && (
+            <> This discount rounds the charge down to zero, which the vault cannot debit.</>
+          )}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The refund a merchant can issue on one mandate.
+ *
+ * The amount is capped at what the merchant received (net of fees) for that
+ * mandate. The form shows the maximum refundable amount and confirms the
+ * action with a dialog stating the amount and recipient.
+ */
+function RefundForm({
+  maxRefund,
+  meta,
+  amount,
+  onAmountChange,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  maxRefund: bigint;
+  meta: TokenMeta;
+  amount: string;
+  onAmountChange: (value: string) => void;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: (amount: bigint) => void;
+}) {
+  const amountCheck = checkAmount(amount, meta.decimals);
+  const maxRefundStroops = maxRefund;
+  const usable = amountCheck.ok && amountCheck.stroops <= maxRefundStroops && amountCheck.stroops > 0n;
+
+  return (
+    <div className="mt-3 rounded-lg border border-edge p-3">
+      <p className="text-sm font-medium">Issue a refund</p>
+      <p className="mt-1 text-xs text-muted">
+        Refund up to {formatAmount(maxRefundStroops, meta)} (what you received net of fees).
+      </p>
+      <div className="mt-2 flex flex-wrap items-end gap-3">
+        <div className="min-w-[12rem] flex-1">
+          <label className="label" htmlFor="refund-amount">
+            Amount ({meta.symbol})
+          </label>
+          <input
+            id="refund-amount"
+            className="input"
+            inputMode="decimal"
+            placeholder={fromStroops(maxRefundStroops, 4, meta.decimals)}
+            value={amount}
+            onChange={(e) => onAmountChange(e.target.value)}
+            aria-invalid={!amountCheck.ok || amountCheck.stroops > maxRefundStroops}
+            aria-describedby={amountCheck.ok ? undefined : "refund-amount-error"}
+            disabled={busy}
+          />
+        </div>
+        <button
+          type="button"
+          className="btn-primary"
+          disabled={busy || !usable}
+          onClick={() => {
+            if (!amountCheck.ok) return;
+            onConfirm(amountCheck.stroops);
+          }}
+        >
+          {busy ? "Refunding…" : "Confirm refund"}
+        </button>
+        <button type="button" className="btn-ghost" disabled={busy} onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+
+      {!amountCheck.ok && (
+        <p id="refund-amount-error" className="mt-2 text-sm text-danger">
+          {amountCheck.message}
+        </p>
+      )}
+      {amountCheck.ok && amountCheck.stroops > maxRefundStroops && (
+        <p id="refund-amount-error" className="mt-2 text-sm text-danger">
+          Refund cannot exceed {formatAmount(maxRefundStroops, meta)}.
+        </p>
+      )}
+    </div>
+  );
+}
+
 export default function MerchantPage() {
-  const { address, networkMismatch, signXdr } = useWallet();
+  const { address, networkMismatch, signXdr, connect, connecting } = useWallet();
   const [plans, setPlans] = useState<ApiPlan[] | null>(null);
   const [mandates, setMandates] = useState<ApiMandate[] | null>(null);
   const [summary, setSummary] = useState<MerchantSummary | null>(null);
+  /**
+   * Per-plan performance stats keyed by plan id.
+   *
+   * A missing key means the fetch has not returned yet (loading).
+   * `null` means neither the API nor the contract could supply the data —
+   * the stats block is hidden entirely.
+   * `{ subscriber_count }` alone (no `total_collected`) means only the
+   * contract's open-mandate counter was available; charge history requires
+   * the indexer, so Collected and Cancellations stay hidden.
+   * A full object means the backend supplied all three figures.
+   */
+  const [planStats, setPlanStats] = useState<
+    Record<number, { subscriber_count: number; total_collected?: string; cancellations?: number } | null>
+  >({});
   // Vault balance per subscriber address, read in parallel with mandates.
   const [balances, setBalances] = useState<Record<string, bigint | null>>({});
   const [exporting, setExporting] = useState(false);
@@ -88,6 +418,25 @@ export default function MerchantPage() {
   const [busy, setBusy] = useState<string | null>(null);
   // Ending is permanent, so the End button asks for a second click.
   const [confirmEnd, setConfirmEnd] = useState<number | null>(null);
+  /**
+   * The mandate whose discount form is open. One at a time: the form carries
+   * two fields, and a page full of them is unreadable.
+   */
+  const [discountFor, setDiscountFor] = useState<number | null>(null);
+  /**
+   * The mandate whose refund form is open. One at a time: the form carries
+   * an amount field, and a page full of them is unreadable.
+   */
+  const [refundFor, setRefundFor] = useState<number | null>(null);
+  const [refundAmount, setRefundAmount] = useState("");
+  /**
+   * Whether the deployed contract can carry a discount at all.
+   *
+   * The control is hidden until it can: calling a method the contract does
+   * not have fails every transaction, and a merchant who sees a discount
+   * button that cannot work has been misled.
+   */
+  const [discountSupport, setDiscountSupport] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
@@ -121,11 +470,15 @@ export default function MerchantPage() {
       api.mandatesFor(address),
       api.merchantSummary(address),
     ]);
+
+    let loadedPlans: ApiPlan[] = [];
     if (p) {
       setPlans(p.plans);
+      loadedPlans = p.plans;
     } else {
       try {
-        setPlans(await chainPlansOf(address, address));
+        loadedPlans = await chainPlansOf(address, address);
+        setPlans(loadedPlans);
       } catch {
         setPlans([]);
       }
@@ -146,6 +499,30 @@ export default function MerchantPage() {
     // Revenue totals come from charge history, which only the indexer has.
     setSummary(s ?? chainMerchantSummary(address, rows));
 
+    // Per-plan stats: try the backend first; fall back to the contract for
+    // the subscriber count only (total_collected and cancellations require
+    // charge history which only the indexer holds).
+    if (loadedPlans.length > 0) {
+      void Promise.all(
+        loadedPlans.map(async (plan) => {
+          const apiStats = await api.planStats(plan.id);
+          if (apiStats !== null) {
+            setPlanStats((prev) => ({ ...prev, [plan.id]: apiStats }));
+            return;
+          }
+          // API unavailable: read subscriber count from contract state if
+          // the contract supports it. total_collected and cancellations are
+          // not derivable from chain alone, so they stay absent and the UI
+          // hides them.
+          const count = await chainPlanSubscriberCount(address, plan.id);
+          setPlanStats((prev) => ({
+            ...prev,
+            [plan.id]: count !== null ? { subscriber_count: count } : null,
+          }));
+        }),
+      );
+    }
+
     // Read each subscriber's vault balance in parallel so the dashboard can
     // flag mandates that will fail. Individual reads may fail without breaking
     // the whole list.
@@ -163,6 +540,68 @@ export default function MerchantPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  /**
+   * Whether the deployed contract can carry a discount.
+   *
+   * The rows are enough when they came from the contract, but the indexer
+   * does not project the discount yet, so one mandate is read from the chain
+   * to answer the question the same way in both modes.
+   */
+  useEffect(() => {
+    const row = mandates?.[0];
+    if (!address || !row) {
+      setDiscountSupport(false);
+      return;
+    }
+    if (supportsDiscounts(row)) {
+      setDiscountSupport(true);
+      return;
+    }
+    let live = true;
+    void payflow
+      .getMandate(address, row.id)
+      .then((mandate) => {
+        if (live) setDiscountSupport(supportsDiscounts(mandate));
+      })
+      .catch(() => {
+        if (live) setDiscountSupport(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [address, mandates]);
+
+  /**
+   * Whether the deployed contract supports refunds on mandates.
+   *
+   * The indexer does not project the refundable_amount yet, so one mandate
+   * is read from the chain to answer the question the same way in both modes.
+   */
+  const [refundSupport, setRefundSupport] = useState(false);
+  useEffect(() => {
+    const row = mandates?.[0];
+    if (!address || !row) {
+      setRefundSupport(false);
+      return;
+    }
+    if (mandateSupportsRefund(row)) {
+      setRefundSupport(true);
+      return;
+    }
+    let live = true;
+    void payflow
+      .getMandate(address, row.id)
+      .then((mandate) => {
+        if (live) setRefundSupport(mandateSupportsRefund(mandate));
+      })
+      .catch(() => {
+        if (live) setRefundSupport(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [address, mandates]);
 
   // The shareable catalogue link, built after mount so the statically
   // prerendered markup (no window) and the hydrated one cannot disagree.
@@ -297,13 +736,35 @@ export default function MerchantPage() {
   if (!address) {
     return (
       <Panel title="Merchant dashboard">
-        <Empty>Connect a wallet to publish plans and track revenue.</Empty>
+        <Empty
+          title="No wallet connected"
+          action={
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={connecting}
+              onClick={() => void connect()}
+            >
+              {connecting ? "Connecting…" : "Connect wallet"}
+            </button>
+          }
+        >
+          Connect the wallet that will publish plans. Plans, subscribers and
+          revenue are all read for that address — on testnet, fund it with
+          Friendbot before publishing.
+        </Empty>
       </Panel>
     );
   }
 
   return (
     <div className="space-y-6">
+      <MerchantChurnPanel
+        key={address}
+        merchant={address}
+        apiConfigured={api.isConfigured()}
+      />
+
       <Panel
         title="Revenue over time"
         subtitle={`Net of the protocol fee, over the last ${REVENUE_WINDOW_DAYS} days.`}
@@ -332,7 +793,18 @@ export default function MerchantPage() {
         ) : revenue === null ? (
           <SkeletonRows rows={2} label="Loading revenue" />
         ) : revenue.length === 0 ? (
-          <Empty>No charges settled in this period.</Empty>
+          <Empty
+            title="Nothing settled in this period"
+            action={
+              <a href="#publish-plan" className="btn-ghost">
+                Publish a plan
+              </a>
+            }
+          >
+            A charge settles when a mandate falls due and the keeper — or you,
+            with Charge now — collects it. Publish a plan and share your public
+            page to get your first subscriber.
+          </Empty>
         ) : (
           <RevenueChart points={revenue} size={bucketSize} meta={tokenMeta} />
         )}
@@ -368,7 +840,9 @@ export default function MerchantPage() {
         </Notice>
       )}
 
+      {/* id is the anchor target for the empty states below. */}
       <Panel
+        id="publish-plan"
         title="Publish a plan"
         subtitle="Price and period are frozen into every mandate opened against this plan. To change them, publish a new plan."
       >
@@ -406,7 +880,7 @@ export default function MerchantPage() {
               aria-describedby={nameTooLong ? "plan-name-error" : undefined}
             />
             {nameTooLong && (
-              <p id="plan-name-error" className="mt-1 text-sm text-rose-200">
+              <p id="plan-name-error" className="mt-1 text-sm text-danger">
                 Too long — {MAX_NAME_LEN} bytes maximum.
               </p>
             )}
@@ -479,7 +953,7 @@ export default function MerchantPage() {
         <p
           id="price-preview"
           aria-live="polite"
-          className={showPriceError ? "mt-3 text-sm text-rose-200" : "mt-3 text-sm text-muted"}
+          className={showPriceError ? "mt-3 text-sm text-danger" : "mt-3 text-sm text-muted"}
         >
           {showPriceError
             ? priceError
@@ -506,11 +980,31 @@ export default function MerchantPage() {
         {plans === null ? (
           <SkeletonRows rows={2} label="Loading plans" />
         ) : plans.length === 0 ? (
-          <Empty>No plans yet.</Empty>
+          <Empty
+            title="No plans yet"
+            action={
+              <a href="#publish-plan" className="btn-primary">
+                Publish a plan
+              </a>
+            }
+          >
+            Use the form above to publish your first plan — it is written
+            straight to the contract, so it works with or without the indexer.
+            Subscribers can open a mandate against it as soon as it confirms.
+          </Empty>
         ) : (
           <div className="space-y-3">
             {plans.map((p) => {
               const meta = metaFor(metas, p.token);
+              const stats = planStats[p.id];
+              // stats === undefined → still loading (key absent from the map)
+              // stats === null      → stat source could not supply data; hide
+              const statsLoading = !(p.id in planStats);
+              // total_collected and cancellations require charge history, which
+              // only the indexer holds. They are absent when the stats came
+              // from the contract fallback, so the UI hides them rather than
+              // show misleading zeros.
+              const hasRevenue = stats?.total_collected !== undefined;
               return (
                 <div
                   key={p.id}
@@ -530,6 +1024,49 @@ export default function MerchantPage() {
                       {fromStroops(p.amount, 4, meta.decimals)} {meta.symbol}{" "}
                       {formatPeriod(p.period)}
                     </div>
+                    {/* Per-plan stats: subscriber count always shown when
+                        readable; total collected and cancellations only when
+                        the indexer supplied them (charge history needs the
+                        backend). Hidden entirely when neither the API nor the
+                        contract can supply a subscriber count. */}
+                    {statsLoading ? (
+                      <div
+                        className="mt-2 flex flex-wrap gap-4 text-xs text-muted"
+                        aria-busy="true"
+                        role="status"
+                      >
+                        <span className="sr-only">Loading plan stats…</span>
+                        <span className="h-4 w-20 rounded bg-white/10 motion-safe:animate-pulse" aria-hidden="true" />
+                        <span className="h-4 w-24 rounded bg-white/10 motion-safe:animate-pulse" aria-hidden="true" />
+                        <span className="h-4 w-20 rounded bg-white/10 motion-safe:animate-pulse" aria-hidden="true" />
+                      </div>
+                    ) : stats ? (
+                      <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
+                        <div className="flex gap-1">
+                          <dt>Subscribers</dt>
+                          <dd className="font-medium text-foreground tabular-nums">
+                            {stats.subscriber_count}
+                          </dd>
+                        </div>
+                        {hasRevenue && (
+                          <>
+                            <div className="flex gap-1">
+                              <dt>Collected</dt>
+                              <dd className="font-medium text-foreground tabular-nums">
+                                {fromStroops(stats.total_collected!, 4, meta.decimals)}{" "}
+                                {meta.symbol}
+                              </dd>
+                            </div>
+                            <div className="flex gap-1">
+                              <dt>Cancellations</dt>
+                              <dd className="font-medium text-foreground tabular-nums">
+                                {stats.cancellations!}
+                              </dd>
+                            </div>
+                          </>
+                        )}
+                      </dl>
+                    ) : null}
                   </div>
                   <button
                     type="button"
@@ -568,7 +1105,25 @@ export default function MerchantPage() {
         {mandates === null ? (
           <SkeletonRows rows={3} label="Loading subscribers" />
         ) : mandates.length === 0 ? (
-          <Empty>No subscribers yet.</Empty>
+          <Empty
+            title="No subscribers yet"
+            action={
+              publicUrl ? (
+                <a
+                  href={publicUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn-primary"
+                >
+                  Open your public page
+                </a>
+              ) : undefined
+            }
+          >
+            Share your public page link so anyone can open a mandate against
+            your plans. New subscribers appear here with their vault funding at
+            a glance.
+          </Empty>
         ) : (
           <div className="space-y-3">
             {mandates.map((m) => {
@@ -577,61 +1132,121 @@ export default function MerchantPage() {
               const balance = balances[m.subscriber] ?? null;
               const funding = mandateFunding(balance, BigInt(m.amount));
               const short = funding.status === "short";
+              const badge = discountBadge(m);
+              const remaining = remainingDiscountCharges(m);
               return (
                 <div
                   key={m.id}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-edge p-4"
+                  className="rounded-lg border border-edge p-4"
                 >
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">#{m.id}</span>
-                      <AddressLink value={m.subscriber} />
-                      <Badge status={m.status} />
-                      {m.ended_by === "merchant" && (
-                        <span className="text-xs text-muted">ended by you</span>
-                      )}
-                    </div>
-                    <div className="mt-1 text-xs text-muted">
-                      {fromStroops(m.amount, 4, meta.decimals)} {meta.symbol}{" "}
-                      {formatPeriod(m.period)} · {m.charges_made} settled · next{" "}
-                      {m.status === "Active" ? <TimeAgo value={m.next_charge} /> : "—"}
-                    </div>
-                    <div className="mt-1 text-xs font-medium">
-                      {balance === null ? (
-                        <span className="text-muted">Vault balance —</span>
-                      ) : short ? (
-                        <span className="text-rose-300">
-                          Short by {fromStroops(funding.shortfall)} {meta.symbol}
-                        </span>
-                      ) : (
-                        <span className="text-accent">Funded</span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {due && (
-                      <>
-                        <button
-                          type="button"
-                          className="btn-primary"
-                          disabled={busy !== null || networkMismatch || short}
-                          onClick={() =>
-                            void run(`charge-${m.id}`, () =>
-                              payflow.charge(address, signXdr, m.id),
-                            )
-                          }
-                        >
-                          {busy === `charge-${m.id}` ? "Charging…" : short ? "Short on funds" : "Charge now"}
-                        </button>
-                        {short && (
-                          <span className="text-xs text-rose-300">
-                            Subscriber vault short by {fromStroops(funding.shortfall)} {meta.symbol}
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium">#{m.id}</span>
+                        <AddressLink value={m.subscriber} />
+                        <Badge status={m.status} />
+                        {badge && (
+                          <span className="rounded-full bg-accent/15 px-2 py-0.5 text-xs font-medium text-accent">
+                            {badge}
                           </span>
                         )}
-                      </>
-                    )}
-                    {endable(m) &&
-                      (confirmEnd === m.id ? (
+                        {m.ended_by === "merchant" && (
+                          <span className="text-xs text-muted">ended by you</span>
+                        )}
+                      </div>
+                      <div className="mt-1 text-xs text-muted">
+                        {fromStroops(m.amount, 4, meta.decimals)} {meta.symbol}{" "}
+                        {formatPeriod(m.period)} · {m.charges_made} settled · next{" "}
+                        {m.status === "Active" ? <TimeAgo value={m.next_charge} /> : "—"}
+                      </div>
+                      {badge && (
+                        <div className="mt-1 text-xs text-accent">
+                          Subscriber pays{" "}
+                          {fromStroops(
+                            discountedAmount(BigInt(m.amount), Number(m.discount_bps)),
+                            4,
+                            meta.decimals,
+                          )}{" "}
+                          {meta.symbol} while the discount runs
+                          {remaining === null
+                            ? ""
+                            : remaining === 0
+                              ? " — the discount has run out"
+                              : ` — ${remaining} discounted charge${remaining === 1 ? "" : "s"} left`}
+                          .
+                        </div>
+                      )}
+                      <div className="mt-1 text-xs font-medium">
+                        {balance === null ? (
+                          <span className="text-muted">Vault balance —</span>
+                        ) : short ? (
+                          <span className="text-danger">
+                            Short by {fromStroops(funding.shortfall)} {meta.symbol}
+                          </span>
+                        ) : (
+                          <span className="text-accent">Funded</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {due && (
+                        <>
+                          <button
+                            type="button"
+                            className="btn-primary"
+                            disabled={busy !== null || networkMismatch || short}
+                            onClick={() =>
+                              void run(`charge-${m.id}`, () =>
+                                payflow.charge(address, signXdr, m.id),
+                              )
+                            }
+                          >
+                            {busy === `charge-${m.id}` ? "Charging…" : short ? "Short on funds" : "Charge now"}
+                          </button>
+                          {short && (
+                            <span className="text-xs text-danger">
+                              Subscriber vault short by {fromStroops(funding.shortfall)} {meta.symbol}
+                            </span>
+                          )}
+                        </>
+                      )}
+{discountSupport && endable(m) && (
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            disabled={busy !== null || networkMismatch}
+                            aria-expanded={discountFor === m.id}
+                            onClick={() =>
+                              setDiscountFor(discountFor === m.id ? null : m.id)
+                            }
+                          >
+                            {discountFor === m.id ? "Close" : "Discount"}
+                          </button>
+                        )}
+                        {refundSupport && endable(m) && (
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            disabled={busy !== null || networkMismatch}
+                            aria-expanded={refundFor === m.id}
+                            onClick={() => {
+                              if (refundFor === m.id) {
+                                setRefundFor(null);
+                                setRefundAmount("");
+                              } else {
+                                const maxRefund = mandateRefundableAmount(m);
+                                if (maxRefund !== null) {
+                                  setRefundAmount(fromStroops(maxRefund, 4, meta.decimals).replace(/[^0-9.]/g, ""));
+                                }
+                                setRefundFor(m.id);
+                              }
+                            }}
+                          >
+                            {refundFor === m.id ? "Close" : "Refund"}
+                          </button>
+                        )}
+                        {endable(m) &&
+                        (confirmEnd === m.id ? (
                         <>
                           <button
                             type="button"
@@ -665,7 +1280,43 @@ export default function MerchantPage() {
                           End
                         </button>
                       ))}
+                    </div>
                   </div>
+
+                  {discountFor === m.id && (
+                    <DiscountForm
+                      amount={BigInt(m.amount)}
+                      meta={meta}
+                      busy={busy === `discount-${m.id}`}
+                      onCancel={() => setDiscountFor(null)}
+                      onApply={(bps, charges) =>
+                        void run(`discount-${m.id}`, () =>
+                          payflow.setDiscount(address, signXdr, m.id, bps, charges),
+                        ).then(() => setDiscountFor(null))
+                      }
+                    />
+                  )}
+                  {refundFor === m.id && (
+                    <RefundForm
+                      maxRefund={mandateRefundableAmount(m) ?? 0n}
+                      meta={meta}
+                      amount={refundAmount}
+                      onAmountChange={setRefundAmount}
+                      busy={busy === `refund-${m.id}`}
+                      onCancel={() => {
+                        setRefundFor(null);
+                        setRefundAmount("");
+                      }}
+                      onConfirm={(amount) =>
+                        void run(`refund-${m.id}`, () =>
+                          payflow.refund(address, signXdr, m.id, amount),
+                        ).then(() => {
+                          setRefundFor(null);
+                          setRefundAmount("");
+                        })
+                      }
+                    />
+                  )}
                 </div>
               );
             })}

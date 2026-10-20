@@ -107,7 +107,7 @@ export function RevenueChart({
       )}
 
       <details className="text-sm">
-        <summary className="cursor-pointer text-muted hover:text-slate-200">
+        <summary className="cursor-pointer text-muted hover:text-fg">
           Show revenue as a table
         </summary>
         <div className="mt-3 overflow-x-auto" id={tableId}>

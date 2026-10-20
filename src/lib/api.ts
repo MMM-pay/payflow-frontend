@@ -55,6 +55,43 @@ export interface ApiMandate {
    * source cannot say, which is not the same as zero.
    */
   trial?: number;
+  /**
+   * When a paused mandate resumes, as a Unix time, from payflow-contract#41.
+   *
+   * Optional because the field has not shipped: the contract only reports it
+   * once the dated pause exists, and the indexer only serves what the contract
+   * emits. Absent therefore means "this source cannot pause until a date",
+   * which is what the account page uses to hide the control.
+   */
+  pause_until?: number;
+  /**
+   * When a past-due mandate's grace period ends, as a Unix time, from
+   * payflow-contract#34.
+   *
+   * Optional because the field has not shipped: the contract only reports it
+   * once the mandate is past due. Absent means the source cannot say.
+   */
+  past_due_until?: number;
+  /**
+   * The discount the merchant set on this mandate, in basis points, and how
+   * many charges it covers.
+   *
+   * Optional for the same reason: payflow-contract#37 has not shipped, so
+   * neither the deployed contract's `Mandate` nor the indexer's rows carry
+   * them. Absent means the source cannot say — see `supportsDiscounts`.
+   */
+  discount_bps?: number;
+  discount_charges?: number;
+  /** How many of the discounted charges have been settled. */
+  discount_charges_made?: number;
+  /**
+   * The maximum amount that can be refunded on this mandate, in the token's
+   * smallest unit as a decimal string. From payflow-contract#36.
+   *
+   * Optional because the field has not shipped: the contract only reports it
+   * once the refund feature is deployed. Absent means the source cannot say.
+   */
+  refundable_amount?: string;
 }
 
 export interface ApiCharge {
@@ -76,6 +113,25 @@ export interface ApiVaultEvent {
   ledger: number;
 }
 
+/**
+ * Per-plan performance stats, proposed by payflow-backend#29.
+ *
+ * Optional fields are absent when the backend does not yet serve this endpoint
+ * or when the data is unavailable. Callers must treat `undefined` as "cannot
+ * say" rather than zero.
+ *
+ * `total_collected` is in smallest units (stroops) as a decimal string so
+ * bigint math is always used — never floats.
+ */
+export interface ApiPlanStats {
+  /** Open mandates (active + paused). */
+  subscriber_count: number;
+  /** Net of the protocol fee, in smallest units as a decimal string. */
+  total_collected: string;
+  /** Mandates ended by either party. */
+  cancellations: number;
+}
+
 export interface MerchantSummary {
   merchant: string;
   activeMandates: number;
@@ -91,6 +147,15 @@ export interface ProtocolStats {
   activeMandates: number;
   charges: number;
   lastIndexedLedger: number;
+}
+
+export interface RecentCharge {
+  tx_hash: string;
+  plan_name: string;
+  amount: string;
+  ledger: number;
+  timestamp: number;
+  plan_id: number;
 }
 
 /**
@@ -109,6 +174,8 @@ async function get<T>(path: string): Promise<T | null> {
 }
 
 export const api = {
+  /** Whether the backend URL was explicitly supplied for this build. */
+  isConfigured: () => Boolean(process.env.NEXT_PUBLIC_API_URL?.trim()),
   stats: () => get<ProtocolStats>("/api/stats"),
   plans: (merchant?: string) =>
     get<{ plans: ApiPlan[] }>(`/api/plans${merchant ? `?merchant=${merchant}` : ""}`),
@@ -118,6 +185,17 @@ export const api = {
     get<{ mandates: ApiMandate[] }>(`/api/mandates?merchant=${merchant}`),
   charges: (mandateId: number) =>
     get<{ charges: ApiCharge[] }>(`/api/mandates/${mandateId}/charges`),
+  charge: async (mandateId: number, txHash: string): Promise<ApiCharge | null> => {
+    const res = await get<{ charges: ApiCharge[] }>(`/api/mandates/${mandateId}/charges`);
+    if (!res) return null;
+    return res.charges.find((c) => c.tx_hash.toLowerCase() === txHash.toLowerCase()) ?? null;
+  },
+  mandate: async (id: number): Promise<ApiMandate | null> => {
+    const res = await get<ApiMandate | { mandate: ApiMandate }>(`/api/mandates/${id}`);
+    if (!res) return null;
+    if ("mandate" in res) return res.mandate;
+    return res;
+  },
   vaultHistory: (address: string) =>
     get<{ events: ApiVaultEvent[] }>(`/api/vaults/${address}/history`),
   merchantSummary: (address: string) =>
@@ -140,5 +218,30 @@ export const api = {
     const qs = query.toString();
     return get<unknown>(`/api/merchants/${address}/revenue${qs ? `?${qs}` : ""}`);
   },
+  /**
+   * Monthly mandate lifecycle counts, proposed by payflow-backend#30.
+   *
+   * The endpoint is optional until deployed. An empty API URL must not turn
+   * this into a same-origin request or a contract-only approximation.
+   */
+  merchantChurn: (address: string) => {
+    if (!api.isConfigured()) return Promise.resolve(null);
+    return get<unknown>(`/api/merchants/${address}/churn?bucket=month`);
+  },
   due: () => get<{ now: number; due: ApiMandate[] }>("/api/due"),
+  /**
+   * Per-plan stats, proposed by payflow-backend#29.
+   *
+   * Returns null when the backend is unreachable or does not yet serve this
+   * endpoint — the UI must hide the stats section rather than show stale zeros.
+   */
+  planStats: (planId: number) => get<ApiPlanStats>(`/api/plans/${planId}/stats`),
+  /**
+   * Recent charges across the protocol, proposed by payflow-backend#30.
+   *
+   * Returns null when the backend is unreachable or does not yet serve this
+   * endpoint — the UI must hide the activity feed rather than show stale data.
+   */
+  recentCharges: (limit = 10) =>
+    get<{ charges: RecentCharge[] }>(`/api/recent?limit=${limit}`),
 };

@@ -37,7 +37,14 @@ vi.mock("@/lib/wallet", () => ({ useWallet: () => wallet }));
 vi.mock("@/lib/api", () => ({
   api: { mandatesOf: apiMock.mandatesOf, vaultHistory: apiMock.vaultHistory },
 }));
-vi.mock("@/lib/payflow", () => ({ payflow: payflowMock }));
+vi.mock("@/lib/payflow", () => ({
+  payflow: payflowMock,
+  // This page's tests predate payflow-contract#41; the dated pause stays off.
+  mandatePauseUntil: () => null,
+  // payflow-contract#34 not shipped; past-due stays off.
+  mandateIsPastDue: () => false,
+  mandatePastDueUntil: () => null,
+}));
 vi.mock("@/lib/chain", () => ({ chainMandatesOf: chainMock.chainMandatesOf }));
 
 const SUBSCRIBER = "GAP6QFLXQD73URCC3EXU2WOQHIAREPCGMSIMKF5PFLLI5TR6HTMNDTIE";

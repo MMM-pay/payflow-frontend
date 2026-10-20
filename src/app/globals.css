@@ -2,12 +2,70 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Two palettes behind one set of CSS variables.
+ *
+ * Light is the base. Dark is applied either by the OS preference (when the
+ * reader has not chosen a theme) or by `data-theme="dark"`, which the inline
+ * script in `layout.tsx` sets before first paint from localStorage. A stored
+ * light choice is honoured on a dark system because the media query excludes
+ * `[data-theme="light"]`.
+ *
+ * Every colour is stored as space-separated RGB channels so Tailwind's opacity
+ * modifiers still work (`rgb(var(--accent) / 0.15)`).
+ */
 :root {
+  color-scheme: light;
+  --ink: 247 249 252;
+  --panel: 255 255 255;
+  --edge: 211 220 231;
+  --muted: 82 94 111;
+  --accent: 6 118 71;
+  --fg: 15 23 42;
+  --soft: 51 65 85;
+  --danger: 180 35 24;
+  --warn: 146 64 14;
+  --info: 3 105 161;
+  --danger-solid: 190 30 45;
+  --danger-solid-hover: 220 38 38;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ink: 11 14 20;
+    --panel: 21 26 35;
+    --edge: 35 43 56;
+    --muted: 151 163 180;
+    --accent: 61 220 151;
+    --fg: 241 245 249;
+    --soft: 203 213 225;
+    --danger: 253 164 175;
+    --warn: 252 211 77;
+    --info: 125 211 252;
+  }
+}
+
+:root[data-theme="dark"] {
   color-scheme: dark;
+  --ink: 11 14 20;
+  --panel: 21 26 35;
+  --edge: 35 43 56;
+  --muted: 151 163 180;
+  --accent: 61 220 151;
+  --fg: 241 245 249;
+  --soft: 203 213 225;
+  --danger: 253 164 175;
+  --warn: 252 211 77;
+  --info: 125 211 252;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
 }
 
 body {
-  @apply bg-ink text-slate-100 antialiased;
+  @apply bg-ink text-fg antialiased;
 }
 
 @layer components {
@@ -18,8 +76,8 @@ body {
     @apply mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted;
   }
   .input {
-    @apply w-full rounded-lg border border-edge bg-ink px-3 py-2 text-sm text-slate-100
-      outline-none placeholder:text-muted/60 focus:border-accent/60;
+    @apply w-full rounded-lg border border-edge bg-ink px-3 py-2 text-sm text-fg
+      outline-none placeholder:text-muted focus:border-accent/60;
   }
   .btn {
     @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm
@@ -29,12 +87,20 @@ body {
     @apply btn bg-accent text-ink hover:bg-accent/90;
   }
   .btn-ghost {
-    @apply btn border border-edge text-slate-200 hover:border-muted hover:bg-white/5;
+    @apply btn border border-edge text-soft hover:border-muted hover:bg-fg/5;
   }
   .btn-danger {
-    @apply btn bg-rose-500/90 text-white hover:bg-rose-500;
+    @apply btn bg-danger-solid text-white hover:bg-danger-solid-hover;
   }
   .mono {
     @apply font-mono text-[13px];
   }
 }
+
+@media print {
+  body {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+  }
+}
+

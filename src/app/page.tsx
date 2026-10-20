@@ -2,9 +2,11 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { api, type ProtocolStats } from "@/lib/api";
+import { api, type ProtocolStats, type RecentCharge } from "@/lib/api";
 import { config } from "@/lib/config";
-import { AddressLink, Panel, Stat } from "@/components/ui";
+import { AddressLink, Panel, Stat, TxLink } from "@/components/ui";
+import { formatAmount, formatDate, shortAddress } from "@/lib/format";
+import { metaFor, useTokenMetas } from "@/lib/token";
 
 const STEPS = [
   {
@@ -27,13 +29,19 @@ const STEPS = [
 
 export default function HomePage() {
   const [stats, setStats] = useState<ProtocolStats | null>(null);
+  const [recentCharges, setRecentCharges] = useState<RecentCharge[] | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const metas = useTokenMetas([config.contracts.token]);
+  const tokenMeta = metaFor(metas, config.contracts.token);
 
   useEffect(() => {
-    void api.stats().then((s) => {
-      setStats(s);
+    const load = async () => {
+      const [s, r] = await Promise.allSettled([api.stats(), api.recentCharges(10)]);
+      if (s.status === "fulfilled") setStats(s.value);
+      if (r.status === "fulfilled" && r.value) setRecentCharges(r.value.charges);
       setLoaded(true);
-    });
+    };
+    void load();
   }, []);
 
   return (
@@ -46,7 +54,7 @@ export default function HomePage() {
           Stellar payments are push-only: the account holding the funds must sign every
           transfer. That makes one-off payments simple and subscriptions impossible without
           custody. Payflow adds the missing primitive — a bounded, revocable{" "}
-          <strong className="text-slate-200">mandate</strong> the subscriber signs once.
+          <strong className="text-soft">mandate</strong> the subscriber signs once.
         </p>
         <div className="flex flex-wrap gap-3 pt-1">
           <Link href="/subscribe" className="btn-primary">
@@ -78,6 +86,36 @@ export default function HomePage() {
           The indexer is unreachable, so these counters are blank. Everything else on this
           site reads contract state directly and still works.
         </p>
+      )}
+
+      {recentCharges !== null && recentCharges.length > 0 && (
+        <Panel title="Recent activity" subtitle="Latest charges settled across the protocol">
+          <div className="space-y-2">
+            {recentCharges.map((charge) => (
+              <div
+                key={charge.tx_hash}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-edge p-3"
+              >
+                <div className="flex items-center gap-3 text-sm">
+                  <span className="font-medium">{charge.plan_name || `Plan #${charge.plan_id}`}</span>
+                  <span className="mono text-xs text-muted">tx</span>
+                  <TxLink hash={charge.tx_hash} />
+                </div>
+                <div className="flex flex-wrap items-center gap-3 text-sm text-muted">
+                  <span className="tabular-nums font-medium text-fg">
+                    {formatAmount(charge.amount, tokenMeta)}
+                  </span>
+                  <time dateTime={new Date(charge.timestamp * 1000).toISOString()}>
+                    {formatDate(charge.timestamp)}
+                  </time>
+                  <span className="mono truncate max-w-[10rem]">
+                    {shortAddress(charge.tx_hash, 6)}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
       )}
 
       <Panel title="How it works">
