@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { api, type ApiMandate, type ApiVaultEvent } from "@/lib/api";
+import { api, type ApiMandate, type ApiVaultEvent, type StreamEvent } from "@/lib/api";
 import { buildUpcomingChargesCalendar, CALENDAR_FILENAME } from "@/lib/calendar";
 import {
   buildPaymentsCsv,
@@ -29,11 +29,15 @@ import {
   mandatePauseUntil,
   payflow,
   server,
+  vaultSupportsDepositFor,
+  validateRecipient,
 } from "@/lib/payflow";
 import { mandateStatus } from "@/lib/payflow";
 import { createdAtDate, paymentDateRange, paymentRow, sortPaymentsNewestFirst } from "@/lib/payments";
 import { useWallet } from "@/lib/wallet";
+import { useStream } from "@/lib/stream";
 import {
+  checkAmount,
   formatAmount,
   formatDate,
   formatPeriod,
@@ -42,6 +46,7 @@ import {
   parseAmount,
   parsePauseDate,
   resumeDate,
+  shortAddress,
 } from "@/lib/format";
 import { buildChargeSchedule, chargeShortfall } from "@/lib/schedule";
 import { describeTrialEnd } from "@/lib/trial";
@@ -85,6 +90,17 @@ export default function AccountPage() {
   // Whether the mandate list came from the indexer. Payment history lives only
   // there, so this is what gates the CSV export.
   const [mandatesFromApi, setMandatesFromApi] = useState(false);
+  // Whether the deployed vault contract supports depositing into another
+  // account's vault (payflow-contract#29). null while the probe is in flight.
+  const [fundSupport, setFundSupport] = useState<boolean | null>(null);
+  const [fundRecipient, setFundRecipient] = useState("");
+  const [fundAmount, setFundAmount] = useState("");
+  // The recipient awaiting a second-click confirmation — one at a time.
+  const [fundFor, setFundFor] = useState<string | null>(null);
+
+  // Track who paused each mandate: "subscriber" | "merchant" | undefined
+  // Updated by the SSE stream when available.
+  const [pausedBy, setPausedBy] = useState<Map<number, "subscriber" | "merchant">>(new Map());
 
   // Read inside async callbacks to detect a wallet account switch mid-load:
   // the closure's `address` is the account the request started for, which may
@@ -99,6 +115,14 @@ export default function AccountPage() {
   ]);
   const vaultMeta = metaFor(metas, config.contracts.token);
 
+  /** Whether the recipient address and amount are right to submit right now. */
+  const recipientDisplayError = fundRecipient.trim()
+    ? validateRecipient(fundRecipient)
+    : null;
+  const fundAmountCheck = checkAmount(fundAmount, vaultMeta.decimals);
+  const fundStroops = fundAmountCheck.ok ? fundAmountCheck.stroops : 0n;
+
+  // Load function defined early so it can be referenced by the SSE stream hook
   const load = useCallback(async () => {
     addressRef.current = address;
     if (!address) return;
@@ -144,6 +168,37 @@ export default function AccountPage() {
     }
   }, [address]);
 
+  // SSE stream for live updates (payflow-backend#19)
+  useStream({
+    address,
+    role: "subscriber",
+    onEvent: useCallback((event: StreamEvent) => {
+      if (event.type === "mandate_pause") {
+        setPausedBy((prev) => {
+          const next = new Map(prev);
+          next.set(event.mandate_id, event.by);
+          return next;
+        });
+      }
+      if (event.type === "mandate_status") {
+        setPausedBy((prev) => {
+          const next = new Map(prev);
+          // If status becomes Active, the pause is over
+          if (event.status === "Active") {
+            next.delete(event.mandate_id);
+          }
+          return next;
+        });
+      }
+      // For other events (charge, discount, end), trigger a reload
+      // to get fresh data from the indexer
+      if (event.type === "charge" || event.type === "mandate_discount" || event.type === "mandate_end") {
+        void load();
+      }
+    }, [load]),
+    enabled: api.isConfigured(),
+  });
+
   useEffect(() => {
     // A different account means every previous value belongs to someone else:
     // clear them before the new reads start so no stale row or export survives
@@ -157,6 +212,7 @@ export default function AccountPage() {
     setInfo(null);
     setError(null);
     setDone(null);
+    setExporting(false);
     void load();
   }, [load]);
 
@@ -165,6 +221,25 @@ export default function AccountPage() {
   useEffect(() => {
     setConfirmCancel(null);
     setPauseFor(null);
+    setFundFor(null);
+  }, [address]);
+
+  // Probe whether the deployed vault contract carries deposit_for. The sponsor
+  // control stays hidden until the contract answers: a contract that predates
+  // payflow-contract#29 cannot service the write, so offering it would only
+  // fail at signing time.
+  useEffect(() => {
+    if (!address) {
+      setFundSupport(null);
+      return;
+    }
+    let live = true;
+    void vaultSupportsDepositFor(address).then((supported) => {
+      if (live) setFundSupport(supported);
+    });
+    return () => {
+      live = false;
+    };
   }, [address]);
 
   async function run(key: string, fn: () => Promise<string>) {
@@ -180,6 +255,22 @@ export default function AccountPage() {
     } finally {
       setBusy(null);
     }
+  }
+
+  /** Reveal Keep/Confirm for the sponsor deposit. One recipient at a time. */
+  async function fundAnother() {
+    if (recipientDisplayError || !fundAmountCheck.ok) return;
+    setFundFor(fundRecipient.trim());
+  }
+
+  async function fundConfirmed() {
+    if (!address || !signXdr || !fundFor || !fundAmountCheck.ok) return;
+    await run(`fund-for-${fundFor}`, () =>
+      payflow.depositFor(address, signXdr, fundFor, config.contracts.token, fundStroops),
+    );
+    setFundFor(null);
+    setFundRecipient("");
+    setFundAmount("");
   }
 
   async function handleCancelAll() {
@@ -520,6 +611,94 @@ export default function AccountPage() {
         </div>
       </Panel>
 
+      {fundSupport === true && (
+        <Panel
+          title="Fund another account"
+          subtitle="Send tokens to someone else's vault. Only the recipient can withdraw — you cannot cancel or refund the deposit."
+        >
+          {fundFor ? (
+            <div className="space-y-3">
+              <p className="text-sm">
+                <span className="font-mono truncate">{shortAddress(address)}</span>{" "}
+                pays{" "}
+                <span className="font-medium">{formatAmount(fundStroops, vaultMeta)}</span>{" "}
+                into <span className="font-mono truncate">{shortAddress(fundFor)}</span>{"'s vault"}
+              </p>
+              <p className="mt-1 text-xs text-muted">
+                Only{" "}
+                <span className="font-mono truncate">{shortAddress(fundFor)}</span> can withdraw
+                it — you cannot cancel or refund this deposit.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="btn-primary"
+                  disabled={busy !== null || networkMismatch}
+                  onClick={fundConfirmed}
+                >
+                  {busy === `fund-for-${fundFor}` ? "Funding…" : "Fund"}
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  disabled={busy !== null}
+                  onClick={() => setFundFor(null)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="min-w-[14rem] flex-1">
+                <label className="label" htmlFor="fund-recipient">
+                  Recipient address
+                </label>
+                <input
+                  id="fund-recipient"
+                  className="input"
+                  placeholder="GABC…"
+                  value={fundRecipient}
+                  onChange={(e) => setFundRecipient(e.target.value)}
+                  aria-invalid={Boolean(recipientDisplayError)}
+                  aria-describedby={recipientDisplayError ? "fund-recipient-error" : undefined}
+                  disabled={busy !== null}
+                />
+                {recipientDisplayError && (
+                  <p id="fund-recipient-error" className="mt-1 text-sm text-danger">
+                    {recipientDisplayError}
+                  </p>
+                )}
+              </div>
+              <div className="min-w-[12rem] flex-1">
+                <AmountInput
+                  id="fund-amount"
+                  label={`Amount (${vaultMeta.symbol})`}
+                  value={fundAmount}
+                  onChange={setFundAmount}
+                  decimals={vaultMeta.decimals}
+                  placeholder="5.0"
+                  disabled={busy !== null}
+                />
+              </div>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={
+                  busy !== null ||
+                  networkMismatch ||
+                  Boolean(recipientDisplayError) ||
+                  !fundAmountCheck.ok
+                }
+                onClick={fundAnother}
+              >
+                {busy === "fund-another" ? "Funding…" : "Fund"}
+              </button>
+            </div>
+          )}
+        </Panel>
+      )}
+
       <Panel
         title="Vault history"
         subtitle="Deposits, withdrawals and debits behind your balance."
@@ -727,6 +906,9 @@ export default function AccountPage() {
                           {m.ended_by === "merchant" && (
                             <span className="text-xs text-muted">ended by the merchant</span>
                           )}
+                          {m.status === "Paused" && pausedBy.get(m.id) === "merchant" && (
+                            <span className="text-xs text-muted">paused by the merchant</span>
+                          )}
                         </div>
                         <div className="mt-1 text-sm text-muted">
                           {discounted !== null ? (
@@ -817,23 +999,45 @@ export default function AccountPage() {
 
                     {!terminal && (
                       <div className="flex flex-wrap items-center gap-2">
-                        <button
-                          type="button"
-                          className="btn-ghost"
-                          disabled={busy !== null || networkMismatch}
-                          onClick={() =>
-                            void run(`pause-${m.id}`, () =>
-                              payflow.setPaused(
-                                address,
-                                signXdr,
-                                m.id,
-                                m.status === "Active",
-                              ),
-                            )
-                          }
-                        >
-                          {m.status === "Active" ? "Pause" : "Resume"}
-                        </button>
+                        {/* Subscriber can pause, but cannot resume if paused by merchant */}
+                        {m.status === "Active" && (
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            disabled={busy !== null || networkMismatch}
+                            onClick={() =>
+                              void run(`pause-${m.id}`, () =>
+                                payflow.setPaused(
+                                  address,
+                                  signXdr,
+                                  m.id,
+                                  true,
+                                ),
+                              )
+                            }
+                          >
+                            Pause
+                          </button>
+                        )}
+                        {m.status === "Paused" && pausedBy.get(m.id) !== "merchant" && (
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            disabled={busy !== null || networkMismatch}
+                            onClick={() =>
+                              void run(`pause-${m.id}`, () =>
+                                payflow.setPaused(
+                                  address,
+                                  signXdr,
+                                  m.id,
+                                  false,
+                                ),
+                              )
+                            }
+                          >
+                            Resume
+                          </button>
+                        )}
                         <button
                           type="button"
                           className="btn-ghost"
