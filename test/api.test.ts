@@ -37,6 +37,7 @@ function jsonResponse(body: unknown, status = 200, ok = true): Response {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe("api fail-soft behaviour", () => {
@@ -123,6 +124,41 @@ describe("api.planStats", () => {
     mockFetch(async (url) => {
       expect(String(url)).toContain("/api/plans/5/stats");
       return jsonResponse({ subscriber_count: 12, total_collected: "120000000", cancellations: 2 });
+    });
+
+    describe("api.merchantChurn", () => {
+      it("requests the documented monthly churn endpoint", async () => {
+        let seenUrl = "";
+        mockFetch(async (url, init) => {
+          seenUrl = String(url);
+          expect(init?.cache).toBe("no-store");
+          return jsonResponse({ merchant: "GABC", bucket: "month", buckets: [], totals: {} });
+        });
+
+        await api.merchantChurn("GABC");
+
+        expect(seenUrl).toContain("/api/merchants/GABC/churn?bucket=month");
+      });
+
+      it("returns null without issuing a request when NEXT_PUBLIC_API_URL is empty", async () => {
+        vi.stubEnv("NEXT_PUBLIC_API_URL", "");
+        vi.resetModules();
+        const { api: unconfiguredApi } = await import("@/lib/api");
+        const fetchMock = vi.fn();
+        vi.stubGlobal("fetch", fetchMock);
+
+        expect(unconfiguredApi.isConfigured()).toBe(false);
+        expect(await unconfiguredApi.merchantChurn("GABC")).toBeNull();
+        expect(fetchMock).not.toHaveBeenCalled();
+      });
+
+      it("returns null when the endpoint is unavailable or fails", async () => {
+        mockFetch(async () => jsonResponse({ error: "not found" }, 404, false));
+        expect(await api.merchantChurn("GABC")).toBeNull();
+
+        mockFetch(() => Promise.reject(new Error("ENETUNREACH")));
+        expect(await api.merchantChurn("GABC")).toBeNull();
+      });
     });
     expect(await api.planStats(5)).toEqual({
       subscriber_count: 12,

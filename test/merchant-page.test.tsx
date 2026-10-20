@@ -23,10 +23,12 @@ const wallet = vi.hoisted(() => ({
 }));
 
 const apiMock = vi.hoisted(() => ({
+  isConfigured: vi.fn(() => true),
   plans: vi.fn(),
   mandatesFor: vi.fn(),
   merchantSummary: vi.fn(),
   merchantRevenue: vi.fn(),
+  merchantChurn: vi.fn(),
   planStats: vi.fn(),
 }));
 
@@ -56,10 +58,12 @@ const MERCHANT = "GCH5VHWNS24VI75HLDBHK4SSJ2E5XZA5IB6XEZTNE4BJH7AKZI6Z3MHU";
 beforeEach(() => {
   wallet.address = MERCHANT;
   wallet.networkMismatch = false;
+  apiMock.isConfigured.mockReturnValue(true);
   apiMock.plans.mockResolvedValue({ plans: [] });
   apiMock.mandatesFor.mockResolvedValue({ mandates: [] });
   apiMock.merchantSummary.mockResolvedValue(null);
   apiMock.merchantRevenue.mockResolvedValue(null);
+  apiMock.merchantChurn.mockResolvedValue(null);
   apiMock.planStats.mockResolvedValue(null);
   chainMock.chainPlanSubscriberCount.mockResolvedValue(null);
   payflowMock.feeBps.mockResolvedValue(100); // 1%
@@ -273,6 +277,101 @@ describe("MerchantPage plan stats", () => {
       expect(card.queryByText(/Subscribers/)).toBeNull();
       expect(card.queryByText(/Collected/)).toBeNull();
       expect(card.queryByText(/Cancellations/)).toBeNull();
+    });
+  });
+
+  function churnResponse(merchant = MERCHANT) {
+    return {
+      merchant,
+      bucket: "month",
+      buckets: [
+        { bucket: "2026-10", started: 5, cancelled: 1, ended: 1, completed: 1, net: 2 },
+      ],
+      totals: { started: 5, cancelled: 1, ended: 1, completed: 1, net: 2 },
+    };
+  }
+
+  describe("MerchantChurnPanel", () => {
+    it("shows the required monthly metrics in an accessible table", async () => {
+      apiMock.merchantChurn.mockResolvedValue(churnResponse());
+      render(<MerchantPage />);
+
+      const table = await screen.findByRole("table");
+      expect(within(table).getByRole("columnheader", { name: "Month (UTC)" })).toBeTruthy();
+      expect(within(table).getByRole("columnheader", { name: "Started" })).toBeTruthy();
+      expect(
+        within(table).getByRole("columnheader", { name: "Subscriber cancellations" }),
+      ).toBeTruthy();
+      expect(within(table).getByRole("columnheader", { name: "Merchant-ended" })).toBeTruthy();
+      expect(within(table).getByRole("columnheader", { name: "Completed" })).toBeTruthy();
+      expect(
+        within(table).getByRole("columnheader", { name: "Net subscriber change" }),
+      ).toBeTruthy();
+      expect(within(table).getByRole("rowheader", { name: "2026-10" })).toBeTruthy();
+      expect(within(table).getByText("5")).toBeTruthy();
+      expect(within(table).getAllByText("1")).toHaveLength(3);
+      expect(within(table).getByText("+2 (increase)")).toBeTruthy();
+      expect(apiMock.merchantChurn).toHaveBeenCalledWith(MERCHANT);
+    });
+
+    it("shows loading and empty states", async () => {
+      let resolveChurn!: (body: unknown) => void;
+      apiMock.merchantChurn.mockReturnValue(
+        new Promise((resolve) => {
+          resolveChurn = resolve;
+        }),
+      );
+      render(<MerchantPage />);
+
+      expect(screen.getByText("Loading monthly subscriber activity…")).toBeTruthy();
+      resolveChurn({
+        merchant: MERCHANT,
+        bucket: "month",
+        buckets: [],
+        totals: { started: 0, cancelled: 0, ended: 0, completed: 0, net: 0 },
+      });
+      expect(await screen.findByText("No subscription activity in this report")).toBeTruthy();
+    });
+
+    it("does not retain the previous merchant's metrics after an account switch", async () => {
+      const otherMerchant = "GOTHER";
+      let resolveNext!: (body: unknown) => void;
+      apiMock.merchantChurn
+        .mockResolvedValueOnce(churnResponse())
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              resolveNext = resolve;
+            }),
+        );
+      const { rerender } = render(<MerchantPage />);
+
+      expect(await screen.findByText("2026-10")).toBeTruthy();
+      wallet.address = otherMerchant;
+      rerender(<MerchantPage />);
+
+      await waitFor(() => expect(apiMock.merchantChurn).toHaveBeenLastCalledWith(otherMerchant));
+      expect(screen.queryByText("2026-10")).toBeNull();
+      expect(screen.getByText("Loading monthly subscriber activity…")).toBeTruthy();
+
+      resolveNext({
+        ...churnResponse(otherMerchant),
+        buckets: [{ bucket: "2026-11", started: 7, cancelled: 0, ended: 0, completed: 0, net: 7 }],
+        totals: { started: 7, cancelled: 0, ended: 0, completed: 0, net: 7 },
+      });
+      expect(await screen.findByText("2026-11")).toBeTruthy();
+      expect(screen.queryByText("2026-10")).toBeNull();
+    });
+
+    it("explains unavailable and malformed backend responses", async () => {
+      apiMock.merchantChurn.mockResolvedValue(null);
+      const { unmount } = render(<MerchantPage />);
+      expect(await screen.findByText("Historical churn analytics unavailable")).toBeTruthy();
+
+      unmount();
+      apiMock.merchantChurn.mockResolvedValue({ unexpected: true });
+      render(<MerchantPage />);
+      expect(await screen.findByText(/incomplete or inconsistent churn report/)).toBeTruthy();
     });
   });
 

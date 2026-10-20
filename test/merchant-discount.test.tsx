@@ -28,10 +28,12 @@ const wallet = vi.hoisted(() => ({
 }));
 
 const apiMock = vi.hoisted(() => ({
+  isConfigured: vi.fn(() => true),
   plans: vi.fn(),
   mandatesFor: vi.fn(),
   merchantSummary: vi.fn(),
   merchantRevenue: vi.fn(),
+  merchantChurn: vi.fn(),
 }));
 
 const payflowMock = vi.hoisted(() => ({
@@ -96,10 +98,12 @@ function mandate(overrides: Partial<ApiMandate> = {}): ApiMandate {
 beforeEach(() => {
   wallet.address = MERCHANT;
   wallet.networkMismatch = false;
+  apiMock.isConfigured.mockReturnValue(true);
   apiMock.plans.mockResolvedValue({ plans: [] });
   apiMock.mandatesFor.mockResolvedValue({ mandates: [mandate()] });
   apiMock.merchantSummary.mockResolvedValue(null);
   apiMock.merchantRevenue.mockResolvedValue(null);
+  apiMock.merchantChurn.mockResolvedValue(null);
   payflowMock.feeBps.mockResolvedValue(100);
   payflowMock.vaultBalance.mockResolvedValue(10_000_000n);
   payflowMock.setDiscount.mockResolvedValue("tx-hash");

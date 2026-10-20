@@ -6,6 +6,7 @@ import { api, type ApiMandate, type ApiPlan, type MerchantSummary } from "@/lib/
 import { RevenueChart } from "@/components/RevenueChart";
 import { buildCsv, downloadCsv, exportFilename, type ChargeRow } from "@/lib/csv";
 import { fillBuckets, parseRevenue, type BucketSize, type RevenuePoint } from "@/lib/revenue";
+import { parseMerchantChurn, type MerchantChurnMonth } from "@/lib/churn";
 import { chainMandatesFor, chainMerchantSummary, chainPlanSubscriberCount, chainPlansOf, endable, mandateFunding } from "@/lib/chain";
 import { config } from "@/lib/config";
 import {
@@ -67,6 +68,128 @@ function FeePreview({
       {formatAmount(split.fee, meta)} ({formatFeeBps(feeBps)}) · you receive{" "}
       {formatAmount(split.net, meta)}.
     </span>
+  );
+}
+
+type ChurnPanelState =
+  | { status: "loading" }
+  | { status: "unavailable" }
+  | { status: "error" }
+  | { status: "data"; months: MerchantChurnMonth[] };
+
+function MerchantChurnPanel({
+  merchant,
+  apiConfigured,
+}: {
+  merchant: string;
+  apiConfigured: boolean;
+}) {
+  const [state, setState] = useState<ChurnPanelState>({ status: "loading" });
+
+  useEffect(() => {
+    if (!apiConfigured) {
+      setState({ status: "unavailable" });
+      return;
+    }
+
+    let live = true;
+    setState({ status: "loading" });
+    void api
+      .merchantChurn(merchant)
+      .then((body) => {
+        if (!live) return;
+        if (body === null) {
+          setState({ status: "unavailable" });
+          return;
+        }
+        const months = parseMerchantChurn(body, merchant);
+        setState(months === null ? { status: "error" } : { status: "data", months });
+      })
+      .catch(() => {
+        if (live) setState({ status: "unavailable" });
+      });
+
+    return () => {
+      live = false;
+    };
+  }, [apiConfigured, merchant]);
+
+  if (!apiConfigured) {
+    return (
+      <Notice tone="info">
+        Historical churn analytics require the payflow backend. Configure NEXT_PUBLIC_API_URL
+        to enable this report; contract-only mode does not retain historical lifecycle events.
+      </Notice>
+    );
+  }
+
+  return (
+    <Panel
+      title="Monthly subscriber activity"
+      subtitle="Counts are subscriptions (mandates), bucketed by event time. Net change is started minus subscriber cancellations, merchant endings, and completed subscriptions."
+    >
+      {state.status === "loading" ? (
+        <SkeletonRows rows={2} label="Loading monthly subscriber activity" />
+      ) : state.status === "unavailable" ? (
+        <Empty title="Historical churn analytics unavailable">
+          The payflow backend is not reachable or does not serve this report yet. Contract state
+          cannot reconstruct historical subscription activity.
+        </Empty>
+      ) : state.status === "error" ? (
+        <Notice tone="error">
+          The backend returned an incomplete or inconsistent churn report, so these metrics are
+          hidden rather than shown as misleading counts.
+        </Notice>
+      ) : state.months.length === 0 ? (
+        <Empty title="No subscription activity in this report">
+          No lifecycle events were returned for the reported monthly buckets.
+        </Empty>
+      ) : (
+        <div
+          className="overflow-x-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          role="region"
+          aria-label="Monthly subscriber activity table"
+          tabIndex={0}
+        >
+          <table className="w-full min-w-[760px] text-left text-sm">
+            <caption className="sr-only">
+              Monthly subscription starts, departures, completions, and net change. Completed
+              subscriptions are included in the net calculation.
+            </caption>
+            <thead>
+              <tr className="border-b border-edge text-muted">
+                <th scope="col" className="py-2 pr-3 font-medium">Month (UTC)</th>
+                <th scope="col" className="py-2 pr-3 text-right font-medium">Started</th>
+                <th scope="col" className="py-2 pr-3 text-right font-medium">
+                  Subscriber cancellations
+                </th>
+                <th scope="col" className="py-2 pr-3 text-right font-medium">Merchant-ended</th>
+                <th scope="col" className="py-2 pr-3 text-right font-medium">Completed</th>
+                <th scope="col" className="py-2 text-right font-medium">Net subscriber change</th>
+              </tr>
+            </thead>
+            <tbody>
+              {state.months.map((month) => (
+                <tr key={month.bucket} className="border-b border-edge last:border-0">
+                  <th scope="row" className="py-2 pr-3 font-medium">{month.bucket}</th>
+                  <td className="py-2 pr-3 text-right tabular-nums">{month.started}</td>
+                  <td className="py-2 pr-3 text-right tabular-nums">{month.cancelled}</td>
+                  <td className="py-2 pr-3 text-right tabular-nums">{month.ended}</td>
+                  <td className="py-2 pr-3 text-right tabular-nums">{month.completed}</td>
+                  <td className="py-2 text-right tabular-nums">
+                    {month.net > 0
+                      ? `+${month.net} (increase)`
+                      : month.net < 0
+                        ? `${month.net} (decrease)`
+                        : "0 (no change)"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Panel>
   );
 }
 
@@ -636,6 +759,12 @@ export default function MerchantPage() {
 
   return (
     <div className="space-y-6">
+      <MerchantChurnPanel
+        key={address}
+        merchant={address}
+        apiConfigured={api.isConfigured()}
+      />
+
       <Panel
         title="Revenue over time"
         subtitle={`Net of the protocol fee, over the last ${REVENUE_WINDOW_DAYS} days.`}

@@ -174,6 +174,8 @@ async function get<T>(path: string): Promise<T | null> {
 }
 
 export const api = {
+  /** Whether the backend URL was explicitly supplied for this build. */
+  isConfigured: () => Boolean(process.env.NEXT_PUBLIC_API_URL?.trim()),
   stats: () => get<ProtocolStats>("/api/stats"),
   plans: (merchant?: string) =>
     get<{ plans: ApiPlan[] }>(`/api/plans${merchant ? `?merchant=${merchant}` : ""}`),
@@ -204,6 +206,16 @@ export const api = {
     if (params.to !== undefined) query.set("to", String(params.to));
     const qs = query.toString();
     return get<unknown>(`/api/merchants/${address}/revenue${qs ? `?${qs}` : ""}`);
+  },
+  /**
+   * Monthly mandate lifecycle counts, proposed by payflow-backend#30.
+   *
+   * The endpoint is optional until deployed. An empty API URL must not turn
+   * this into a same-origin request or a contract-only approximation.
+   */
+  merchantChurn: (address: string) => {
+    if (!api.isConfigured()) return Promise.resolve(null);
+    return get<unknown>(`/api/merchants/${address}/churn?bucket=month`);
   },
   due: () => get<{ now: number; due: ApiMandate[] }>("/api/due"),
   /**

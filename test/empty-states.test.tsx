@@ -30,12 +30,14 @@ const wallet = vi.hoisted(() => ({
 }));
 
 const apiMock = vi.hoisted(() => ({
+  isConfigured: vi.fn(() => false),
   plans: vi.fn(),
   mandatesOf: vi.fn(),
   mandatesFor: vi.fn(),
   vaultHistory: vi.fn(),
   merchantSummary: vi.fn(),
   merchantRevenue: vi.fn(),
+  merchantChurn: vi.fn(),
 }));
 
 const chainMock = vi.hoisted(() => ({
@@ -118,6 +120,7 @@ beforeEach(() => {
   wallet.connecting = false;
   wallet.networkMismatch = false;
   wallet.connect.mockReset();
+  apiMock.isConfigured.mockReturnValue(false);
   // Contract-only mode everywhere by default: every api call answers null and
   // the chain fallbacks return nothing.
   apiMock.plans.mockReset().mockResolvedValue(null);
@@ -126,6 +129,7 @@ beforeEach(() => {
   apiMock.vaultHistory.mockReset().mockResolvedValue(null);
   apiMock.merchantSummary.mockReset().mockResolvedValue(null);
   apiMock.merchantRevenue.mockReset().mockResolvedValue(null);
+  apiMock.merchantChurn.mockReset().mockResolvedValue(null);
   chainMock.chainPlans.mockReset().mockResolvedValue([]);
   chainMock.chainPlansOf.mockReset().mockResolvedValue([]);
   chainMock.chainMandatesOf.mockReset().mockResolvedValue([]);
@@ -250,5 +254,17 @@ describe("MerchantPage empty states", () => {
     // The public catalogue link is the way to get that first subscriber.
     const publicLink = screen.getByRole("link", { name: "Open your public page" });
     expect(publicLink.getAttribute("href")).toContain(`/m/?address=${MERCHANT}`);
+  });
+
+  it("explains that historical churn needs the backend when no API URL is configured", async () => {
+    wallet.address = MERCHANT;
+
+    render(<MerchantPage />);
+
+    expect(
+      await screen.findByText(/Historical churn analytics require the payflow backend/),
+    ).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Monthly subscriber activity" })).toBeNull();
+    expect(apiMock.merchantChurn).not.toHaveBeenCalled();
   });
 });
