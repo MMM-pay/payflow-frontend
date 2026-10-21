@@ -8,7 +8,27 @@ import { buildCsv, downloadCsv, exportFilename, type ChargeRow } from "@/lib/csv
 import { fillBuckets, parseRevenue, type BucketSize, type RevenuePoint } from "@/lib/revenue";
 import { parseMerchantChurn, type MerchantChurnMonth } from "@/lib/churn";
 import { chainMandatesFor, chainMerchantSummary, chainPlanSubscriberCount, chainPlansOf, endable, mandateFunding } from "@/lib/chain";
-import { config } from "@/lib/config";
+import { config, type ConfiguredToken } from "@/lib/config";
+import { VirtualList } from "@/components/VirtualList";
+
+const DEFAULT_TOKENS: readonly ConfiguredToken[] = [
+  {
+    id: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    symbol: "XLM",
+    name: "Stellar Lumens",
+    decimals: 7,
+  },
+  {
+    id: "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+    symbol: "USDC",
+    name: "USD Coin",
+    decimals: 6,
+    classicAsset: {
+      code: "USDC",
+      issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+    },
+  },
+];
 import {
   checkDiscountBps,
   checkDiscountCharges,
@@ -33,6 +53,8 @@ import {
 } from "@/lib/format";
 import { metaFor, useTokenMetas } from "@/lib/token";
 import { supportsTrials, trialBadge, TRIAL_OPTIONS } from "@/lib/trial";
+import { countOpenMandates } from "@/lib/plans";
+import { formatUsdEstimate, formatUsdcEstimate, useXlmUsdPrice } from "@/lib/price";
 import { AmountInput } from "@/components/AmountInput";
 import { CopyButton } from "@/components/CopyButton";
 import { AddressLink, Badge, Empty, Notice, Panel, SkeletonRows, Stat, TimeAgo, TxLink } from "@/components/ui";
@@ -59,14 +81,17 @@ function FeePreview({
   split,
   feeBps,
   meta,
+  usdEstimate,
 }: {
   split: FeeSplit;
   feeBps: number;
   meta: TokenMeta;
+  usdEstimate?: string | null;
 }) {
   return (
     <span>
-      Subscriber pays {formatAmount(split.gross, meta)} · protocol fee{" "}
+      Subscriber pays {formatAmount(split.gross, meta)}
+      {usdEstimate ? ` (≈ ${usdEstimate})` : ""} · protocol fee{" "}
       {formatAmount(split.fee, meta)} ({formatFeeBps(feeBps)}) · you receive{" "}
       {formatAmount(split.net, meta)}.
     </span>
@@ -691,6 +716,11 @@ export default function MerchantPage() {
   // Pausing is reversible, so the Pause button asks for a second click
   // when the merchant is pausing (not resuming).
   const [confirmPause, setConfirmPause] = useState<number | null>(null);
+  // Deactivating a plan asks for confirmation and displays open mandate impact.
+  const [confirmDeactivate, setConfirmDeactivate] = useState<number | null>(null);
+  // Embed snippet code view for plan.
+  const [embedFor, setEmbedFor] = useState<number | null>(null);
+  const { priceData: xlmPrice } = useXlmUsdPrice();
   /**
    * The mandate whose discount form is open. One at a time: the form carries
    * two fields, and a page full of them is unreadable.
@@ -728,13 +758,22 @@ export default function MerchantPage() {
   // Updated by the SSE stream when available.
   const [pausedBy, setPausedBy] = useState<Map<number, "subscriber" | "merchant">>(new Map());
 
-  // Plans are published in the configured token; mandates carry their own.
+  const tokens: readonly ConfiguredToken[] =
+    (config as unknown as { tokens?: ConfiguredToken[] }).tokens ?? DEFAULT_TOKENS;
+
+  const [selectedToken, setSelectedToken] = useState(
+    config.contracts.token || tokens[0]?.id || "",
+  );
+
+  // Plans can be published in any configured token; mandates carry their own.
   const metas = useTokenMetas([
     config.contracts.token,
+    selectedToken,
+    ...tokens.map((t) => t.id),
     ...(plans ?? []).map((p) => p.token),
     ...(mandates ?? []).map((m) => m.token ?? config.contracts.token),
   ]);
-  const tokenMeta = metaFor(metas, config.contracts.token);
+  const tokenMeta = metaFor(metas, selectedToken);
 
   // The contract rejects a name over MAX_NAME_LEN bytes, so catch it here
   // rather than letting the user pay for a transaction that will fail.
@@ -1200,6 +1239,24 @@ export default function MerchantPage() {
         subtitle="Price and period are frozen into every mandate opened against this plan. To change them, publish a new plan."
       >
         <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-[8rem] flex-1">
+            <label className="label" htmlFor="plan-token">
+              Token
+            </label>
+            <select
+              id="plan-token"
+              className="input"
+              value={selectedToken}
+              onChange={(e) => setSelectedToken(e.target.value)}
+              disabled={busy !== null}
+            >
+              {tokens.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.symbol} — {t.name}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="min-w-[10rem] flex-1">
             <AmountInput
               id="price"
@@ -1287,7 +1344,7 @@ export default function MerchantPage() {
               if (!priceCheck.ok) return;
               void run("create", () =>
                 payflow.createPlan(address, signXdr, {
-                  token: config.contracts.token,
+                  token: selectedToken,
                   amount: priceCheck.stroops,
                   period,
                   name: name.trim(),
@@ -1311,7 +1368,18 @@ export default function MerchantPage() {
           {showPriceError
             ? priceError
             : (split ? (
-                <FeePreview split={split} feeBps={feeBps ?? 0} meta={tokenMeta} />
+                <FeePreview
+                  split={split}
+                  feeBps={feeBps ?? 0}
+                  meta={tokenMeta}
+                  usdEstimate={
+                    tokenMeta.symbol === "XLM" && xlmPrice
+                      ? formatUsdEstimate(split.gross, xlmPrice.price, xlmPrice.decimals, tokenMeta.decimals)
+                      : tokenMeta.symbol === "USDC"
+                        ? formatUsdcEstimate(split.gross, tokenMeta.decimals)
+                        : null
+                  }
+                />
               ) : null)}
         </p>
       </Panel>
@@ -1346,8 +1414,14 @@ export default function MerchantPage() {
             Subscribers can open a mandate against it as soon as it confirms.
           </Empty>
         ) : (
-          <div className="space-y-3">
-            {plans.map((p) => {
+          <VirtualList
+            items={plans}
+            threshold={100}
+            itemHeight={180}
+            keyExtractor={(p) => p.id}
+            listAriaLabel="Plans"
+            className="space-y-3"
+            renderItem={(p) => {
               const meta = metaFor(metas, p.token);
               const stats = planStats[p.id];
               // stats === undefined → still loading (key absent from the map)
@@ -1358,6 +1432,13 @@ export default function MerchantPage() {
               // from the contract fallback, so the UI hides them rather than
               // show misleading zeros.
               const hasRevenue = stats?.total_collected !== undefined;
+              const openCount = countOpenMandates(p.id, mandates, stats?.subscriber_count);
+              const usdEstimate =
+                meta.symbol === "XLM" && xlmPrice
+                  ? formatUsdEstimate(p.amount, xlmPrice.price, xlmPrice.decimals, meta.decimals)
+                  : meta.symbol === "USDC"
+                    ? formatUsdcEstimate(p.amount, meta.decimals)
+                    : null;
               return (
                 <div
                   key={p.id}
@@ -1375,6 +1456,15 @@ export default function MerchantPage() {
                     </div>
                     <div className="mt-1 text-sm text-muted">
                       {fromStroops(p.amount, 4, meta.decimals)} {meta.symbol}{" "}
+                      {usdEstimate && (
+                        <span
+                          className="tabular-nums"
+                          title="Estimated USD value via Reflector oracle"
+                          aria-label={`Approximately ${usdEstimate} US Dollars`}
+                        >
+                          (≈ {usdEstimate}){" "}
+                        </span>
+                      )}
                       {formatPeriod(p.period)}
                     </div>
                     {/* Per-plan stats: subscriber count always shown when
@@ -1421,22 +1511,102 @@ export default function MerchantPage() {
                       </dl>
                     ) : null}
                   </div>
-                  <button
-                    type="button"
-                    className="btn-ghost"
-                    disabled={busy !== null || networkMismatch}
-                    onClick={() =>
-                      void run(`toggle-${p.id}`, () =>
-                        payflow.setPlanActive(address, signXdr, p.id, p.active !== 1),
-                      )
-                    }
-                  >
-                    {p.active ? "Deactivate" : "Activate"}
-                  </button>
+                  {confirmDeactivate === p.id ? (
+                    <div
+                      className="w-full mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm"
+                      role="alert"
+                      aria-live="polite"
+                    >
+                      <div className="font-medium text-amber-200">
+                        Confirm plan deactivation
+                      </div>
+                      <p className="mt-1 text-xs text-muted">
+                        This plan has{" "}
+                        <strong className="text-foreground font-semibold">
+                          {openCount === 1 ? "1 open subscription" : `${openCount} open subscriptions`}
+                        </strong>
+                        . Existing subscribers will continue to be billed on schedule until their subscriptions are individually ended or cancelled. New subscribers will no longer be able to subscribe to this plan.
+                      </p>
+                      <div className="mt-3 flex items-center gap-2">
+                        <button
+                          type="button"
+                          className="btn-ghost text-xs"
+                          disabled={busy !== null}
+                          onClick={() => setConfirmDeactivate(null)}
+                        >
+                          Keep active
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-primary text-xs"
+                          disabled={busy !== null || networkMismatch}
+                          onClick={() =>
+                            void run(`toggle-${p.id}`, () =>
+                              payflow.setPlanActive(address, signXdr, p.id, false),
+                            ).then(() => setConfirmDeactivate(null))
+                          }
+                        >
+                          {busy === `toggle-${p.id}` ? "Deactivating…" : "Confirm: deactivate"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="btn-ghost text-xs"
+                        onClick={() => setEmbedFor(embedFor === p.id ? null : p.id)}
+                        aria-expanded={embedFor === p.id}
+                        aria-label={`Embed snippet for plan ${p.name || `#${p.id}`}`}
+                      >
+                        {embedFor === p.id ? "Close embed" : "Embed"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        disabled={busy !== null || networkMismatch}
+                        onClick={() => {
+                          if (p.active) {
+                            setConfirmDeactivate(p.id);
+                          } else {
+                            void run(`toggle-${p.id}`, () =>
+                              payflow.setPlanActive(address, signXdr, p.id, true),
+                            );
+                          }
+                        }}
+                      >
+                        {p.active ? "Deactivate" : "Activate"}
+                      </button>
+                    </div>
+                  )}
+                  {embedFor === p.id && (
+                    <div className="w-full mt-3 rounded-lg border border-edge bg-surface/50 p-3 text-xs space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-foreground">Embed on your website</span>
+                        <button
+                          type="button"
+                          className="btn-ghost text-xs py-0.5 px-2"
+                          onClick={() => setEmbedFor(null)}
+                        >
+                          Close
+                        </button>
+                      </div>
+                      <p className="text-muted">
+                        Add this snippet to any HTML website. Subscribers can click it to subscribe in a secure popup window.
+                      </p>
+                      <pre className="overflow-x-auto rounded border border-edge bg-background p-2 font-mono text-[11px] text-muted">
+                        <code>{`<script src="${typeof window !== "undefined" ? window.location.origin : ""}/payflow-frontend/embed/payflow-embed.js" defer></script>\n<payflow-button\n  plan-id="${p.id}"\n  merchant="${address}"\n  name="${p.name || `Plan #${p.id}`}"\n  amount="${fromStroops(p.amount, 4, meta.decimals)} ${meta.symbol}"\n  period="${formatPeriod(p.period)}">\n</payflow-button>`}</code>
+                      </pre>
+                      <CopyButton
+                        value={`<script src="${typeof window !== "undefined" ? window.location.origin : ""}/payflow-frontend/embed/payflow-embed.js" defer></script>\n<payflow-button plan-id="${p.id}" merchant="${address}" name="${p.name || `Plan #${p.id}`}" amount="${fromStroops(p.amount, 4, meta.decimals)} ${meta.symbol}" period="${formatPeriod(p.period)}"></payflow-button>`}
+                        label="embed snippet"
+                      />
+                    </div>
+                  )}
                 </div>
               );
-            })}
-          </div>
+            }}
+          />
         )}
       </Panel>
 
@@ -1478,8 +1648,14 @@ export default function MerchantPage() {
             a glance.
           </Empty>
         ) : (
-          <div className="space-y-3">
-            {mandates.map((m) => {
+          <VirtualList
+            items={mandates}
+            threshold={100}
+            itemHeight={160}
+            keyExtractor={(m) => m.id}
+            listAriaLabel="Subscribers"
+            className="space-y-3"
+            renderItem={(m) => {
               const due = m.status === "Active" && m.next_charge * 1000 <= Date.now();
               const meta = metaFor(metas, m.token ?? config.contracts.token);
               const balance = balances[m.subscriber] ?? null;
@@ -1495,7 +1671,12 @@ export default function MerchantPage() {
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium">#{m.id}</span>
+                        <Link
+                          href={`/mandates/?id=${m.id}`}
+                          className="font-medium hover:underline text-soft focus:outline-none focus:ring-1 focus:ring-accent rounded"
+                        >
+                          #{m.id}
+                        </Link>
                         <AddressLink value={m.subscriber} />
                         <Badge status={m.status} />
                         {badge && (
@@ -1730,8 +1911,8 @@ export default function MerchantPage() {
                   )}
                 </div>
               );
-            })}
-          </div>
+            }}
+          />
         )}
       </Panel>
 
