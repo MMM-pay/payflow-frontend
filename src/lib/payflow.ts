@@ -185,7 +185,10 @@ const ERRORS: Record<string, Record<number, string>> = {
     3: "That plan does not exist.",
     4: "You do not own that plan.",
     5: "Amount must be greater than zero.",
-    6: "Billing period must be at least 60 seconds.",
+    // Shared with the publish form's pre-flight check: a merchant who is told
+    // "at least 60 seconds" by the form and sees the same words if they
+    // somehow reach the simulation is not being given two different rules.
+    6: MIN_PERIOD_MESSAGE,
     7: "That plan name is too long.",
   },
   vault: {

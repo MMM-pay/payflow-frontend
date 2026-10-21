@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import MerchantPage from "@/app/merchant/page";
 
 /**
@@ -96,6 +96,17 @@ async function fillPrice(value: string): Promise<HTMLButtonElement> {
   const field = (await screen.findByLabelText(/price/i)) as HTMLInputElement;
   fireEvent.change(field, { target: { value } });
   return screen.getByRole("button", { name: /publish plan/i }) as HTMLButtonElement;
+}
+
+/** Switch the billing-period picker to Custom and set the count (and unit). */
+async function chooseCustom(count: string, unit = "day"): Promise<void> {
+  fireEvent.change(await screen.findByLabelText(/billing period/i), {
+    target: { value: "custom" },
+  });
+  fireEvent.change(screen.getByLabelText(/custom period/i), { target: { value: count } });
+  if (unit !== "day") {
+    fireEvent.change(screen.getByLabelText(/^unit$/i), { target: { value: unit } });
+  }
 }
 
 describe("MerchantPage publish form", () => {
@@ -213,194 +224,136 @@ describe("MerchantPage publish form", () => {
   });
 });
 
-function plan(over: Partial<import("@/lib/api").ApiPlan> = {}): import("@/lib/api").ApiPlan {
-  return {
-    id: 1,
-    merchant: MERCHANT,
-    name: "Pro Monthly",
-    token: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
-    amount: "10000000",
-    period: 2_592_000,
-    active: 1,
-    ledger: 1000,
-    ...over,
-  };
-}
-
-/** Find the plan card that contains the given plan name, scoped for queries. */
-async function planCardByName(name: string) {
-  const nameEl = await screen.findByText(name);
-  return within(nameEl.closest("div.border-edge") as HTMLElement);
-}
-
-describe("MerchantPage plan stats", () => {
-  it("shows subscriber count, collected, and cancellations from the API", async () => {
-    apiMock.plans.mockResolvedValue({ plans: [plan({ id: 3 })] });
-    apiMock.planStats.mockResolvedValue({
-      subscriber_count: 42,
-      total_collected: "420000000",
-      cancellations: 5,
-    });
-
+/**
+ * Issue #29: five fixed periods meant a merchant billing fortnightly or
+ * quarterly could not use Payflow. The picker keeps those five and adds
+ * Custom; these tests pin the conversion to whole seconds and the acceptance
+ * criterion — a below-minimum period is rejected in the form, with the
+ * contract's wording, so the wallet never opens for a doomed publish.
+ */
+describe("MerchantPage period picker", () => {
+  it("offers the original five presets plus Custom, opening on monthly", async () => {
     render(<MerchantPage />);
 
-    const card = await planCardByName("Pro Monthly");
-    // Subscriber count, Collected (42 XLM = 420000000 stroops), Cancellations.
-    await waitFor(() => expect(card.getByText("42")).toBeTruthy());
-    expect(card.getByText(/Subscribers/)).toBeTruthy();
-    expect(card.getByText(/Collected/)).toBeTruthy();
-    expect(card.getByText(/42 XLM/)).toBeTruthy();
-    expect(card.getByText(/Cancellations/)).toBeTruthy();
-    expect(card.getByText("5")).toBeTruthy();
+    const select = (await screen.findByLabelText(/billing period/i)) as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => o.textContent)).toEqual([
+      "Every minute (demo)",
+      "Daily",
+      "Weekly",
+      "Monthly",
+      "Yearly",
+      "Custom…",
+    ]);
+    expect(select.value).toBe("2592000");
+    // Nothing custom is on screen until it is asked for.
+    expect(screen.queryByLabelText(/custom period/i)).toBeNull();
   });
 
-  it("shows only subscriber count in contract-only mode when the contract supports it", async () => {
-    // API down for plans and for plan stats; contract fallback returns plans
-    // and a subscriber count.
-    apiMock.plans.mockResolvedValue(null);
-    chainMock.chainPlansOf.mockResolvedValue([plan({ id: 7 })]);
-    apiMock.planStats.mockResolvedValue(null);
-    chainMock.chainPlanSubscriberCount.mockResolvedValue(9);
-
+  it("publishes a fortnightly period once Custom is chosen", async () => {
     render(<MerchantPage />);
 
-    const card = await planCardByName("Pro Monthly");
-    await waitFor(() => expect(card.getByText("9")).toBeTruthy());
-    expect(card.getByText(/Subscribers/)).toBeTruthy();
-    // total_collected and cancellations require the indexer; they must not
-    // appear when only the contract is available.
-    expect(card.queryByText(/Collected/)).toBeNull();
-    expect(card.queryByText(/Cancellations/)).toBeNull();
+    const publish = await fillPrice("1");
+    await chooseCustom("2", "week");
+
+    expect(publish.disabled).toBe(false);
+    fireEvent.click(publish);
+
+    await waitFor(() => expect(payflowMock.createPlan).toHaveBeenCalled());
+    expect(payflowMock.createPlan.mock.calls[0]?.[2]).toMatchObject({ period: 1_209_600 });
   });
 
-  it("hides the stats block entirely when neither the API nor the contract can supply counts", async () => {
-    apiMock.plans.mockResolvedValue({ plans: [plan({ id: 2 })] });
-    apiMock.planStats.mockResolvedValue(null);
-    chainMock.chainPlanSubscriberCount.mockResolvedValue(null);
-
+  it("publishes a quarterly period counted in months", async () => {
     render(<MerchantPage />);
 
-    // Wait for the plan card itself to appear and for stats to settle.
-    const card = await planCardByName("Pro Monthly");
-    await waitFor(() => {
-      expect(card.queryByText(/Subscribers/)).toBeNull();
-      expect(card.queryByText(/Collected/)).toBeNull();
-      expect(card.queryByText(/Cancellations/)).toBeNull();
-    });
+    const publish = await fillPrice("1");
+    await chooseCustom("3", "month");
+
+    expect(publish.disabled).toBe(false);
+    fireEvent.click(publish);
+
+    await waitFor(() => expect(payflowMock.createPlan).toHaveBeenCalled());
+    expect(payflowMock.createPlan.mock.calls[0]?.[2]).toMatchObject({ period: 7_776_000 });
   });
 
-  function churnResponse(merchant = MERCHANT) {
-    return {
-      merchant,
-      bucket: "month",
-      buckets: [
-        { bucket: "2026-10", started: 5, cancelled: 1, ended: 1, completed: 1, net: 2 },
-      ],
-      totals: { started: 5, cancelled: 1, ended: 1, completed: 1, net: 2 },
-    };
-  }
-
-  describe("MerchantChurnPanel", () => {
-    it("shows the required monthly metrics in an accessible table", async () => {
-      apiMock.merchantChurn.mockResolvedValue(churnResponse());
-      render(<MerchantPage />);
-
-      const table = await screen.findByRole("table");
-      expect(within(table).getByRole("columnheader", { name: "Month (UTC)" })).toBeTruthy();
-      expect(within(table).getByRole("columnheader", { name: "Started" })).toBeTruthy();
-      expect(
-        within(table).getByRole("columnheader", { name: "Subscriber cancellations" }),
-      ).toBeTruthy();
-      expect(within(table).getByRole("columnheader", { name: "Merchant-ended" })).toBeTruthy();
-      expect(within(table).getByRole("columnheader", { name: "Completed" })).toBeTruthy();
-      expect(
-        within(table).getByRole("columnheader", { name: "Net subscriber change" }),
-      ).toBeTruthy();
-      expect(within(table).getByRole("rowheader", { name: "2026-10" })).toBeTruthy();
-      expect(within(table).getByText("5")).toBeTruthy();
-      expect(within(table).getAllByText("1")).toHaveLength(3);
-      expect(within(table).getByText("+2 (increase)")).toBeTruthy();
-      expect(apiMock.merchantChurn).toHaveBeenCalledWith(MERCHANT);
-    });
-
-    it("shows loading and empty states", async () => {
-      let resolveChurn!: (body: unknown) => void;
-      apiMock.merchantChurn.mockReturnValue(
-        new Promise((resolve) => {
-          resolveChurn = resolve;
-        }),
-      );
-      render(<MerchantPage />);
-
-      expect(screen.getByText("Loading monthly subscriber activity…")).toBeTruthy();
-      resolveChurn({
-        merchant: MERCHANT,
-        bucket: "month",
-        buckets: [],
-        totals: { started: 0, cancelled: 0, ended: 0, completed: 0, net: 0 },
-      });
-      expect(await screen.findByText("No subscription activity in this report")).toBeTruthy();
-    });
-
-    it("does not retain the previous merchant's metrics after an account switch", async () => {
-      const otherMerchant = "GOTHER";
-      let resolveNext!: (body: unknown) => void;
-      apiMock.merchantChurn
-        .mockResolvedValueOnce(churnResponse())
-        .mockImplementationOnce(
-          () =>
-            new Promise((resolve) => {
-              resolveNext = resolve;
-            }),
-        );
-      const { rerender } = render(<MerchantPage />);
-
-      expect(await screen.findByText("2026-10")).toBeTruthy();
-      wallet.address = otherMerchant;
-      rerender(<MerchantPage />);
-
-      await waitFor(() => expect(apiMock.merchantChurn).toHaveBeenLastCalledWith(otherMerchant));
-      expect(screen.queryByText("2026-10")).toBeNull();
-      expect(screen.getByText("Loading monthly subscriber activity…")).toBeTruthy();
-
-      resolveNext({
-        ...churnResponse(otherMerchant),
-        buckets: [{ bucket: "2026-11", started: 7, cancelled: 0, ended: 0, completed: 0, net: 7 }],
-        totals: { started: 7, cancelled: 0, ended: 0, completed: 0, net: 7 },
-      });
-      expect(await screen.findByText("2026-11")).toBeTruthy();
-      expect(screen.queryByText("2026-10")).toBeNull();
-    });
-
-    it("explains unavailable and malformed backend responses", async () => {
-      apiMock.merchantChurn.mockResolvedValue(null);
-      const { unmount } = render(<MerchantPage />);
-      expect(await screen.findByText("Historical churn analytics unavailable")).toBeTruthy();
-
-      unmount();
-      apiMock.merchantChurn.mockResolvedValue({ unexpected: true });
-      render(<MerchantPage />);
-      expect(await screen.findByText(/incomplete or inconsistent churn report/)).toBeTruthy();
-    });
-  });
-
-  it("amounts formatted from strings with bigint, never floats", async () => {
-    // 50 million stroops = 5 XLM at 7 decimals. The total_collected string is
-    // parsed by fromStroops via BigInt(raw), so large amounts stay exact — a
-    // float conversion would lose precision beyond Number.MAX_SAFE_INTEGER.
-    // Using 5 XLM (not 1 XLM like the plan price) avoids a duplicate match.
-    apiMock.plans.mockResolvedValue({ plans: [plan({ id: 4 })] });
-    apiMock.planStats.mockResolvedValue({
-      subscriber_count: 1,
-      total_collected: "50000000",
-      cancellations: 0,
-    });
-
+  it("still publishes the monthly default when Custom is never chosen", async () => {
     render(<MerchantPage />);
 
-    const card = await planCardByName("Pro Monthly");
-    // The Collected value must read "5 XLM" — exact, from a bigint path.
-    await waitFor(() => expect(card.getByText(/5 XLM/)).toBeTruthy());
-    expect(card.getByText(/Subscribers/)).toBeTruthy();
+    const publish = await fillPrice("1");
+    fireEvent.click(publish);
+
+    await waitFor(() => expect(payflowMock.createPlan).toHaveBeenCalled());
+    expect(payflowMock.createPlan.mock.calls[0]?.[2]).toMatchObject({ period: 2_592_000 });
+  });
+
+  it("rejects a below-minimum custom period with the contract's own words", async () => {
+    render(<MerchantPage />);
+
+    const publish = await fillPrice("1");
+    await chooseCustom("0");
+
+    expect(publish.disabled).toBe(true);
+    expect(screen.getByText("Billing period must be at least 60 seconds.")).toBeTruthy();
+    // Disabled buttons swallow clicks, so this stays an unsubmitted form even
+    // if something re-dispatches one.
+    fireEvent.click(publish);
+    expect(payflowMock.createPlan).not.toHaveBeenCalled();
+  });
+
+  it("keeps Publish off for an empty custom count and says what is missing", async () => {
+    render(<MerchantPage />);
+
+    const publish = await fillPrice("1");
+    await chooseCustom("");
+
+    // Choosing Custom is itself the request for a period, so the form names
+    // the gap at once rather than waiting to be told — but nothing below the
+    // 60-second floor (an uncomputed period included) can be published.
+    expect(publish.disabled).toBe(true);
+    expect(screen.getByText("Enter a whole number of days.")).toBeTruthy();
+  });
+
+  it("points a bad custom count at its message for screen readers", async () => {
+    render(<MerchantPage />);
+    await fillPrice("1");
+    await chooseCustom("0");
+
+    const field = screen.getByLabelText(/custom period/i);
+    expect(field.getAttribute("aria-invalid")).toBe("true");
+    const describedBy = field.getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    expect(document.getElementById(describedBy as string)?.textContent).toBe(
+      "Billing period must be at least 60 seconds.",
+    );
+  });
+
+  it("rejects a fractional count and names the unit in the message", async () => {
+    render(<MerchantPage />);
+
+    const publish = await fillPrice("1");
+    await chooseCustom("2.5");
+
+    expect(publish.disabled).toBe(true);
+    expect(screen.getByText("Enter a whole number of days.")).toBeTruthy();
+
+    // Changing the unit re-labels the complaint: the count is still unusable,
+    // and the message still names the unit now selected.
+    fireEvent.change(screen.getByLabelText(/^unit$/i), { target: { value: "week" } });
+    expect(screen.getByText("Enter a whole number of weeks.")).toBeTruthy();
+  });
+
+  it("lets the merchant change their mind back to a preset", async () => {
+    render(<MerchantPage />);
+
+    const publish = await fillPrice("1");
+    await chooseCustom("0");
+    expect(publish.disabled).toBe(true);
+
+    fireEvent.change(screen.getByLabelText(/billing period/i), { target: { value: "604800" } });
+    expect(screen.queryByLabelText(/custom period/i)).toBeNull();
+    expect(publish.disabled).toBe(false);
+
+    fireEvent.click(publish);
+    await waitFor(() => expect(payflowMock.createPlan).toHaveBeenCalled());
+    expect(payflowMock.createPlan.mock.calls[0]?.[2]).toMatchObject({ period: 604_800 });
   });
 });

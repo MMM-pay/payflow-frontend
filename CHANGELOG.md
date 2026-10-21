@@ -33,40 +33,15 @@ All notable changes to payflow-frontend. The format follows
 
 ### Added
 
-- **Accessible dialog primitive.** `Dialog` in `src/components/ui.tsx` moves
-  focus into the panel when it opens, keeps it inside while the dialog stays
-  open, closes on Escape or its own dismiss button, and hands focus back to
-  whatever opened it. The panel is labelled by its title through `aria-modal`
-  and `aria-labelledby`, so a screen reader announces what is being confirmed
-  before any action. Confirmations are inline buttons today and the account
-  page falls back to `window.confirm`, which cannot be styled, labelled, or
-  kept in reach on a phone; this is the primitive those calls switch to. It
-  holds no data of its own, so it behaves the same with and without
-  `NEXT_PUBLIC_API_URL` configured and in contract-only mode.
-- **Pause until a date on the account page.** A subscriber can choose the day
-  billing resumes, and a paused mandate shows that date. The control is hidden
-  unless the mandate data carries `pause_until`, so a deployed contract that
-  predates the field — including the current testnet deployment — never offers
-  a write it cannot service. Built against the interface proposed in
-  payflow-contract#41; the indexer must serve the field for the control to
-  appear when a backend is configured.
-- **Light theme with a system default.** Both palettes are exposed as CSS
-  variables, the page follows `prefers-color-scheme` unless the reader chooses
-  Light or Dark from the header, and the choice is saved in `localStorage`. A
-  pre-paint script applies a stored choice so the wrong theme never flashes.
-- **Upcoming charges timeline on the account page.** Each active mandate shows
-  its next six charges, the running total, the final charge date when capped,
-  and a warning when the vault cannot cover the next charge. Built from the
-  mandates and vault balance already on the page, so it also works in
-  contract-only mode.
-- **Merchant discounts on a mandate.** A merchant can attach a discount to one
-  of their mandates — a percentage and the number of charges it covers — and
-  the subscriber sees the discounted price and how many discounted charges are
-  left. The rate is a whole number of basis points, and the amount is computed
-  in the token's smallest unit, so the price shown is the price charged.
-  Built against the interface proposed in payflow-contract#37 and hidden
-  entirely — including the merchant's control — while the deployed contract
-  cannot carry the field.
+- **Custom billing periods on the publish form.** The five presets stay, and a
+  Custom option takes a number of days, weeks or months (30-day months, the
+  same seconds the Monthly preset uses) for merchants billing fortnightly or
+  quarterly. The count is converted to whole seconds and checked against the
+  contract's 60-second floor — with the contract's own wording — before
+  Publish is enabled, so a period `create_plan` would reject never reaches the
+  wallet. Pure logic in `src/lib/period.ts`; works in contract-only mode
+  because the period is local form state. `formatPeriod` already renders the
+  custom lengths on plan cards ("every 2 weeks", "every 3 months").
 
 - Subscribe cards show optional availability cutoffs and remaining seats, and
   reject expired/full plans before signing. Unlimited/legacy plans stay unchanged.

@@ -25,19 +25,21 @@ import {
 } from "@/lib/format";
 import { metaFor, useTokenMetas } from "@/lib/token";
 import { supportsTrials, trialBadge, TRIAL_OPTIONS } from "@/lib/trial";
+import {
+  CUSTOM_PERIOD,
+  DEFAULT_PERIOD,
+  PERIOD_PRESETS,
+  PERIOD_UNITS,
+  checkCustomPeriod,
+  checkPeriodSeconds,
+  unitLabel,
+  type PeriodCheck,
+} from "@/lib/period";
 import { countOpenMandates } from "@/lib/plans";
 import { formatUsdEstimate, formatUsdcEstimate, useXlmUsdPrice } from "@/lib/price";
 import { AmountInput } from "@/components/AmountInput";
 import { CopyButton } from "@/components/CopyButton";
 import { AddressLink, Badge, Empty, Notice, Panel, SkeletonRows, Stat, TimeAgo, TxLink } from "@/components/ui";
-
-const PERIOD_OPTIONS = [
-  { label: "Every minute (demo)", value: 60 },
-  { label: "Daily", value: 86_400 },
-  { label: "Weekly", value: 604_800 },
-  { label: "Monthly", value: 2_592_000 },
-  { label: "Yearly", value: 31_536_000 },
-];
 
 /** How far back the revenue chart looks, in days. */
 const REVENUE_WINDOW_DAYS = 90;
@@ -687,7 +689,13 @@ export default function MerchantPage() {
   const [name, setName] = useState("");
   const [price, setPrice] = useState("");
   const [priceTouched, setPriceTouched] = useState(false);
-  const [period, setPeriod] = useState(2_592_000);
+  // The period picker's two halves: which preset (or "Custom…"), and — only
+  // when Custom is chosen — how many of which unit. The contract stores
+  // seconds, so a fortnight is entered as "2 weeks" and becomes 1_209_600
+  // here, never as a raw second count the merchant would have to calculate.
+  const [periodPreset, setPeriodPreset] = useState<string>(String(DEFAULT_PERIOD));
+  const [periodCount, setPeriodCount] = useState("");
+  const [periodUnit, setPeriodUnit] = useState("day");
   const [trial, setTrial] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
   // Ending is permanent, so the End button asks for a second click.
@@ -768,6 +776,19 @@ export default function MerchantPage() {
   const showPriceError = priceError !== null && (priceTouched || price.trim() !== "");
   const split = priceCheck.ok ? feeSplit(priceCheck.stroops, feeBps ?? 0) : null;
   const trialSupported = (plans ?? []).some(supportsTrials);
+  // One check covers both halves of the picker: presets go through the same
+  // contract rules as a custom value, so nothing reaches `create_plan` that
+  // the chain would reject — and a custom period can never be published while
+  // its count is empty, unreadable, or below the 60-second floor.
+  const customPeriod = periodPreset === CUSTOM_PERIOD;
+  const periodCheck: PeriodCheck = customPeriod
+    ? checkCustomPeriod(periodCount, periodUnit)
+    : checkPeriodSeconds(Number(periodPreset));
+  // Unlike the price, this message appears the moment Custom is chosen, with
+  // no "wait until touched": that rule exists for a field that is empty the
+  // instant the page loads, while a custom count only exists once the
+  // merchant has asked for one — so the gap is theirs to fill, said plainly.
+  const periodError = periodCheck.ok ? null : periodCheck.message;
 
   const load = useCallback(async () => {
     if (!address) return;
@@ -1283,16 +1304,69 @@ export default function MerchantPage() {
             <select
               id="period"
               className="input"
-              value={period}
-              onChange={(e) => setPeriod(Number(e.target.value))}
+              value={periodPreset}
+              onChange={(e) => setPeriodPreset(e.target.value)}
             >
-              {PERIOD_OPTIONS.map((o) => (
+              {PERIOD_PRESETS.map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}
                 </option>
               ))}
+              <option value={CUSTOM_PERIOD}>Custom…</option>
             </select>
           </div>
+          {customPeriod && (
+            // A sibling of the other fields, not a child of the picker: at
+            // ~375px the picker shares its line with Publish, and a number +
+            // unit pair cannot fit the ~160px the picker is allowed there. On
+            // its own form row the pair keeps its width at every size, and
+            // both controls keep visible labels — a placeholder is not a
+            // label, and it disappears once typing starts.
+            <div className="min-w-[16rem] flex-1">
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="w-28">
+                  <label className="label" htmlFor="period-count">
+                    Custom period
+                  </label>
+                  <input
+                    id="period-count"
+                    className="input"
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    step={1}
+                    placeholder="14"
+                    value={periodCount}
+                    onChange={(e) => setPeriodCount(e.target.value)}
+                    aria-invalid={periodError !== null}
+                    aria-describedby={periodError !== null ? "period-error" : undefined}
+                  />
+                </div>
+                <div className="w-28">
+                  <label className="label" htmlFor="period-unit">
+                    Unit
+                  </label>
+                  <select
+                    id="period-unit"
+                    className="input"
+                    value={periodUnit}
+                    onChange={(e) => setPeriodUnit(e.target.value)}
+                  >
+                    {PERIOD_UNITS.map((u) => (
+                      <option key={u.name} value={u.name}>
+                        {unitLabel(u)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              {periodError && (
+                <p id="period-error" className="mt-2 text-sm text-rose-200">
+                  {periodError}
+                </p>
+              )}
+            </div>
+          )}
           {trialSupported && (
             <div className="min-w-[10rem] flex-1">
               <label className="label" htmlFor="trial">
@@ -1316,7 +1390,9 @@ export default function MerchantPage() {
           <button
             type="button"
             className="btn-primary"
-            disabled={busy !== null || networkMismatch || nameTooLong || !priceCheck.ok}
+            disabled={
+              busy !== null || networkMismatch || nameTooLong || !priceCheck.ok || !periodCheck.ok
+            }
             onClick={() => {
               // Publish the amount the form already parsed rather than reading
               // the field again: a half-typed "1." passes `checkAmount` but
@@ -1328,7 +1404,7 @@ export default function MerchantPage() {
                 return payflow.createPlan(address, signXdr, {
                   token: config.contracts.token,
                   amount: priceCheck.stroops,
-                  period,
+                  period: periodCheck.seconds,
                   name: name.trim(),
                   // Omitted, not zeroed, when unsupported: the deployed
                   // contract's create_plan takes five arguments and a sixth
