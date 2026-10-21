@@ -9,6 +9,7 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 import { config } from "./config";
+import { MIN_PERIOD_MESSAGE } from "./period";
 
 export const server = new rpc.Server(config.rpcUrl, {
   allowHttp: config.rpcUrl.startsWith("http://"),
@@ -123,7 +124,10 @@ const ERRORS: Record<string, Record<number, string>> = {
     3: "That plan does not exist.",
     4: "You do not own that plan.",
     5: "Amount must be greater than zero.",
-    6: "Billing period must be at least 60 seconds.",
+    // Shared with the publish form's pre-flight check: a merchant who is told
+    // "at least 60 seconds" by the form and sees the same words if they
+    // somehow reach the simulation is not being given two different rules.
+    6: MIN_PERIOD_MESSAGE,
     7: "That plan name is too long.",
   },
   vault: {

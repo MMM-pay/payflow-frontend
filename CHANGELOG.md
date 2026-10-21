@@ -15,6 +15,16 @@ All notable changes to payflow-frontend. The format follows
 
 ### Added
 
+- **Custom billing periods on the publish form.** The five presets stay, and a
+  Custom option takes a number of days, weeks or months (30-day months, the
+  same seconds the Monthly preset uses) for merchants billing fortnightly or
+  quarterly. The count is converted to whole seconds and checked against the
+  contract's 60-second floor — with the contract's own wording — before
+  Publish is enabled, so a period `create_plan` would reject never reaches the
+  wallet. Pure logic in `src/lib/period.ts`; works in contract-only mode
+  because the period is local form state. `formatPeriod` already renders the
+  custom lengths on plan cards ("every 2 weeks", "every 3 months").
+
 - Subscribe cards show optional availability cutoffs and remaining seats, and
   reject expired/full plans before signing. Unlimited/legacy plans stay unchanged.
   Built against payflow-contract#26 (`available_until`, Unix seconds; 0 forever)
