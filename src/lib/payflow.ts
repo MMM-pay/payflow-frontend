@@ -673,6 +673,34 @@ export const payflow = {
     return hash;
   },
 
+  /**
+   * Deactivate a page of the merchant's plans in one call.
+   *
+   * Mirrors `deactivate_page` in the plan registry contract: the merchant
+   * specifies a page (start index and limit) and every plan in that page is
+   * set to inactive. The cache entries for those plans are dropped so the next
+   * read reflects the change.
+   */
+  deactivatePage: async (
+    source: string,
+    sign: SignXdr,
+    start: number,
+    limit: number,
+  ) => {
+    const hash = await writeContract(
+      config.contracts.planRegistry,
+      "deactivate_page",
+      source,
+      sign,
+      [arg.address(source), arg.u32(start), arg.u32(limit)],
+    );
+    // The write confirmed; we cannot know exactly which plan IDs were in the
+    // page without re-reading, so the conservative approach is to clear the
+    // entire plan cache. The next read will repopulate it from contract state.
+    clearPlanCache();
+    return hash;
+  },
+
   // --- vault ---
   vaultBalance: (source: string, user: string, token: string) =>
     readContract<bigint>(config.contracts.vault, "balance", source, [
