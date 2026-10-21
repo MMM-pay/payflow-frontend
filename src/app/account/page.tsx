@@ -1141,7 +1141,7 @@ function AccountInner() {
                         )}
                         {mandateSupportsSpendLimit(m) && (
                           <div className="mt-1 text-xs text-accent">
-                            {spendLimitInfo(m)}
+                            {spendLimitInfo()}
                           </div>
                         )}
                         {isPastDue && pastDueShortfall !== null && (
@@ -1378,6 +1378,11 @@ function AccountInner() {
       </Panel>
     </div>
   );
+}
+
+function spendLimitInfo(): string {
+  // Spend limit read requires an RPC call; defer to useEffect later.
+  return "Spend limit: loading";
 }
 
 export default function AccountPage() {
