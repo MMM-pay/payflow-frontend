@@ -384,6 +384,16 @@ export const api = {
   testWebhook: (merchant: string, id: string) =>
     post<{ ok: boolean }>(`/api/merchants/${merchant}/webhooks/${id}/test`, {}),
   /**
+   * Rotate a webhook's signing secret, proposed by payflow-backend#139.
+   *
+   * Returns the new secret, which the merchant must copy immediately — it is
+   * shown once and never returned again. The old secret remains valid for a
+   * brief overlap period so the merchant can update their system without
+   * missing events.
+   */
+  rotateWebhookSecret: (merchant: string, id: string) =>
+    post<{ secret: string }>(`/api/merchants/${merchant}/webhooks/${id}/rotate-secret`, {}),
+  /**
    * Recent charges across the protocol, proposed by payflow-backend#30.
    *
    * Returns null when the backend is unreachable or does not yet serve this
