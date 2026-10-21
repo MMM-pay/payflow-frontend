@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { WalletButton } from "@/components/WalletButton";
+import { Activity } from "@/components/Activity";
 import { NetworkMismatchBanner } from "@/components/ui";
 import {
   APP_VERSION,
@@ -210,6 +211,10 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
           </nav>
         </header>
 
+        <main className="flex-1 space-y-8 py-8">
+          <Activity />
+          {children}
+        </main>
         <main className="flex-1 py-8 print:py-0">{children}</main>
 
         {/*

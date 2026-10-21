@@ -50,6 +50,22 @@ throwing, and the pages fall back to reading contract state directly. **The app
 still works with the backend switched off** — you lose the lists, not the
 ability to pay.
 
+### Wallet activity timeline
+
+When `NEXT_PUBLIC_API_URL` is explicitly configured, the connected-wallet
+activity panel requests each mandate's history from `GET /api/mandates/:id/timeline`.
+
+The proposed frontend contract is `{ "events": [...] }`. Each event must have
+an immutable, non-empty `event_id`, `mandate_id`, one of `subscribed`,
+`charged`, `pause_changed`, `cancelled`, `mandate_ended`, or
+`mandate_completed`, and a positive safe-integer `ledger` sequence. Optional
+`event_index` makes same-ledger ordering deterministic. Amounts and fees are
+decimal strings in the token's smallest unit; `token`, `token_symbol`, and
+`token_decimals` must be supplied to format an amount. If token metadata is
+missing, the UI keeps the raw amount and does not label it as XLM. The
+endpoint is a proposed frontend/backend contract and must be implemented by
+the backend before the feed can return activity.
+
 ## Quick start
 
 ```bash
@@ -78,7 +94,7 @@ reason a deployed frontend keeps calling `localhost`.
 | `NEXT_PUBLIC_VAULT_ID` | Deployed vault contract |
 | `NEXT_PUBLIC_SUBSCRIPTION_ID` | Deployed subscription contract |
 | `NEXT_PUBLIC_TOKEN_ID` | SEP-41 token used for plans (native XLM SAC by default) |
-| `NEXT_PUBLIC_API_URL` | payflow-backend base URL. Empty means read contract state directly |
+| `NEXT_PUBLIC_API_URL` | payflow-backend base URL. Empty means read contract state directly; the wallet activity control is hidden |
 | `NEXT_PUBLIC_READ_SOURCE` | Any existing account, used as the source for read-only simulations before a wallet connects |
 
 ## Deploying to Vercel
