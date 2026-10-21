@@ -1554,7 +1554,12 @@ export default function MerchantPage() {
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium">#{m.id}</span>
+                        <Link
+                          href={`/mandates/?id=${m.id}`}
+                          className="font-medium hover:underline text-soft focus:outline-none focus:ring-1 focus:ring-accent rounded"
+                        >
+                          #{m.id}
+                        </Link>
                         <AddressLink value={m.subscriber} />
                         <Badge status={m.status} />
                         {badge && (

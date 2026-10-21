@@ -70,6 +70,7 @@ import {
   shortAddress,
 } from "@/lib/format";
 import { buildChargeSchedule, chargeShortfall } from "@/lib/schedule";
+import { computeVaultRunway } from "@/lib/runway";
 import { describeTrialEnd } from "@/lib/trial";
 import { loadTokenMeta, metaFor, useTokenMetas } from "@/lib/token";
 import { VirtualList } from "@/components/VirtualList";
@@ -437,6 +438,9 @@ function AccountInner() {
   }
 
   const activeCount = mandates?.filter((m) => m.status === "Active").length ?? 0;
+  const runway = useMemo(() => {
+    return computeVaultRunway(balance, mandates, config.contracts.token);
+  }, [balance, mandates]);
 
   /**
    * Whether the contract behind these mandates can service a dated pause.
@@ -659,7 +663,7 @@ function AccountInner() {
         </div>
       ))}
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-3">
         <Stat
           label="Vault balance"
           loading={balance === null}
@@ -671,7 +675,39 @@ function AccountInner() {
           loading={mandates === null}
           value={activeCount}
         />
+        <Stat
+          label="Runway"
+          loading={runway === null}
+          value={
+            runway
+              ? runway.hasActiveMandates
+                ? `${runway.chargesCovered} ${runway.chargesCovered === 1 ? "charge" : "charges"}`
+                : "No active charges"
+              : "…"
+          }
+          hint={
+            runway && runway.hasActiveMandates
+              ? runway.runsOutDate
+                ? `until ${formatDate(runway.runsOutDate)}`
+                : "fully funded"
+              : "subscriptions billable"
+          }
+        />
       </div>
+
+      {runway?.isLow && runway.hasActiveMandates && (
+        <Notice tone="error">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              <strong>Low vault balance:</strong> Covers only {runway.chargesCovered}{" "}
+              {runway.chargesCovered === 1 ? "upcoming charge" : "upcoming charges"}.{" "}
+              {runway.runsOutDate
+                ? `Funds will run out on ${formatDate(runway.runsOutDate)}.`
+                : "Deposit funds to avoid subscription interruption."}
+            </span>
+          </div>
+        </Notice>
+      )}
 
       {error && <Notice tone="error">{error}</Notice>}
       {info && (
@@ -1020,7 +1056,12 @@ function AccountInner() {
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-medium">Mandate #{m.id}</span>
+                          <Link
+                            href={`/mandates/?id=${m.id}`}
+                            className="font-medium hover:underline text-soft focus:outline-none focus:ring-1 focus:ring-accent rounded"
+                          >
+                            Mandate #{m.id}
+                          </Link>
                           <Badge status={m.status} />
                           {isPastDue && (
                             <span className="rounded-full bg-danger/15 px-2 py-0.5 text-xs font-medium text-danger">
