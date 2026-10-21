@@ -65,7 +65,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
 });
 vi.mock("@/lib/payflow", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/payflow")>();
-  return { payflow: payflowMock, MAX_NAME_LEN: 64, nameByteLength: (n: string) => n.length, mandateSupportsRefund: actual.mandateSupportsRefund, mandateRefundableAmount: actual.mandateRefundableAmount, mandatePauseUntil: actual.mandatePauseUntil };
+  return { payflow: payflowMock, MAX_NAME_LEN: 64, MAX_PAGE: actual.MAX_PAGE, nameByteLength: (n: string) => n.length, mandateSupportsRefund: actual.mandateSupportsRefund, mandateRefundableAmount: actual.mandateRefundableAmount, mandatePauseUntil: actual.mandatePauseUntil };
 });
 vi.mock("@/lib/chain", () => chainMock);
 
@@ -428,6 +428,17 @@ describe("MerchantPage deactivate all plans", () => {
     await screen.findByText("Plan 2");
   }
 
+  /** A promise the test settles explicitly, to assert in-flight UI. */
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+
   it("shows the deactivate all button when there are active plans", async () => {
     setupActivePlans();
     render(<MerchantPage />);
@@ -444,13 +455,15 @@ describe("MerchantPage deactivate all plans", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Deactivate all plans" }));
 
     const dialog = await screen.findByRole("dialog", { name: "Deactivate all active plans" });
-    expect(dialog).toBeTruthy();
-    expect(await screen.findByText(/This will deactivate <strong>2<\/strong> active plans/)).toBeTruthy();
-    expect(await screen.findByText(/Affected open subscriptions: <strong>2<\/strong> mandates/)).toBeTruthy();
+    expect(dialog.textContent).toContain("This will deactivate 2 active plans");
+    expect(dialog.textContent).toContain("Affected open subscriptions: 2 mandates");
   });
 
   it("calls deactivate_page for each page and shows progress", async () => {
     setupActivePlans();
+    const page = deferred<string>();
+    payflowMock.deactivatePage.mockReturnValueOnce(page.promise);
+
     render(<MerchantPage />);
 
     await waitForPlans();
@@ -459,17 +472,21 @@ describe("MerchantPage deactivate all plans", () => {
     await screen.findByRole("dialog", { name: "Deactivate all active plans" });
     fireEvent.click(screen.getByRole("button", { name: "Confirm: deactivate all" }));
 
-    // Wait for the first page call
-    await waitFor(() => expect(payflowMock.deactivatePage).toHaveBeenCalledWith(MERCHANT, wallet.signXdr, 0, 3));
-    expect(await screen.findByText(/Deactivating… \(1\/1 pages\)/)).toBeTruthy();
+    // The call is in flight: the dialog shows the first page in progress.
+    await waitFor(() =>
+      expect(payflowMock.deactivatePage).toHaveBeenCalledWith(MERCHANT, wallet.signXdr, 0, 3),
+    );
+    expect(screen.getByRole("button", { name: /Deactivating… \(0\/1 pages\)/ })).toBeTruthy();
 
-    // Wait for completion
-    await waitFor(() => expect(screen.getByText(/All active plans deactivated/)).toBeTruthy());
+    page.resolve("tx-hash");
+    await waitFor(() => expect(screen.getByText("All active plans deactivated.")).toBeTruthy());
     expect(payflowMock.deactivatePage).toHaveBeenCalledTimes(1);
   });
 
   it("pages through multiple pages when plan count exceeds MAX_PAGE", async () => {
     // 60 plans = 2 pages (MAX_PAGE=50)
+    setupActivePlans();
+    // Override with 60 active plans
     apiMock.plans.mockResolvedValue({
       plans: Array.from({ length: 60 }, (_, i) => ({
         id: i + 1,
@@ -483,7 +500,6 @@ describe("MerchantPage deactivate all plans", () => {
       })),
     });
     apiMock.mandatesFor.mockResolvedValue({ mandates: [] });
-    chainMock.chainPlanSubscriberCount.mockResolvedValue(null);
     chainMock.chainMerchantSummary.mockReturnValue({
       merchant: MERCHANT,
       activeMandates: 0,
@@ -491,29 +507,35 @@ describe("MerchantPage deactivate all plans", () => {
       chargeCount: 0,
       mrr: "0",
     });
-    payflowMock.feeBps.mockResolvedValue(100);
     payflowMock.merchantPlanCount.mockResolvedValue(60);
-    payflowMock.deactivatePage.mockResolvedValue("tx-hash");
+    const first = deferred<string>();
+    const second = deferred<string>();
+    payflowMock.deactivatePage.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
 
     render(<MerchantPage />);
 
-    await screen.findByText("Plan 1");
-    await screen.findByText("Plan 50");
-    fireEvent.click(await screen.findByRole("button", { name: "Deactivate all plans" }));
+    await screen.findByRole("button", { name: "Deactivate all plans" });
+    fireEvent.click(screen.getByRole("button", { name: "Deactivate all plans" }));
 
     await screen.findByRole("dialog", { name: "Deactivate all active plans" });
     fireEvent.click(screen.getByRole("button", { name: "Confirm: deactivate all" }));
 
-    // First page
-    await waitFor(() => expect(payflowMock.deactivatePage).toHaveBeenCalledWith(MERCHANT, wallet.signXdr, 0, 50));
-    expect(await screen.findByText(/Deactivating… \(1\/2 pages\)/)).toBeTruthy();
+    // First page, 50 plans, still in flight.
+    await waitFor(() =>
+      expect(payflowMock.deactivatePage).toHaveBeenCalledWith(MERCHANT, wallet.signXdr, 0, 50),
+    );
+    expect(screen.getByRole("button", { name: /Deactivating… \(0\/2 pages\)/ })).toBeTruthy();
 
-    // Second page
-    await waitFor(() => expect(payflowMock.deactivatePage).toHaveBeenCalledWith(MERCHANT, wallet.signXdr, 50, 10));
-    expect(await screen.findByText(/Deactivating… \(2\/2 pages\)/)).toBeTruthy();
+    // Second page, the remaining 10 plans.
+    first.resolve("tx-hash");
+    await waitFor(() =>
+      expect(payflowMock.deactivatePage).toHaveBeenCalledWith(MERCHANT, wallet.signXdr, 50, 10),
+    );
+    expect(screen.getByRole("button", { name: /Deactivating… \(1\/2 pages\)/ })).toBeTruthy();
 
-    // Completion
-    await waitFor(() => expect(screen.getByText(/All active plans deactivated/)).toBeTruthy());
+    // Completion.
+    second.resolve("tx-hash");
+    await waitFor(() => expect(screen.getByText("All active plans deactivated.")).toBeTruthy());
     expect(payflowMock.deactivatePage).toHaveBeenCalledTimes(2);
   });
 
@@ -541,18 +563,20 @@ describe("MerchantPage deactivate all plans", () => {
     expect(screen.queryByRole("button", { name: "Deactivate all plans" })).toBeNull();
   });
 
-  it("disables the button when network mismatch", async () => {
+  it("hides the button when network mismatch", async () => {
     setupActivePlans();
     wallet.networkMismatch = true;
     render(<MerchantPage />);
 
     await waitForPlans();
-    const button = await screen.findByRole("button", { name: "Deactivate all plans" });
-    expect(button.disabled).toBe(true);
+    // Button should not render at all when network mismatch
+    expect(screen.queryByRole("button", { name: "Deactivate all plans" })).toBeNull();
   });
 
-  it("disables the button when busy", async () => {
+  it("hides the button while busy (after confirmation)", async () => {
     setupActivePlans();
+    const page = deferred<string>();
+    payflowMock.deactivatePage.mockReturnValueOnce(page.promise);
     render(<MerchantPage />);
 
     await waitForPlans();
@@ -561,9 +585,14 @@ describe("MerchantPage deactivate all plans", () => {
     await screen.findByRole("dialog", { name: "Deactivate all active plans" });
     fireEvent.click(screen.getByRole("button", { name: "Confirm: deactivate all" }));
 
-    // Button should be disabled while busy
-    const confirmButton = screen.getByRole("button", { name: /Deactivating…/ });
+    // While a run is in flight the panel button cannot re-open the dialog.
+    await waitFor(() => expect(payflowMock.deactivatePage).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: "Deactivate all plans" })).toBeNull();
+    const confirmButton = screen.getByRole("button", { name: /Deactivating…/ }) as HTMLButtonElement;
     expect(confirmButton.disabled).toBe(true);
+
+    page.resolve("tx-hash");
+    await waitFor(() => expect(screen.getByText("All active plans deactivated.")).toBeTruthy());
   });
 
   it("shows error when deactivate_page fails", async () => {
@@ -579,6 +608,6 @@ describe("MerchantPage deactivate all plans", () => {
     fireEvent.click(screen.getByRole("button", { name: "Confirm: deactivate all" }));
 
     await waitFor(() => expect(screen.getByText("RPC error")).toBeTruthy());
-    expect(screen.getByText("All active plans deactivated.")).toBeFalsy();
+    expect(screen.queryByText("All active plans deactivated.")).toBeNull();
   });
 });

@@ -784,6 +784,8 @@ export default function MerchantPage() {
   // Bulk deactivation of all active plans: confirmation dialog with progress.
   const [confirmDeactivateAll, setConfirmDeactivateAll] = useState(false);
   const [deactivateAllProgress, setDeactivateAllProgress] = useState<{ current: number; total: number } | null>(null);
+  // Set once the bulk run finishes; cleared when the merchant starts another.
+  const [deactivateAllDone, setDeactivateAllDone] = useState(false);
   // Embed snippet code view for plan.
   const [embedFor, setEmbedFor] = useState<number | null>(null);
   const { priceData: xlmPrice } = useXlmUsdPrice();
@@ -1239,6 +1241,8 @@ export default function MerchantPage() {
     let completedPages = 0;
 
     setDeactivateAllProgress({ current: 0, total: totalPages });
+    setDeactivateAllDone(false);
+    setError(null);
 
     try {
       // Page through from the oldest (start=0) to newest, MAX_PAGE at a time.
@@ -1249,7 +1253,7 @@ export default function MerchantPage() {
         completedPages += 1;
         setDeactivateAllProgress({ current: completedPages, total: totalPages });
       }
-      setDone("All active plans deactivated.");
+      setDeactivateAllDone(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -1360,6 +1364,9 @@ export default function MerchantPage() {
       </div>
 
       {error && <Notice tone="error">{error}</Notice>}
+      {deactivateAllDone && (
+        <Notice tone="ok">All active plans deactivated.</Notice>
+      )}
       {done && (
         <Notice tone="ok">
           Done. Transaction <TxLink hash={done} />
@@ -1588,12 +1595,11 @@ export default function MerchantPage() {
               </Link>
               <CopyButton value={publicUrl} label="public page link" />
             </div>
-            {(plans ?? []).some((p) => p.active) && !busy && !networkMismatch && (
+            {(plans ?? []).some((p) => p.active) && !busy && !networkMismatch && deactivateAllProgress === null && (
               <button
                 type="button"
                 className="btn-ghost text-danger whitespace-nowrap"
                 onClick={() => setConfirmDeactivateAll(true)}
-                aria-label="Deactivate all active plans"
               >
                 Deactivate all plans
               </button>
