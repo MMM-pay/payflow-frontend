@@ -96,3 +96,11 @@ body {
     @apply font-mono text-[13px];
   }
 }
+
+@media print {
+  body {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+  }
+}
+

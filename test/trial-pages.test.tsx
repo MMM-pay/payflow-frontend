@@ -25,11 +25,18 @@ const wallet = vi.hoisted(() => ({
 }));
 
 const apiMock = vi.hoisted(() => ({
+  isConfigured: vi.fn(() => true),
   plans: vi.fn(),
   mandatesFor: vi.fn(),
   merchantSummary: vi.fn(),
   merchantRevenue: vi.fn(),
+  merchantChurn: vi.fn(),
   planStats: vi.fn(),
+  stream: vi.fn(),
+  webhooks: vi.fn(),
+  addWebhook: vi.fn(),
+  deleteWebhook: vi.fn(),
+  testWebhook: vi.fn(),
 }));
 const payflowMock = vi.hoisted(() => ({
   feeBps: vi.fn(),
@@ -49,7 +56,10 @@ const chainMock = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/wallet", () => ({ useWallet: () => wallet }));
-vi.mock("@/lib/api", () => ({ api: apiMock }));
+vi.mock("@/lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api")>();
+  return { api: apiMock, checkWebhookUrl: actual.checkWebhookUrl };
+});
 vi.mock("@/lib/payflow", () => ({
   payflow: payflowMock,
   MAX_NAME_LEN: 64,
@@ -78,12 +88,15 @@ function plan(over: Partial<ApiPlan> = {}): ApiPlan {
 beforeEach(() => {
   wallet.address = SUBSCRIBER;
   wallet.networkMismatch = false;
+  apiMock.isConfigured.mockReturnValue(true);
   payflowMock.feeBps.mockResolvedValue(100);
   payflowMock.createPlan.mockResolvedValue("tx-hash");
   apiMock.merchantSummary.mockResolvedValue(null);
   apiMock.merchantRevenue.mockResolvedValue(null);
+  apiMock.merchantChurn.mockResolvedValue(null);
   apiMock.mandatesFor.mockResolvedValue({ mandates: [] });
   apiMock.planStats.mockResolvedValue(null);
+  apiMock.webhooks.mockResolvedValue([]);
   chainMock.chainPlanSubscriberCount.mockResolvedValue(null);
   chainMock.chainMerchantSummary.mockReturnValue({
     merchant: MERCHANT,

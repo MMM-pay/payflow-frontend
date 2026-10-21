@@ -140,6 +140,10 @@ async function newestIds(
  * The registry has no "list all" function (that is the gap the indexer fills),
  * but ids are sequential and `next_plan_id` says where they end, so this reads
  * the newest few. Bounded deliberately: an unbounded read would hammer RPC.
+ *
+ * Each record comes from `payflow.getPlan`, which caches it for the session, so
+ * a second visit re-reads only `next_plan_id` — the one value that a newly
+ * published plan changes.
  */
 export async function chainPlans(source: string): Promise<ApiPlan[]> {
   const { payflow } = await import("./payflow");
@@ -202,6 +206,31 @@ export async function chainMandatesFor(
   const ids = await newestIds(count, (s, l) => payflow.merchantMandates(source, merchant, s, l));
   const mandates = await settledValues(ids.map((id) => payflow.getMandate(source, id)));
   return mandates.map(mandateToApi).sort((a, b) => b.id - a.id);
+}
+
+/**
+ * Read a single mandate from contract state.
+ */
+export async function chainMandate(
+  source: string,
+  mandateId: number,
+): Promise<ApiMandate | null> {
+  try {
+    const raw = await payflow.getMandate(source, mandateId);
+    if (!raw) return null;
+    return mandateToApi(raw);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reads protocol counters directly from contract state when the indexer is offline.
+ * Only returns what contract state can determine (plans count from next_plan_id).
+ */
+export async function chainProtocolStats(source: string): Promise<{ plans: number }> {
+  const next = Number(await payflow.nextPlanId(source));
+  return { plans: Math.max(0, next - 1) };
 }
 
 /** A merchant can end a mandate that could still be charged. */

@@ -1,7 +1,10 @@
 import {
   Address,
+  Asset,
   BASE_FEE,
   Contract,
+  Operation,
+  StrKey,
   TransactionBuilder,
   nativeToScVal,
   scValToNative,
@@ -79,17 +82,19 @@ export async function readContract<T>(
       return scValToNative(sim.result.retval) as T;
     } catch (err) {
       lastError = err;
-      // Release semaphore before checking retry or throwing
-      readSemaphore.release();
-
       const isLastAttempt = attempt === maxAttempts - 1;
       if (isLastAttempt || !isRetryableError(err)) {
         throw err;
       }
-      // Wait before retrying
-      await new Promise((r) => setTimeout(r, backoffDelay(attempt)));
-      // Loop continues, will re-acquire semaphore
+    } finally {
+      // Every acquire must be released, including the successful path: a
+      // returned value used to keep its permit, so the seventh read waited
+      // forever. Releasing here also frees the permit during the backoff
+      // sleep below, which a failed read no longer holds.
+      readSemaphore.release();
     }
+    // Wait before retrying, then re-acquire for the next attempt.
+    await new Promise((r) => setTimeout(r, backoffDelay(attempt)));
   }
 
   // Should never reach here, but TypeScript needs it
@@ -138,7 +143,14 @@ export async function writeContract(
     throw new Error(decodeContractError(err, method));
   }
 
-  const signedXdr = await signXdr(prepared.toXDR());
+  let signedXdr: string;
+  try {
+    signedXdr = await signXdr(prepared.toXDR());
+  } catch (err) {
+    // A declined prompt must not look like a failed payment. Wallets that
+    // throw their own text are rewritten; every other failure is unchanged.
+    translateSignatureError(err);
+  }
   const signed = TransactionBuilder.fromXDR(signedXdr, config.networkPassphrase);
 
   const sent = await server.sendTransaction(signed);
@@ -216,6 +228,7 @@ const VAULT_METHODS = new Set(["deposit", "withdraw", "debit", "balance"]);
  * reason their payment failed, which is a correctness bug rather than copy.
  */
 export function decodeContractError(error: unknown, method: string): string {
+  if (isSignatureRejection(error)) return SIGNATURE_CANCELLED_MESSAGE;
   const text =
     typeof error === "string" ? error : ((error as Error)?.message ?? String(error));
   const match = /Error\(Contract, #(\d+)\)/.exec(text);
@@ -255,10 +268,15 @@ export const payflow = {
   planSubscriberCount: (source: string, planId: number | bigint) =>
     readContract<number>(config.contracts.subscription, "plan_subscriber_count", source, [arg.u64(planId)]),
   // --- plan registry ---
-  getPlan: (source: string, planId: number | bigint) =>
-    readContract<Plan>(config.contracts.planRegistry, "get_plan", source, [
-      arg.u64(planId),
-    ]),
+  getPlan: async (source: string, planId: number | bigint) => {
+    const hit = cachedPlan(planId);
+    if (hit) return hit;
+    return rememberPlan(
+      await readContract<Plan>(config.contracts.planRegistry, "get_plan", source, [
+        arg.u64(planId),
+      ]),
+    );
+  },
 
   createPlan: (
     source: string,
@@ -284,17 +302,24 @@ export const payflow = {
       ],
     ),
 
-  setPlanActive: (
+  setPlanActive: async (
     source: string,
     sign: SignXdr,
     planId: number | bigint,
     active: boolean,
-  ) =>
-    writeContract(config.contracts.planRegistry, "set_plan_active", source, sign, [
-      arg.address(source),
-      arg.u64(planId),
-      arg.bool(active),
-    ]),
+  ) => {
+    const hash = await writeContract(
+      config.contracts.planRegistry,
+      "set_plan_active",
+      source,
+      sign,
+      [arg.address(source), arg.u64(planId), arg.bool(active)],
+    );
+    // `writeContract` polls until the transaction is confirmed, so the cached
+    // record is now the only stale copy of this plan.
+    forgetPlan(planId);
+    return hash;
+  },
 
   // --- vault ---
   vaultBalance: (source: string, user: string, token: string) =>
@@ -313,6 +338,25 @@ export const payflow = {
   withdraw: (source: string, sign: SignXdr, token: string, amount: bigint) =>
     writeContract(config.contracts.vault, "withdraw", source, sign, [
       arg.address(source),
+      arg.address(token),
+      arg.i128(amount),
+    ]),
+
+  /**
+   * Sponsor another account's vault: the caller's tokens are credited to the
+   * recipient's vault balance, and only the recipient can withdraw.
+   *
+   * Built against the interface proposed in payflow-contract#29:
+   * `deposit_for(recipient: Address, token: Address, amount: i128)`. The
+   * caller is the transaction's source account and is not passed as an
+   * argument — it authorizes the payment by signing the transaction.
+   *
+   * Only call this when `vaultSupportsDepositFor` confirms the deployed
+   * contract carries the method.
+   */
+  depositFor: (source: string, sign: SignXdr, recipient: string, token: string, amount: bigint) =>
+    writeContract(config.contracts.vault, "deposit_for", source, sign, [
+      arg.address(recipient),
       arg.address(token),
       arg.i128(amount),
     ]),
@@ -486,4 +530,90 @@ export const payflow = {
       arg.u64(mandateId),
       arg.i128(amount),
     ]),
+
+  /** Check if an account has established a trustline on Horizon */
+  checkTrustline: (
+    address: string,
+    assetCode: string,
+    assetIssuer?: string,
+    horizonUrl: string = config.horizonUrl,
+  ) => checkTrustline(address, assetCode, assetIssuer, horizonUrl),
+
+  /** Establish a trustline for a classic Stellar asset via ChangeTrust */
+  addTrustline: (
+    source: string,
+    sign: SignXdr,
+    assetCode: string,
+    assetIssuer: string,
+  ) => addTrustline(source, sign, assetCode, assetIssuer),
 };
+
+/**
+ * Checks whether an account has an established trustline for a classic asset on Horizon.
+ * Returns true if the account holds or has a trustline for the specified asset.
+ */
+export async function checkTrustline(
+  address: string,
+  assetCode: string,
+  assetIssuer?: string,
+  horizonUrl: string = config.horizonUrl,
+): Promise<boolean> {
+  if (!address || !assetCode || !horizonUrl) return true;
+  try {
+    const res = await fetch(`${horizonUrl}/accounts/${address}`, { cache: "no-store" });
+    if (!res.ok) return false;
+    const data = (await res.json()) as {
+      balances?: Array<{ asset_type: string; asset_code?: string; asset_issuer?: string }>;
+    };
+    if (!data.balances) return false;
+    return data.balances.some(
+      (b) =>
+        b.asset_code === assetCode &&
+        (!assetIssuer || b.asset_issuer === assetIssuer),
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Builds and submits a ChangeTrust operation to establish a trustline for a classic asset.
+ */
+export async function addTrustline(
+  source: string,
+  sign: SignXdr,
+  assetCode: string,
+  assetIssuer: string,
+): Promise<string> {
+  const account = await server.getAccount(source);
+  const tx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: config.networkPassphrase,
+  })
+    .addOperation(
+      Operation.changeTrust({
+        asset: new Asset(assetCode, assetIssuer),
+      }),
+    )
+    .setTimeout(30)
+    .build();
+
+  let signedXdr: string;
+  try {
+    signedXdr = await sign(tx.toXDR());
+  } catch (err) {
+    translateSignatureError(err);
+    throw err;
+  }
+
+  const signed = TransactionBuilder.fromXDR(signedXdr, config.networkPassphrase);
+  const sent = await server.sendTransaction(signed);
+  if (sent.status === "ERROR") {
+    throw new Error(`changeTrust rejected: ${JSON.stringify(sent.errorResult)}`);
+  }
+  const confirmed = await pollTransaction(sent.hash);
+  if (confirmed.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
+    throw new Error(`changeTrust failed on-chain (${confirmed.status})`);
+  }
+  return sent.hash;
+}

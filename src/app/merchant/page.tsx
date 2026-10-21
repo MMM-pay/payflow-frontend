@@ -2,18 +2,21 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { api, type ApiMandate, type ApiPlan, type MerchantSummary } from "@/lib/api";
+import { api, checkWebhookUrl, type ApiMandate, type ApiPlan, type ApiWebhook, type MerchantSummary, type StreamEvent } from "@/lib/api";
 import { RevenueChart } from "@/components/RevenueChart";
 import { buildCsv, downloadCsv, exportFilename, type ChargeRow } from "@/lib/csv";
 import { fillBuckets, parseRevenue, type BucketSize, type RevenuePoint } from "@/lib/revenue";
+import { parseMerchantChurn, type MerchantChurnMonth } from "@/lib/churn";
 import { chainMandatesFor, chainMerchantSummary, chainPlanSubscriberCount, chainPlansOf, endable, mandateFunding } from "@/lib/chain";
 import { config } from "@/lib/config";
 import { MAX_NAME_LEN, nameByteLength } from "@/lib/payflow-core";
 import { useWallet } from "@/lib/wallet";
+import { useStream } from "@/lib/stream";
 import {
   checkAmount,
   feeSplit,
   formatAmount,
+  formatDate,
   formatFeeBps,
   formatPeriod,
   fromStroops,
@@ -22,6 +25,8 @@ import {
 } from "@/lib/format";
 import { metaFor, useTokenMetas } from "@/lib/token";
 import { supportsTrials, trialBadge, TRIAL_OPTIONS } from "@/lib/trial";
+import { countOpenMandates } from "@/lib/plans";
+import { formatUsdEstimate, formatUsdcEstimate, useXlmUsdPrice } from "@/lib/price";
 import { AmountInput } from "@/components/AmountInput";
 import { CopyButton } from "@/components/CopyButton";
 import { AddressLink, Badge, Empty, Notice, Panel, SkeletonRows, Stat, TimeAgo, TxLink } from "@/components/ui";
@@ -55,17 +60,410 @@ function FeePreview({
   split,
   feeBps,
   meta,
+  usdEstimate,
 }: {
   split: FeeSplit;
   feeBps: number;
   meta: TokenMeta;
+  usdEstimate?: string | null;
 }) {
   return (
     <span>
-      Subscriber pays {formatAmount(split.gross, meta)} · protocol fee{" "}
+      Subscriber pays {formatAmount(split.gross, meta)}
+      {usdEstimate ? ` (≈ ${usdEstimate})` : ""} · protocol fee{" "}
       {formatAmount(split.fee, meta)} ({formatFeeBps(feeBps)}) · you receive{" "}
       {formatAmount(split.net, meta)}.
     </span>
+  );
+}
+
+type ChurnPanelState =
+  | { status: "loading" }
+  | { status: "unavailable" }
+  | { status: "error" }
+  | { status: "data"; months: MerchantChurnMonth[] };
+
+function MerchantChurnPanel({
+  merchant,
+  apiConfigured,
+}: {
+  merchant: string;
+  apiConfigured: boolean;
+}) {
+  const [state, setState] = useState<ChurnPanelState>({ status: "loading" });
+
+  useEffect(() => {
+    if (!apiConfigured) {
+      setState({ status: "unavailable" });
+      return;
+    }
+
+    let live = true;
+    setState({ status: "loading" });
+    void api
+      .merchantChurn(merchant)
+      .then((body) => {
+        if (!live) return;
+        if (body === null) {
+          setState({ status: "unavailable" });
+          return;
+        }
+        const months = parseMerchantChurn(body, merchant);
+        setState(months === null ? { status: "error" } : { status: "data", months });
+      })
+      .catch(() => {
+        if (live) setState({ status: "unavailable" });
+      });
+
+    return () => {
+      live = false;
+    };
+  }, [apiConfigured, merchant]);
+
+  if (!apiConfigured) {
+    return (
+      <Notice tone="info">
+        Historical churn analytics require the payflow backend. Configure NEXT_PUBLIC_API_URL
+        to enable this report; contract-only mode does not retain historical lifecycle events.
+      </Notice>
+    );
+  }
+
+  return (
+    <Panel
+      title="Monthly subscriber activity"
+      subtitle="Counts are subscriptions (mandates), bucketed by event time. Net change is started minus subscriber cancellations, merchant endings, and completed subscriptions."
+    >
+      {state.status === "loading" ? (
+        <SkeletonRows rows={2} label="Loading monthly subscriber activity" />
+      ) : state.status === "unavailable" ? (
+        <Empty title="Historical churn analytics unavailable">
+          The payflow backend is not reachable or does not serve this report yet. Contract state
+          cannot reconstruct historical subscription activity.
+        </Empty>
+      ) : state.status === "error" ? (
+        <Notice tone="error">
+          The backend returned an incomplete or inconsistent churn report, so these metrics are
+          hidden rather than shown as misleading counts.
+        </Notice>
+      ) : state.months.length === 0 ? (
+        <Empty title="No subscription activity in this report">
+          No lifecycle events were returned for the reported monthly buckets.
+        </Empty>
+      ) : (
+        <div
+          className="overflow-x-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          role="region"
+          aria-label="Monthly subscriber activity table"
+          tabIndex={0}
+        >
+          <table className="w-full min-w-[760px] text-left text-sm">
+            <caption className="sr-only">
+              Monthly subscription starts, departures, completions, and net change. Completed
+              subscriptions are included in the net calculation.
+            </caption>
+            <thead>
+              <tr className="border-b border-edge text-muted">
+                <th scope="col" className="py-2 pr-3 font-medium">Month (UTC)</th>
+                <th scope="col" className="py-2 pr-3 text-right font-medium">Started</th>
+                <th scope="col" className="py-2 pr-3 text-right font-medium">
+                  Subscriber cancellations
+                </th>
+                <th scope="col" className="py-2 pr-3 text-right font-medium">Merchant-ended</th>
+                <th scope="col" className="py-2 pr-3 text-right font-medium">Completed</th>
+                <th scope="col" className="py-2 text-right font-medium">Net subscriber change</th>
+              </tr>
+            </thead>
+            <tbody>
+              {state.months.map((month) => (
+                <tr key={month.bucket} className="border-b border-edge last:border-0">
+                  <th scope="row" className="py-2 pr-3 font-medium">{month.bucket}</th>
+                  <td className="py-2 pr-3 text-right tabular-nums">{month.started}</td>
+                  <td className="py-2 pr-3 text-right tabular-nums">{month.cancelled}</td>
+                  <td className="py-2 pr-3 text-right tabular-nums">{month.ended}</td>
+                  <td className="py-2 pr-3 text-right tabular-nums">{month.completed}</td>
+                  <td className="py-2 text-right tabular-nums">
+                    {month.net > 0
+                      ? `+${month.net} (increase)`
+                      : month.net < 0
+                        ? `${month.net} (decrease)`
+                        : "0 (no change)"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+/**
+ * Events the backend can deliver to a merchant's webhook endpoints.
+ *
+ * Kept as a fixed list so the merchant cannot invent events the backend does
+ * not send — payflow-backend#5 defines the final set.
+ */
+const WEBHOOK_EVENTS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "charge", label: "Charge settled" },
+  { value: "refund", label: "Refund issued" },
+  { value: "mandate_ended", label: "Mandate ended" },
+];
+
+/**
+ * Webhook settings: register, list and test HTTPS endpoints the backend
+ * POSTs charge events to. Hidden entirely when the backend does not serve
+ * the webhook endpoints (NEXT_PUBLIC_API_URL unset, or a 404 from the indexer).
+ */
+function WebhooksPanel({
+  merchant,
+  apiConfigured,
+}: {
+  merchant: string;
+  apiConfigured: boolean;
+}) {
+  const [webhooks, setWebhooks] = useState<ApiWebhook[] | null>(null);
+  const [url, setUrl] = useState("");
+  const [events, setEvents] = useState<string[]>([]);
+  const [showSecret, setShowSecret] = useState<{ id: string; secret: string } | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!apiConfigured) {
+      setWebhooks(null);
+      return;
+    }
+    setWebhooks(null);
+    let live = true;
+    void api.webhooks(merchant).then((list) => {
+      if (live) setWebhooks(list);
+    });
+    return () => {
+      live = false;
+    };
+  }, [apiConfigured, merchant]);
+
+  if (!apiConfigured) return null;
+
+  const urlCheck = checkWebhookUrl(url);
+  const usable = urlCheck.ok && events.length > 0;
+
+  async function addWebhook() {
+    if (!urlCheck.ok || events.length === 0) return;
+    setBusy("webhook-add");
+    setError(null);
+    setDone(null);
+    try {
+      const created = await api.addWebhook(merchant, { url: urlCheck.url, events });
+      if (!created) {
+        setError("The backend could not create the webhook.");
+        return;
+      }
+      setShowSecret({ id: created.id, secret: created.secret ?? "" });
+      setWebhooks((prev) => (prev ? [...prev, created] : [created]));
+      setUrl("");
+      setEvents([]);
+      setDone("Webhook created.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function deleteWebhook(id: string) {
+    setBusy(`webhook-delete-${id}`);
+    try {
+      const ok = await api.deleteWebhook(merchant, id);
+      if (!ok) {
+        setError("The backend could not delete the webhook.");
+        return;
+      }
+      setWebhooks((prev) => (prev ? prev.filter((w) => w.id !== id) : prev));
+      setDone("Webhook deleted.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+      setConfirmDelete(null);
+    }
+  }
+
+  async function testWebhook(id: string) {
+    setBusy(`webhook-test-${id}`);
+    try {
+      const ok = await api.testWebhook(merchant, id);
+      if (!ok) {
+        setError("The test event could not be sent.");
+        return;
+      }
+      setDone("Test event sent.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function toggleEvent(value: string) {
+    setEvents((prev) => (prev.includes(value) ? prev.filter((e) => e !== value) : [...prev, value]));
+  }
+
+  return (
+    <Panel
+      title="Webhook settings"
+      subtitle="Endpoints the backend POSTs charge events to. Each request is signed with a secret shown once when the webhook is created."
+    >
+      {error && <Notice tone="error">{error}</Notice>}
+      {done && <Notice tone="ok">{done}</Notice>}
+      {webhooks === null ? (
+        <SkeletonRows rows={2} label="Loading webhooks" />
+      ) : (
+        <>
+          <div className="mt-3 rounded-lg border border-edge p-3">
+            <p className="text-sm font-medium">Add a webhook</p>
+            <div className="mt-2 flex flex-wrap items-end gap-3">
+              <div className="min-w-[16rem] flex-1">
+                <label className="label" htmlFor="webhook-url">
+                  URL
+                </label>
+                <input
+                  id="webhook-url"
+                  className="input"
+                  placeholder="https://hooks.example.com/payflow"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  disabled={busy === "webhook-add"}
+                  aria-invalid={url.length > 0 && !urlCheck.ok}
+                  aria-describedby={
+                    url.length > 0 && !urlCheck.ok ? "webhook-url-error" : undefined
+                  }
+                />
+                {url.length > 0 && !urlCheck.ok && (
+                  <p id="webhook-url-error" className="mt-1 text-sm text-danger">
+                    {urlCheck.message}
+                  </p>
+                )}
+              </div>
+              <div className="min-w-[14rem] flex-1">
+                <p className="text-sm font-medium mb-2">Events</p>
+                <div className="space-y-1">
+                  {WEBHOOK_EVENTS.map((option) => (
+                    <label key={option.value} className="flex items-start gap-2">
+                      <input
+                        type="checkbox"
+                        checked={events.includes(option.value)}
+                        onChange={() => toggleEvent(option.value)}
+                        disabled={busy === "webhook-add"}
+                      />
+                      {option.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={busy === "webhook-add" || !usable}
+                onClick={addWebhook}
+              >
+                {busy === "webhook-add" ? "Adding…" : "Add webhook"}
+              </button>
+            </div>
+          </div>
+
+          {showSecret && (
+            <div className="mt-3 rounded-lg border border-accent/40 bg-accent/10 p-3">
+              <p className="text-sm font-medium">Signing secret (shown once)</p>
+              <div className="mt-2 flex items-end gap-2">
+                <input
+                  id="webhook-secret"
+                  className="input mono flex-1"
+                  readOnly
+                  value={showSecret.secret}
+                  aria-label="Copy the signing secret"
+                />
+                <CopyButton value={showSecret.secret} label="signing secret" />
+              </div>
+              <p className="mt-1 text-xs text-muted">
+                Copy it now — the backend never returns this secret again.
+              </p>
+            </div>
+          )}
+
+          <div className="mt-4 space-y-3">
+            {webhooks.length === 0 ? (
+              <Empty
+                title="No webhooks yet"
+              >
+                Register an endpoint above so the backend can POST charge
+                events to your own systems. Events are delivered over https
+                and signed with the webhook{"'s"} secret.
+              </Empty>
+            ) : (
+              webhooks.map((w) => (
+                <div key={w.id} className="rounded-lg border border-edge p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="font-medium mono truncate" title={w.url}>
+                        {w.url}
+                      </div>
+                      <div className="mt-1 text-xs text-muted">
+                        {w.events.join(", ")} · {formatDate(w.created_at)}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {confirmDelete === w.id ? (
+                        <>
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            disabled={busy !== null}
+                            onClick={() => setConfirmDelete(null)}
+                          >
+                            Keep
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-danger"
+                            disabled={busy !== null}
+                            onClick={() => void deleteWebhook(w.id)}
+                          >
+                            {busy === `webhook-delete-${w.id}` ? "Deleting…" : "Delete"}
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn-ghost text-danger"
+                          disabled={busy !== null}
+                          onClick={() => setConfirmDelete(w.id)}
+                          aria-label={`Delete webhook ${w.url}`}
+                        >
+                          Delete
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        disabled={busy !== null}
+                        onClick={() => void testWebhook(w.id)}
+                      >
+                        {busy === `webhook-test-${w.id}` ? "Testing…" : "Send test"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </>
+      )}
+    </Panel>
   );
 }
 
@@ -294,6 +692,14 @@ export default function MerchantPage() {
   const [busy, setBusy] = useState<string | null>(null);
   // Ending is permanent, so the End button asks for a second click.
   const [confirmEnd, setConfirmEnd] = useState<number | null>(null);
+  // Pausing is reversible, so the Pause button asks for a second click
+  // when the merchant is pausing (not resuming).
+  const [confirmPause, setConfirmPause] = useState<number | null>(null);
+  // Deactivating a plan asks for confirmation and displays open mandate impact.
+  const [confirmDeactivate, setConfirmDeactivate] = useState<number | null>(null);
+  // Embed snippet code view for plan.
+  const [embedFor, setEmbedFor] = useState<number | null>(null);
+  const { priceData: xlmPrice } = useXlmUsdPrice();
   /**
    * The mandate whose discount form is open. One at a time: the form carries
    * two fields, and a page full of them is unreadable.
@@ -313,16 +719,40 @@ export default function MerchantPage() {
    * button that cannot work has been misled.
    */
   const [discountSupport, setDiscountSupport] = useState(false);
+
+  /**
+   * Whether the deployed contract supports merchant-initiated pauses.
+   *
+   * The control is hidden until it can: the contract must have the
+   * `set_paused` method (which it does on all deployments) and the
+   * mandate must carry `pause_until` to know if it's paused by the merchant.
+   * We check the first mandate to determine support.
+   */
+  const [pauseSupport, setPauseSupport] = useState(false);
+
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
-  // Plans are published in the configured token; mandates carry their own.
+  // Track who paused each mandate: "subscriber" | "merchant" | undefined
+  // Updated by the SSE stream when available.
+  const [pausedBy, setPausedBy] = useState<Map<number, "subscriber" | "merchant">>(new Map());
+
+  const tokens: readonly ConfiguredToken[] =
+    (config as unknown as { tokens?: ConfiguredToken[] }).tokens ?? DEFAULT_TOKENS;
+
+  const [selectedToken, setSelectedToken] = useState(
+    config.contracts.token || tokens[0]?.id || "",
+  );
+
+  // Plans can be published in any configured token; mandates carry their own.
   const metas = useTokenMetas([
     config.contracts.token,
+    selectedToken,
+    ...tokens.map((t) => t.id),
     ...(plans ?? []).map((p) => p.token),
     ...(mandates ?? []).map((m) => m.token ?? config.contracts.token),
   ]);
-  const tokenMeta = metaFor(metas, config.contracts.token);
+  const tokenMeta = metaFor(metas, selectedToken);
 
   // The contract rejects a name over MAX_NAME_LEN bytes, so catch it here
   // rather than letting the user pay for a transaction that will fail.
@@ -414,6 +844,37 @@ export default function MerchantPage() {
     setBalances(b);
   }, [address]);
 
+  // SSE stream for live updates (payflow-backend#19)
+  useStream({
+    address,
+    role: "merchant",
+    onEvent: useCallback((event: StreamEvent) => {
+      if (event.type === "mandate_pause") {
+        setPausedBy((prev) => {
+          const next = new Map(prev);
+          next.set(event.mandate_id, event.by);
+          return next;
+        });
+      }
+      if (event.type === "mandate_status") {
+        setPausedBy((prev) => {
+          const next = new Map(prev);
+          // If status becomes Active, the pause is over
+          if (event.status === "Active") {
+            next.delete(event.mandate_id);
+          }
+          return next;
+        });
+      }
+      // For other events (charge, discount, end), trigger a reload
+      // to get fresh data from the indexer
+      if (event.type === "charge" || event.type === "mandate_discount" || event.type === "mandate_end") {
+        void load();
+      }
+    }, [load]),
+    enabled: api.isConfigured(),
+  });
+
   useEffect(() => {
     void load();
   }, [load]);
@@ -474,6 +935,40 @@ export default function MerchantPage() {
       })
       .catch(() => {
         if (live) setRefundSupport(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [address, mandates]);
+
+  /**
+   * Whether the deployed contract supports merchant-initiated pauses.
+   *
+   * The indexer does not project pause_until yet, so one mandate
+   * is read from the chain to answer the question the same way in both modes.
+   */
+  useEffect(() => {
+    const row = mandates?.[0];
+    if (!address || !row) {
+      setPauseSupport(false);
+      return;
+    }
+    // The contract has always had `set_paused`; what we need to know is
+    // whether the mandate carries `pause_until` so we can distinguish
+    // merchant pauses from subscriber pauses. If the field is present,
+    // the control can be shown.
+    if (mandatePauseUntil(row) !== null) {
+      setPauseSupport(true);
+      return;
+    }
+    let live = true;
+    void payflow
+      .getMandate(address, row.id)
+      .then((mandate) => {
+        if (live) setPauseSupport(mandatePauseUntil(mandate) !== null);
+      })
+      .catch(() => {
+        if (live) setPauseSupport(false);
       });
     return () => {
       live = false;
@@ -637,6 +1132,12 @@ export default function MerchantPage() {
 
   return (
     <div className="space-y-6">
+      <MerchantChurnPanel
+        key={address}
+        merchant={address}
+        apiConfigured={api.isConfigured()}
+      />
+
       <Panel
         title="Revenue over time"
         subtitle={`Net of the protocol fee, over the last ${REVENUE_WINDOW_DAYS} days.`}
@@ -719,6 +1220,24 @@ export default function MerchantPage() {
         subtitle="Price and period are frozen into every mandate opened against this plan. To change them, publish a new plan."
       >
         <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-[8rem] flex-1">
+            <label className="label" htmlFor="plan-token">
+              Token
+            </label>
+            <select
+              id="plan-token"
+              className="input"
+              value={selectedToken}
+              onChange={(e) => setSelectedToken(e.target.value)}
+              disabled={busy !== null}
+            >
+              {tokens.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.symbol} — {t.name}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="min-w-[10rem] flex-1">
             <AmountInput
               id="price"
@@ -831,7 +1350,18 @@ export default function MerchantPage() {
           {showPriceError
             ? priceError
             : (split ? (
-                <FeePreview split={split} feeBps={feeBps ?? 0} meta={tokenMeta} />
+                <FeePreview
+                  split={split}
+                  feeBps={feeBps ?? 0}
+                  meta={tokenMeta}
+                  usdEstimate={
+                    tokenMeta.symbol === "XLM" && xlmPrice
+                      ? formatUsdEstimate(split.gross, xlmPrice.price, xlmPrice.decimals, tokenMeta.decimals)
+                      : tokenMeta.symbol === "USDC"
+                        ? formatUsdcEstimate(split.gross, tokenMeta.decimals)
+                        : null
+                  }
+                />
               ) : null)}
         </p>
       </Panel>
@@ -866,8 +1396,14 @@ export default function MerchantPage() {
             Subscribers can open a mandate against it as soon as it confirms.
           </Empty>
         ) : (
-          <div className="space-y-3">
-            {plans.map((p) => {
+          <VirtualList
+            items={plans}
+            threshold={100}
+            itemHeight={180}
+            keyExtractor={(p) => p.id}
+            listAriaLabel="Plans"
+            className="space-y-3"
+            renderItem={(p) => {
               const meta = metaFor(metas, p.token);
               const stats = planStats[p.id];
               // stats === undefined → still loading (key absent from the map)
@@ -878,6 +1414,13 @@ export default function MerchantPage() {
               // from the contract fallback, so the UI hides them rather than
               // show misleading zeros.
               const hasRevenue = stats?.total_collected !== undefined;
+              const openCount = countOpenMandates(p.id, mandates, stats?.subscriber_count);
+              const usdEstimate =
+                meta.symbol === "XLM" && xlmPrice
+                  ? formatUsdEstimate(p.amount, xlmPrice.price, xlmPrice.decimals, meta.decimals)
+                  : meta.symbol === "USDC"
+                    ? formatUsdcEstimate(p.amount, meta.decimals)
+                    : null;
               return (
                 <div
                   key={p.id}
@@ -895,6 +1438,15 @@ export default function MerchantPage() {
                     </div>
                     <div className="mt-1 text-sm text-muted">
                       {fromStroops(p.amount, 4, meta.decimals)} {meta.symbol}{" "}
+                      {usdEstimate && (
+                        <span
+                          className="tabular-nums"
+                          title="Estimated USD value via Reflector oracle"
+                          aria-label={`Approximately ${usdEstimate} US Dollars`}
+                        >
+                          (≈ {usdEstimate}){" "}
+                        </span>
+                      )}
                       {formatPeriod(p.period)}
                     </div>
                     {/* Per-plan stats: subscriber count always shown when
@@ -956,8 +1508,8 @@ export default function MerchantPage() {
                   </button>
                 </div>
               );
-            })}
-          </div>
+            }}
+          />
         )}
       </Panel>
 
@@ -999,8 +1551,14 @@ export default function MerchantPage() {
             a glance.
           </Empty>
         ) : (
-          <div className="space-y-3">
-            {mandates.map((m) => {
+          <VirtualList
+            items={mandates}
+            threshold={100}
+            itemHeight={160}
+            keyExtractor={(m) => m.id}
+            listAriaLabel="Subscribers"
+            className="space-y-3"
+            renderItem={(m) => {
               const due = m.status === "Active" && m.next_charge * 1000 <= Date.now();
               const meta = metaFor(metas, m.token ?? config.contracts.token);
               const balance = balances[m.subscriber] ?? null;
@@ -1016,13 +1574,32 @@ export default function MerchantPage() {
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium">#{m.id}</span>
+                        <Link
+                          href={`/mandates/?id=${m.id}`}
+                          className="font-medium hover:underline text-soft focus:outline-none focus:ring-1 focus:ring-accent rounded"
+                        >
+                          #{m.id}
+                        </Link>
                         <AddressLink value={m.subscriber} />
                         <Badge status={m.status} />
                         {badge && (
                           <span className="rounded-full bg-accent/15 px-2 py-0.5 text-xs font-medium text-accent">
                             {badge}
                           </span>
+                        )}
+                        {pauseSupport && m.status === "Paused" && (
+                          <>
+                            {pausedBy.get(m.id) === "merchant" && (
+                              <span className="text-xs text-muted">paused by you</span>
+                            )}
+                            {pausedBy.get(m.id) === "subscriber" && (
+                              <span className="text-xs text-muted">paused by subscriber</span>
+                            )}
+                            {/* Fallback when SSE hasn't told us yet: show generic pause indicator */}
+                            {pausedBy.get(m.id) === undefined && m.pause_until !== undefined && (
+                              <span className="text-xs text-muted">paused</span>
+                            )}
+                          </>
                         )}
                         {m.ended_by === "merchant" && (
                           <span className="text-xs text-muted">ended by you</span>
@@ -1106,6 +1683,50 @@ export default function MerchantPage() {
                           <span className="text-xs text-rose-300">
                             Subscriber vault short by {fromStroops(funding.shortfall)} {meta.symbol}
                           </span>
+                        )}
+                        {pauseSupport && endable(m) && (
+                          <>
+                            {confirmPause === m.id ? (
+                              <>
+                                <button
+                                  type="button"
+                                  className="btn-ghost"
+                                  disabled={busy !== null}
+                                  onClick={() => setConfirmPause(null)}
+                                >
+                                  Keep
+                                </button>
+                                <button
+                                  type="button"
+                                  className={m.status === "Active" ? "btn-primary" : "btn-ghost"}
+                                  disabled={busy !== null || networkMismatch}
+                                  onClick={() =>
+                                    void run(`pause-${m.id}`, () =>
+                                      payflow.setPaused(address, signXdr, m.id, m.status === "Active"),
+                                    ).then(() => setConfirmPause(null))
+                                  }
+                                >
+                                  {busy === `pause-${m.id}`
+                                    ? m.status === "Active"
+                                      ? "Pausing…"
+                                      : "Resuming…"
+                                    : m.status === "Active"
+                                      ? "Confirm: pause"
+                                      : "Confirm: resume"}
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                type="button"
+                                className={m.status === "Active" ? "btn-primary" : "btn-ghost"}
+                                disabled={busy !== null || networkMismatch}
+                                onClick={() => setConfirmPause(m.id)}
+                                aria-label={m.status === "Active" ? `Pause subscription #${m.id}` : `Resume subscription #${m.id}`}
+                              >
+                                {m.status === "Active" ? "Pause" : "Resume"}
+                              </button>
+                            )}
+                          </>
                         )}
                         {refundSupport && endable(m) && (
                           <button
@@ -1204,10 +1825,12 @@ export default function MerchantPage() {
                   )}
                 </div>
               );
-            })}
-          </div>
+            }}
+          />
         )}
       </Panel>
+
+      <WebhooksPanel merchant={address} apiConfigured={api.isConfigured()} />
     </div>
   );
 }

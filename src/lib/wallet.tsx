@@ -300,11 +300,15 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         throw new Error(ACCOUNT_CHANGED_ERROR);
       }
 
-      const { signedTxXdr } = await kit.signTransaction(xdrString, {
-        networkPassphrase: config.networkPassphrase,
-        address,
-      });
-      return signedTxXdr;
+      try {
+        const { signedTxXdr } = await kit.signTransaction(xdrString, {
+          networkPassphrase: config.networkPassphrase,
+          address,
+        });
+        return signedTxXdr;
+      } catch (err) {
+        translateSignatureError(err);
+      }
     },
     [address, networkMismatch, applyAccountChange],
   );
