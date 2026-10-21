@@ -186,6 +186,49 @@ describe("api fail-soft behaviour", () => {
       }),
     );
     expect(await api.timeline(7)).not.toBeNull();
+  it("api.charge returns matching charge or null", async () => {
+    mockFetch(async (url) => {
+      expect(String(url)).toContain("/api/mandates/5/charges");
+      return jsonResponse({
+        charges: [
+          {
+            tx_hash: "target_hash",
+            mandate_id: 5,
+            amount: "1000",
+            fee: "10",
+            charges_made: 1,
+            ledger: 100,
+          },
+        ],
+      });
+    });
+
+    const found = await api.charge(5, "target_hash");
+    expect(found?.tx_hash).toBe("target_hash");
+
+    const notFound = await api.charge(5, "different_hash");
+    expect(notFound).toBeNull();
+  });
+
+  it("api.mandate returns parsed mandate or null on failure", async () => {
+    mockFetch(async (url) => {
+      expect(String(url)).toContain("/api/mandates/5");
+      return jsonResponse({
+        id: 5,
+        subscriber: "GSUB",
+        merchant: "GMER",
+        status: "Active",
+      });
+    });
+
+    const mandate = await api.mandate(5);
+    expect(mandate?.id).toBe(5);
+    expect(mandate?.subscriber).toBe("GSUB");
+
+    mockFetch(() => Promise.reject(new Error("offline")));
+    expect(await api.mandate(5)).toBeNull();
+  });
+
   it("queries the revenue endpoint with bucket, from and to", async () => {
     let seenUrl = "";
     mockFetch(async (url) => {
@@ -273,3 +316,4 @@ describe("api.planStats", () => {
     expect(seenUrl).toContain("/api/plans/99/stats");
   });
 });
+

@@ -164,6 +164,14 @@ describe("readContract retry logic", () => {
     expect(mockServer.simulateTransaction).toHaveBeenCalledTimes(1);
   });
 
+  it("releases its slot after a successful read", async () => {
+    // A successful read must not keep its permit: before this was fixed the
+    // seventh read waited forever, which froze every page after six reads.
+    for (let i = 0; i < MAX_CONCURRENT_READS + 2; i += 1) {
+      await expect(readContract(CONTRACT, "get_plan", SOURCE)).resolves.toBe("success");
+    }
+  });
+
   it("limits concurrent reads to MAX_CONCURRENT_READS", async () => {
     // This test verifies the semaphore limits concurrency
     // We can't easily test the semaphore directly without exposing it,

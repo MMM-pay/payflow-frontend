@@ -1,7 +1,10 @@
 import {
   Address,
+  Asset,
   BASE_FEE,
   Contract,
+  Operation,
+  StrKey,
   TransactionBuilder,
   nativeToScVal,
   scValToNative,
@@ -137,17 +140,19 @@ export async function readContract<T>(
       return scValToNative(sim.result.retval) as T;
     } catch (err) {
       lastError = err;
-      // Release semaphore before checking retry or throwing
-      readSemaphore.release();
-
       const isLastAttempt = attempt === maxAttempts - 1;
       if (isLastAttempt || !isRetryableError(err)) {
         throw err;
       }
-      // Wait before retrying
-      await new Promise((r) => setTimeout(r, backoffDelay(attempt)));
-      // Loop continues, will re-acquire semaphore
+    } finally {
+      // Every acquire must be released, including the successful path: a
+      // returned value used to keep its permit, so the seventh read waited
+      // forever. Releasing here also frees the permit during the backoff
+      // sleep below, which a failed read no longer holds.
+      readSemaphore.release();
     }
+    // Wait before retrying, then re-acquire for the next attempt.
+    await new Promise((r) => setTimeout(r, backoffDelay(attempt)));
   }
 
   // Should never reach here, but TypeScript needs it
@@ -417,6 +422,81 @@ export function mandateStatus(raw: unknown): string {
   return String(raw ?? "");
 }
 
+// ---------------------------------------------------------------------------
+// Session cache for get_plan.
+// ---------------------------------------------------------------------------
+
+/**
+ * The registry lets a plan change in exactly one way after `create_plan`: the
+ * merchant flips `active` with `set_plan_active`. The name, price, period,
+ * token and trial are frozen for the life of the plan, yet every page that
+ * lists plans re-reads all of them — the subscribe page alone issues one
+ * `get_plan` per plan on every visit.
+ *
+ * The cache lives here rather than in `chain.ts` because `get_plan` and the one
+ * write that can invalidate a plan are both in this module: a write path cannot
+ * forget to tell a cache it does not know about. It is per session (plain
+ * module memory, so a reload starts clean) and only the mutable `active` flag
+ * is trusted for `PLAN_ACTIVE_TTL_MS`. When that expires, the next `get_plan`
+ * re-reads the whole record in one call and replaces the entry — the immutable
+ * fields come along for free, so they never cost a read of their own.
+ *
+ * A future write that changes an immutable field (renaming a plan, #88) must
+ * call `forgetPlan` afterwards, or the old name stays cached for the session.
+ */
+export const PLAN_ACTIVE_TTL_MS = 30_000;
+
+interface CachedPlan {
+  /** Everything but `active`: `create_plan` is the only writer of these. */
+  immutable: Omit<Plan, "active">;
+  active: boolean;
+  /** When `active` was last read from the contract. */
+  activeCheckedAt: number;
+}
+
+const planCache = new Map<string, CachedPlan>();
+
+function planKey(planId: number | bigint): string {
+  return String(planId);
+}
+
+/** Exported for tests. */
+export function clearPlanCache(): void {
+  planCache.clear();
+}
+
+/**
+ * The cached plan when its `active` flag is still trusted, otherwise null so
+ * the caller reads it again. `now` is a parameter so the TTL is testable
+ * without fake timers.
+ */
+export function cachedPlan(
+  planId: number | bigint,
+  now: number = Date.now(),
+): Plan | null {
+  const entry = planCache.get(planKey(planId));
+  if (!entry) return null;
+  if (now - entry.activeCheckedAt >= PLAN_ACTIVE_TTL_MS) return null;
+  return { ...entry.immutable, active: entry.active };
+}
+
+/** Cache a `get_plan` result, which is authoritative for every field. */
+export function rememberPlan(plan: Plan, now: number = Date.now()): Plan {
+  const { active, ...immutable } = plan;
+  planCache.set(planKey(plan.id), { immutable, active, activeCheckedAt: now });
+  return plan;
+}
+
+/**
+ * Drop a plan from the cache. Called after our own successful write so the
+ * next read comes from contract state: there is then no window in which a page
+ * can serve the value the merchant just changed, and the refresh also picks up
+ * any field a future contract version lets a write touch.
+ */
+export function forgetPlan(planId: number | bigint): void {
+  planCache.delete(planKey(planId));
+}
+
 /**
  * When a mandate resumes, or null when the contract does not report it.
  *
@@ -498,16 +578,55 @@ export function mandateRefundableAmount(mandate: unknown): bigint | null {
   return null;
 }
 
+/** A Stellar account a sponsor can pay into: a valid ed25519 public key. */
+export function validateRecipient(recipient: string): string | null {
+  const trimmed = recipient.trim();
+  if (!trimmed) return "Enter a Stellar address.";
+  return StrKey.isValidEd25519PublicKey(trimmed)
+    ? null
+    : "That is not a valid Stellar account address.";
+}
+
+/**
+ * Whether the deployed vault contract exposes `deposit_for`.
+ *
+ * readContract simulates without committing, so a failed probe costs nothing
+ * and no tokens move. A contract built before payflow-contract#29 has no such
+ * method, so the simulation throws and the UI keeps the sponsor control
+ * hidden rather than offering a write it cannot service.
+ */
+export async function vaultSupportsDepositFor(source: string): Promise<boolean> {
+  if (!config.contracts.vault) return false;
+  try {
+    // Probe depositing the smallest possible amount into the caller's own
+    // vault: if the method exists the contract answers, and nothing commits.
+    await readContract(
+      config.contracts.vault,
+      "deposit_for",
+      source,
+      [arg.address(source), arg.address(config.contracts.token), arg.i128(1n)],
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const payflow = {
   // Proposed read interface for #25's open-mandate counter. Callers must
   // tolerate missing support until the contract ships this getter.
   planSubscriberCount: (source: string, planId: number | bigint) =>
     readContract<number>(config.contracts.subscription, "plan_subscriber_count", source, [arg.u64(planId)]),
   // --- plan registry ---
-  getPlan: (source: string, planId: number | bigint) =>
-    readContract<Plan>(config.contracts.planRegistry, "get_plan", source, [
-      arg.u64(planId),
-    ]),
+  getPlan: async (source: string, planId: number | bigint) => {
+    const hit = cachedPlan(planId);
+    if (hit) return hit;
+    return rememberPlan(
+      await readContract<Plan>(config.contracts.planRegistry, "get_plan", source, [
+        arg.u64(planId),
+      ]),
+    );
+  },
 
   createPlan: (
     source: string,
@@ -533,17 +652,24 @@ export const payflow = {
       ],
     ),
 
-  setPlanActive: (
+  setPlanActive: async (
     source: string,
     sign: SignXdr,
     planId: number | bigint,
     active: boolean,
-  ) =>
-    writeContract(config.contracts.planRegistry, "set_plan_active", source, sign, [
-      arg.address(source),
-      arg.u64(planId),
-      arg.bool(active),
-    ]),
+  ) => {
+    const hash = await writeContract(
+      config.contracts.planRegistry,
+      "set_plan_active",
+      source,
+      sign,
+      [arg.address(source), arg.u64(planId), arg.bool(active)],
+    );
+    // `writeContract` polls until the transaction is confirmed, so the cached
+    // record is now the only stale copy of this plan.
+    forgetPlan(planId);
+    return hash;
+  },
 
   // --- vault ---
   vaultBalance: (source: string, user: string, token: string) =>
@@ -562,6 +688,25 @@ export const payflow = {
   withdraw: (source: string, sign: SignXdr, token: string, amount: bigint) =>
     writeContract(config.contracts.vault, "withdraw", source, sign, [
       arg.address(source),
+      arg.address(token),
+      arg.i128(amount),
+    ]),
+
+  /**
+   * Sponsor another account's vault: the caller's tokens are credited to the
+   * recipient's vault balance, and only the recipient can withdraw.
+   *
+   * Built against the interface proposed in payflow-contract#29:
+   * `deposit_for(recipient: Address, token: Address, amount: i128)`. The
+   * caller is the transaction's source account and is not passed as an
+   * argument — it authorizes the payment by signing the transaction.
+   *
+   * Only call this when `vaultSupportsDepositFor` confirms the deployed
+   * contract carries the method.
+   */
+  depositFor: (source: string, sign: SignXdr, recipient: string, token: string, amount: bigint) =>
+    writeContract(config.contracts.vault, "deposit_for", source, sign, [
+      arg.address(recipient),
       arg.address(token),
       arg.i128(amount),
     ]),
@@ -735,4 +880,90 @@ export const payflow = {
       arg.u64(mandateId),
       arg.i128(amount),
     ]),
+
+  /** Check if an account has established a trustline on Horizon */
+  checkTrustline: (
+    address: string,
+    assetCode: string,
+    assetIssuer?: string,
+    horizonUrl: string = config.horizonUrl,
+  ) => checkTrustline(address, assetCode, assetIssuer, horizonUrl),
+
+  /** Establish a trustline for a classic Stellar asset via ChangeTrust */
+  addTrustline: (
+    source: string,
+    sign: SignXdr,
+    assetCode: string,
+    assetIssuer: string,
+  ) => addTrustline(source, sign, assetCode, assetIssuer),
 };
+
+/**
+ * Checks whether an account has an established trustline for a classic asset on Horizon.
+ * Returns true if the account holds or has a trustline for the specified asset.
+ */
+export async function checkTrustline(
+  address: string,
+  assetCode: string,
+  assetIssuer?: string,
+  horizonUrl: string = config.horizonUrl,
+): Promise<boolean> {
+  if (!address || !assetCode || !horizonUrl) return true;
+  try {
+    const res = await fetch(`${horizonUrl}/accounts/${address}`, { cache: "no-store" });
+    if (!res.ok) return false;
+    const data = (await res.json()) as {
+      balances?: Array<{ asset_type: string; asset_code?: string; asset_issuer?: string }>;
+    };
+    if (!data.balances) return false;
+    return data.balances.some(
+      (b) =>
+        b.asset_code === assetCode &&
+        (!assetIssuer || b.asset_issuer === assetIssuer),
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Builds and submits a ChangeTrust operation to establish a trustline for a classic asset.
+ */
+export async function addTrustline(
+  source: string,
+  sign: SignXdr,
+  assetCode: string,
+  assetIssuer: string,
+): Promise<string> {
+  const account = await server.getAccount(source);
+  const tx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: config.networkPassphrase,
+  })
+    .addOperation(
+      Operation.changeTrust({
+        asset: new Asset(assetCode, assetIssuer),
+      }),
+    )
+    .setTimeout(30)
+    .build();
+
+  let signedXdr: string;
+  try {
+    signedXdr = await sign(tx.toXDR());
+  } catch (err) {
+    translateSignatureError(err);
+    throw err;
+  }
+
+  const signed = TransactionBuilder.fromXDR(signedXdr, config.networkPassphrase);
+  const sent = await server.sendTransaction(signed);
+  if (sent.status === "ERROR") {
+    throw new Error(`changeTrust rejected: ${JSON.stringify(sent.errorResult)}`);
+  }
+  const confirmed = await pollTransaction(sent.hash);
+  if (confirmed.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
+    throw new Error(`changeTrust failed on-chain (${confirmed.status})`);
+  }
+  return sent.hash;
+}
