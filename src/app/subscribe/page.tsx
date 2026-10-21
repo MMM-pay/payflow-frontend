@@ -171,6 +171,10 @@ function SubscribeInner() {
 
   const [sort, setSort] = useState<PlanSortOption>(sortParam);
   const [period, setPeriod] = useState<PlanPeriodOption>(periodParam);
+  // Plans ticked for the side-by-side table, in the order they were picked.
+  const [compareIds, setCompareIds] = useState<number[]>([]);
+  const [showComparison, setShowComparison] = useState(false);
+
   const { address, networkMismatch, signXdr } = useWallet();
   const [plans, setPlans] = useState<ApiPlan[] | null>(null);
   const [maxCharges, setMaxCharges] = useState<Record<number, string>>({});
