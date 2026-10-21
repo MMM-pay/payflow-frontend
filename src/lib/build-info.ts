@@ -84,3 +84,83 @@ export function getProtocolContractLinks(
     };
   });
 }
+
+/**
+ * Build a debug information string for bug reports.
+ * Includes version, commit, network, contract IDs, API URL, and wallet info.
+ * No secrets are included.
+ */
+export interface DebugInfo {
+  version: string;
+  commit: string;
+  network: string;
+  networkPassphrase: string;
+  contracts: {
+    planRegistry: string;
+    vault: string;
+    subscription: string;
+    token: string;
+  };
+  apiUrl: string;
+  wallet?: {
+    name: string;
+    address: string;
+  };
+}
+
+/**
+ * Collect debug information from the current app state.
+ * Call this from a client component where wallet info is available.
+ */
+export function buildDebugInfo(
+  wallet?: { name: string; address: string } | null,
+): DebugInfo {
+  return {
+    version: APP_VERSION || "unknown",
+    commit: COMMIT_HASH || "unknown",
+    network: config.network || "TESTNET",
+    networkPassphrase: config.networkPassphrase,
+    contracts: {
+      planRegistry: config.contracts.planRegistry || "not configured",
+      vault: config.contracts.vault || "not configured",
+      subscription: config.contracts.subscription || "not configured",
+      token: config.contracts.token || "not configured",
+    },
+    apiUrl: config.apiUrl || "not configured",
+    wallet: wallet ?? undefined,
+  };
+}
+
+/**
+ * Format debug info as a human-readable string for copying.
+ */
+export function formatDebugInfo(info: DebugInfo): string {
+  const lines = [
+    "=== Payflow Debug Info ===",
+    `Version: ${info.version}`,
+    `Commit: ${info.commit}`,
+    `Network: ${info.network}`,
+    `Network Passphrase: ${info.networkPassphrase}`,
+    "",
+    "Contracts:",
+    `  Plan Registry: ${info.contracts.planRegistry}`,
+    `  Vault: ${info.contracts.vault}`,
+    `  Subscription: ${info.contracts.subscription}`,
+    `  Token: ${info.contracts.token}`,
+    "",
+    `API URL: ${info.apiUrl}`,
+    "",
+  ];
+
+  if (info.wallet) {
+    lines.push("Wallet:");
+    lines.push(`  Name: ${info.wallet.name}`);
+    lines.push(`  Address: ${info.wallet.address}`);
+    lines.push("");
+  }
+
+  lines.push("Generated at: " + new Date().toISOString());
+  lines.push("==========================");
+
+  return lines.join("\n");
+}

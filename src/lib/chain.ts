@@ -3,6 +3,7 @@ import { MAX_PAGE, mandateStatus, payflow, type Mandate, type Plan } from "./pay
 import type { ApiCharge, ApiMandate, ApiPlan, ApiVaultEvent, MerchantSummary } from "./api";
 import { availabilityInteger } from "./availability";
 import { fromStroops } from "./format";
+import { chargeShortfall } from "./schedule";
 
 /**
  * Contract-only fallbacks for the lists the indexer normally serves.
@@ -72,6 +73,34 @@ export function mandateToApi(mandate: Mandate): ApiMandate {
     // Only present once payflow-contract#9 mirrors `trial` onto the mandate;
     // see `ApiPlan.trial` for why this stays undefined rather than 0.
     ...(mandate.trial !== undefined ? { trial: Number(mandate.trial) } : {}),
+    // Only present once payflow-contract#41 adds `pause_until` to Mandate; a
+    // contract decoded without it cannot service a dated pause, and the page
+    // hides the control instead of guessing at support.
+    ...(mandate.pause_until !== undefined
+      ? { pause_until: Number(mandate.pause_until) }
+      : {}),
+    // Only present once payflow-contract#37 mirrors the discount onto the
+    // mandate; a contract without the fields cannot say, and a zero would
+    // claim there is no discount where there is one.
+    ...(mandate.discount_bps !== undefined
+      ? { discount_bps: Number(mandate.discount_bps) }
+      : {}),
+    ...(mandate.discount_charges !== undefined
+      ? { discount_charges: Number(mandate.discount_charges) }
+      : {}),
+    ...(mandate.discount_charges_made !== undefined
+      ? { discount_charges_made: Number(mandate.discount_charges_made) }
+      : {}),
+    // Only present once payflow-contract#34 adds `past_due_until` to Mandate;
+    // a contract without it cannot say when the grace period ends.
+    ...(mandate.past_due_until !== undefined
+      ? { past_due_until: Number(mandate.past_due_until) }
+      : {}),
+    // Only present once payflow-contract#36 adds `refundable_amount` to Mandate;
+    // a contract without it cannot say how much can be refunded.
+    ...(mandate.refundable_amount !== undefined
+      ? { refundable_amount: mandate.refundable_amount.toString() }
+      : {}),
   };
 }
 
@@ -110,6 +139,10 @@ async function newestIds(
  * The registry has no "list all" function (that is the gap the indexer fills),
  * but ids are sequential and `next_plan_id` says where they end, so this reads
  * the newest few. Bounded deliberately: an unbounded read would hammer RPC.
+ *
+ * Each record comes from `payflow.getPlan`, which caches it for the session, so
+ * a second visit re-reads only `next_plan_id` — the one value that a newly
+ * published plan changes.
  */
 export async function chainPlans(source: string): Promise<ApiPlan[]> {
   const next = Number(await payflow.nextPlanId(source));
@@ -124,6 +157,28 @@ export async function chainPlansOf(source: string, merchant: string): Promise<Ap
   const ids = await newestIds(count, (s, l) => payflow.merchantPlans(source, merchant, s, l));
   const plans = await settledValues(ids.map((id) => payflow.getPlan(source, id)));
   return plans.map(planToApi).sort((a, b) => b.id - a.id);
+}
+
+/**
+ * Read the open-mandate count for a single plan from contract state.
+ *
+ * Returns null when the deployed contract predates `plan_subscriber_count`
+ * (payflow-contract#25), so the caller can hide the stat rather than show
+ * a misleading zero.
+ *
+ * Exported for tests.
+ */
+export async function chainPlanSubscriberCount(
+  source: string,
+  planId: number,
+): Promise<number | null> {
+  try {
+    return await payflow.planSubscriberCount(source, planId);
+  } catch {
+    // Old contracts do not expose this getter. Return null so the UI can
+    // hide the subscriber count rather than claim it is zero.
+    return null;
+  }
 }
 
 export async function chainMandatesOf(
@@ -146,6 +201,31 @@ export async function chainMandatesFor(
   const ids = await newestIds(count, (s, l) => payflow.merchantMandates(source, merchant, s, l));
   const mandates = await settledValues(ids.map((id) => payflow.getMandate(source, id)));
   return mandates.map(mandateToApi).sort((a, b) => b.id - a.id);
+}
+
+/**
+ * Read a single mandate from contract state.
+ */
+export async function chainMandate(
+  source: string,
+  mandateId: number,
+): Promise<ApiMandate | null> {
+  try {
+    const raw = await payflow.getMandate(source, mandateId);
+    if (!raw) return null;
+    return mandateToApi(raw);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reads protocol counters directly from contract state when the indexer is offline.
+ * Only returns what contract state can determine (plans count from next_plan_id).
+ */
+export async function chainProtocolStats(source: string): Promise<{ plans: number }> {
+  const next = Number(await payflow.nextPlanId(source));
+  return { plans: Math.max(0, next - 1) };
 }
 
 /** A merchant can end a mandate that could still be charged. */
@@ -230,11 +310,10 @@ export function mandateFunding(
 ): MandateFunding {
   // A null balance (read still in flight or failed) is unknown: don't block
   // the charge on a missing read. Treat it as not-short.
-  if (vaultBalance === null) {
-    return { status: "funded", shortfall: 0n };
-  }
-  const shortfall = mandateAmount - vaultBalance;
-  return shortfall > 0n ? { status: "short", shortfall } : { status: "funded", shortfall: 0n };
+  const shortfall = chargeShortfall(vaultBalance, mandateAmount);
+  return shortfall === null
+    ? { status: "funded", shortfall: 0n }
+    : { status: "short", shortfall };
 }
 
 /** Whether a vault event increases the vault balance. */

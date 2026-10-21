@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import MerchantPage from "@/app/merchant/page";
 
 /**
@@ -23,10 +23,18 @@ const wallet = vi.hoisted(() => ({
 }));
 
 const apiMock = vi.hoisted(() => ({
+  isConfigured: vi.fn(() => true),
   plans: vi.fn(),
   mandatesFor: vi.fn(),
   merchantSummary: vi.fn(),
   merchantRevenue: vi.fn(),
+  merchantChurn: vi.fn(),
+  planStats: vi.fn(),
+  stream: vi.fn(),
+  webhooks: vi.fn(),
+  addWebhook: vi.fn(),
+  deleteWebhook: vi.fn(),
+  testWebhook: vi.fn(),
 }));
 
 const payflowMock = vi.hoisted(() => ({
@@ -41,11 +49,15 @@ const chainMock = vi.hoisted(() => ({
   chainMandatesFor: vi.fn(),
   chainMerchantSummary: vi.fn(),
   chainPlansOf: vi.fn(),
+  chainPlanSubscriberCount: vi.fn(),
   endable: vi.fn(() => false),
 }));
 
 vi.mock("@/lib/wallet", () => ({ useWallet: () => wallet }));
-vi.mock("@/lib/api", () => ({ api: apiMock }));
+vi.mock("@/lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api")>();
+  return { api: apiMock, checkWebhookUrl: actual.checkWebhookUrl };
+});
 vi.mock("@/lib/payflow", () => ({ payflow: payflowMock, MAX_NAME_LEN: 64, nameByteLength: (n: string) => n.length }));
 vi.mock("@/lib/chain", () => chainMock);
 
@@ -54,10 +66,15 @@ const MERCHANT = "GCH5VHWNS24VI75HLDBHK4SSJ2E5XZA5IB6XEZTNE4BJH7AKZI6Z3MHU";
 beforeEach(() => {
   wallet.address = MERCHANT;
   wallet.networkMismatch = false;
+  apiMock.isConfigured.mockReturnValue(true);
   apiMock.plans.mockResolvedValue({ plans: [] });
   apiMock.mandatesFor.mockResolvedValue({ mandates: [] });
   apiMock.merchantSummary.mockResolvedValue(null);
   apiMock.merchantRevenue.mockResolvedValue(null);
+  apiMock.merchantChurn.mockResolvedValue(null);
+  apiMock.planStats.mockResolvedValue(null);
+  apiMock.webhooks.mockResolvedValue([]);
+  chainMock.chainPlanSubscriberCount.mockResolvedValue(null);
   payflowMock.feeBps.mockResolvedValue(100); // 1%
   payflowMock.createPlan.mockResolvedValue("tx-hash");
   chainMock.chainMerchantSummary.mockReturnValue({

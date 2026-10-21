@@ -6,4 +6,5 @@ build/
 .env.local
 *.tsbuildinfo
 next-env.d.ts
+public/embed/
 .DS_Store

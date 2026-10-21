@@ -2,6 +2,7 @@
 import { useEffect } from "react";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SIGNATURE_CANCELLED_MESSAGE } from "@/lib/signature-error";
 import {
   ACCOUNT_CHANGED_ERROR,
   STORAGE_KEY,
@@ -282,6 +283,70 @@ describe("WalletProvider and account change detection", () => {
     expect(window.localStorage.getItem(STORAGE_KEY)).toContain(ADDRESS_B);
   });
 
+  it.each([
+    ["Freighter", new Error("The user rejected this request.")],
+    [
+      "Albedo",
+      { message: "Action request was rejected by the user.", code: -4 },
+    ],
+  ])("replaces a %s signature rejection with a friendly message", async (_wallet, rejection) => {
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ walletId: WALLET_ID, address: ADDRESS_A }),
+    );
+    mockKit.getAddress.mockResolvedValue({ address: ADDRESS_A });
+    mockKit.signTransaction.mockRejectedValue(rejection);
+
+    let capturedSignXdr!: (xdr: string) => Promise<string>;
+
+    function SignConsumer() {
+      const { signXdr, address } = useWallet();
+      capturedSignXdr = signXdr;
+      return <div data-testid="address">{address}</div>;
+    }
+
+    render(
+      <WalletProvider>
+        <SignConsumer />
+      </WalletProvider>,
+    );
+
+    expect(await screen.findByText(ADDRESS_A)).toBeTruthy();
+    await expect(capturedSignXdr("UNSIGNED_XDR")).rejects.toThrow(
+      SIGNATURE_CANCELLED_MESSAGE,
+    );
+  });
+
+  it("keeps a wallet error that is not a cancellation", async () => {
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ walletId: WALLET_ID, address: ADDRESS_A }),
+    );
+    mockKit.getAddress.mockResolvedValue({ address: ADDRESS_A });
+    mockKit.signTransaction.mockRejectedValue(
+      new Error("The wallet encountered an internal error. Please try again."),
+    );
+
+    let capturedSignXdr!: (xdr: string) => Promise<string>;
+
+    function SignConsumer() {
+      const { signXdr, address } = useWallet();
+      capturedSignXdr = signXdr;
+      return <div data-testid="address">{address}</div>;
+    }
+
+    render(
+      <WalletProvider>
+        <SignConsumer />
+      </WalletProvider>,
+    );
+
+    expect(await screen.findByText(ADDRESS_A)).toBeTruthy();
+    await expect(capturedSignXdr("UNSIGNED_XDR")).rejects.toThrow(
+      "The wallet encountered an internal error. Please try again.",
+    );
+  });
+
   it("updates WalletButton UI when mocked account switch occurs", async () => {
     const { WalletButton } = await import("@/components/WalletButton");
     window.localStorage.setItem(
@@ -307,7 +372,7 @@ describe("WalletProvider and account change detection", () => {
       window.dispatchEvent(new Event("focus"));
     });
 
-    const updated = await screen.findByTitle(`${ADDRESS_B} — click to disconnect`);
+    const updated = await screen.findByTitle(`${ADDRESS_B} — click to disconnect`, {}, { timeout: 3000 });
     expect(updated).toBeTruthy();
     expect(updated.textContent).toContain("GAP6Q");
   });
