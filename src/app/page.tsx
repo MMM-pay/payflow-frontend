@@ -2,9 +2,12 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { api, type ProtocolStats } from "@/lib/api";
+import { api, type ProtocolStats, type RecentCharge } from "@/lib/api";
+import { chainProtocolStats } from "@/lib/chain";
 import { config } from "@/lib/config";
-import { AddressLink, Panel, Stat } from "@/components/ui";
+import { AddressLink, Panel, Stat, TxLink } from "@/components/ui";
+import { formatAmount, formatDate, shortAddress } from "@/lib/format";
+import { metaFor, useTokenMetas } from "@/lib/token";
 
 const STEPS = [
   {
@@ -27,13 +30,31 @@ const STEPS = [
 
 export default function HomePage() {
   const [stats, setStats] = useState<ProtocolStats | null>(null);
+  const [contractPlanCount, setContractPlanCount] = useState<number | null>(null);
+  const [recentCharges, setRecentCharges] = useState<RecentCharge[] | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const metas = useTokenMetas([config.contracts.token]);
+  const tokenMeta = metaFor(metas, config.contracts.token);
 
   useEffect(() => {
-    void api.stats().then((s) => {
-      setStats(s);
+    const load = async () => {
+      const [s, r] = await Promise.allSettled([api.stats(), api.recentCharges(10)]);
+      const statsValue = s.status === "fulfilled" ? s.value : null;
+      if (statsValue) {
+        setStats(statsValue);
+      } else {
+        // Only read contract counters when the indexer API is unreachable (no extra RPC when API works!)
+        try {
+          const chainStats = await chainProtocolStats(config.readSource);
+          setContractPlanCount(chainStats.plans);
+        } catch {
+          // Keep blank if contract read fails
+        }
+      }
+      if (r.status === "fulfilled" && r.value) setRecentCharges(r.value.charges);
       setLoaded(true);
-    });
+    };
+    void load();
   }, []);
 
   return (
@@ -46,7 +67,7 @@ export default function HomePage() {
           Stellar payments are push-only: the account holding the funds must sign every
           transfer. That makes one-off payments simple and subscriptions impossible without
           custody. Payflow adds the missing primitive — a bounded, revocable{" "}
-          <strong className="text-slate-200">mandate</strong> the subscriber signs once.
+          <strong className="text-soft">mandate</strong> the subscriber signs once.
         </p>
         <div className="flex flex-wrap gap-3 pt-1">
           <Link href="/subscribe" className="btn-primary">
@@ -59,25 +80,63 @@ export default function HomePage() {
       </section>
 
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat label="Plans" value={loaded ? (stats?.plans ?? "—") : "…"} />
-        <Stat label="Mandates" value={loaded ? (stats?.mandates ?? "—") : "…"} />
+        <Stat
+          label="Plans"
+          value={loaded ? (stats?.plans ?? contractPlanCount ?? "—") : "…"}
+          hint={!stats && contractPlanCount !== null ? "from contract" : undefined}
+        />
+        <Stat
+          label="Mandates"
+          value={loaded ? (stats?.mandates ?? "—") : "…"}
+          hint={!stats ? "needs indexer" : undefined}
+        />
         <Stat
           label="Active"
           value={loaded ? (stats?.activeMandates ?? "—") : "…"}
-          hint="currently billable"
+          hint={stats ? "currently billable" : "needs indexer"}
         />
         <Stat
           label="Charges settled"
           value={loaded ? (stats?.charges ?? "—") : "…"}
-          hint={stats ? `ledger ${stats.lastIndexedLedger}` : "indexer offline"}
+          hint={stats ? `ledger ${stats.lastIndexedLedger}` : "needs indexer"}
         />
       </section>
 
       {loaded && !stats && (
         <p className="text-sm text-muted">
-          The indexer is unreachable, so these counters are blank. Everything else on this
-          site reads contract state directly and still works.
+          The indexer is unreachable, so historical activity counters require the indexer.
+          {contractPlanCount !== null ? " Plan count is loaded directly from contract state." : ""}
         </p>
+      )}
+
+      {recentCharges !== null && recentCharges.length > 0 && (
+        <Panel title="Recent activity" subtitle="Latest charges settled across the protocol">
+          <div className="space-y-2">
+            {recentCharges.map((charge) => (
+              <div
+                key={charge.tx_hash}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-edge p-3"
+              >
+                <div className="flex items-center gap-3 text-sm">
+                  <span className="font-medium">{charge.plan_name || `Plan #${charge.plan_id}`}</span>
+                  <span className="mono text-xs text-muted">tx</span>
+                  <TxLink hash={charge.tx_hash} />
+                </div>
+                <div className="flex flex-wrap items-center gap-3 text-sm text-muted">
+                  <span className="tabular-nums font-medium text-fg">
+                    {formatAmount(charge.amount, tokenMeta)}
+                  </span>
+                  <time dateTime={new Date(charge.timestamp * 1000).toISOString()}>
+                    {formatDate(charge.timestamp)}
+                  </time>
+                  <span className="mono truncate max-w-[10rem]">
+                    {shortAddress(charge.tx_hash, 6)}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
       )}
 
       <Panel title="How it works">

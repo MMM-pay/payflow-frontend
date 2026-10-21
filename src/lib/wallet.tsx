@@ -13,6 +13,7 @@ import {
 import type { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit";
 import { config } from "./config";
 import type { SignXdr } from "./payflow";
+import { translateSignatureError } from "./signature-error";
 
 export const STORAGE_KEY = "payflow.wallet";
 export const ACCOUNT_CHANGED_ERROR =
@@ -300,11 +301,15 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         throw new Error(ACCOUNT_CHANGED_ERROR);
       }
 
-      const { signedTxXdr } = await kit.signTransaction(xdrString, {
-        networkPassphrase: config.networkPassphrase,
-        address,
-      });
-      return signedTxXdr;
+      try {
+        const { signedTxXdr } = await kit.signTransaction(xdrString, {
+          networkPassphrase: config.networkPassphrase,
+          address,
+        });
+        return signedTxXdr;
+      } catch (err) {
+        translateSignatureError(err);
+      }
     },
     [address, networkMismatch, applyAccountChange],
   );

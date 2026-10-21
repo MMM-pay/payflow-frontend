@@ -23,10 +23,18 @@ const wallet = vi.hoisted(() => ({
 }));
 
 const apiMock = vi.hoisted(() => ({
+  isConfigured: vi.fn(() => true),
   plans: vi.fn(),
   mandatesFor: vi.fn(),
   merchantSummary: vi.fn(),
   merchantRevenue: vi.fn(),
+  merchantChurn: vi.fn(),
+  planStats: vi.fn(),
+  stream: vi.fn(),
+  webhooks: vi.fn(),
+  addWebhook: vi.fn(),
+  deleteWebhook: vi.fn(),
+  testWebhook: vi.fn(),
 }));
 
 const payflowMock = vi.hoisted(() => ({
@@ -41,11 +49,15 @@ const chainMock = vi.hoisted(() => ({
   chainMandatesFor: vi.fn(),
   chainMerchantSummary: vi.fn(),
   chainPlansOf: vi.fn(),
+  chainPlanSubscriberCount: vi.fn(),
   endable: vi.fn(() => false),
 }));
 
 vi.mock("@/lib/wallet", () => ({ useWallet: () => wallet }));
-vi.mock("@/lib/api", () => ({ api: apiMock }));
+vi.mock("@/lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api")>();
+  return { api: apiMock, checkWebhookUrl: actual.checkWebhookUrl };
+});
 vi.mock("@/lib/payflow", () => ({ payflow: payflowMock, MAX_NAME_LEN: 64, nameByteLength: (n: string) => n.length }));
 vi.mock("@/lib/chain", () => chainMock);
 
@@ -54,10 +66,15 @@ const MERCHANT = "GCH5VHWNS24VI75HLDBHK4SSJ2E5XZA5IB6XEZTNE4BJH7AKZI6Z3MHU";
 beforeEach(() => {
   wallet.address = MERCHANT;
   wallet.networkMismatch = false;
+  apiMock.isConfigured.mockReturnValue(true);
   apiMock.plans.mockResolvedValue({ plans: [] });
   apiMock.mandatesFor.mockResolvedValue({ mandates: [] });
   apiMock.merchantSummary.mockResolvedValue(null);
   apiMock.merchantRevenue.mockResolvedValue(null);
+  apiMock.merchantChurn.mockResolvedValue(null);
+  apiMock.planStats.mockResolvedValue(null);
+  apiMock.webhooks.mockResolvedValue([]);
+  chainMock.chainPlanSubscriberCount.mockResolvedValue(null);
   payflowMock.feeBps.mockResolvedValue(100); // 1%
   payflowMock.createPlan.mockResolvedValue("tx-hash");
   chainMock.chainMerchantSummary.mockReturnValue({
@@ -79,6 +96,17 @@ async function fillPrice(value: string): Promise<HTMLButtonElement> {
   const field = (await screen.findByLabelText(/price/i)) as HTMLInputElement;
   fireEvent.change(field, { target: { value } });
   return screen.getByRole("button", { name: /publish plan/i }) as HTMLButtonElement;
+}
+
+/** Switch the billing-period picker to Custom and set the count (and unit). */
+async function chooseCustom(count: string, unit = "day"): Promise<void> {
+  fireEvent.change(await screen.findByLabelText(/billing period/i), {
+    target: { value: "custom" },
+  });
+  fireEvent.change(screen.getByLabelText(/custom period/i), { target: { value: count } });
+  if (unit !== "day") {
+    fireEvent.change(screen.getByLabelText(/^unit$/i), { target: { value: unit } });
+  }
 }
 
 describe("MerchantPage publish form", () => {
@@ -193,5 +221,139 @@ describe("MerchantPage publish form", () => {
     expect(screen.getByRole("button", { name: /publish plan/i }).hasAttribute("disabled")).toBe(
       false,
     );
+  });
+});
+
+/**
+ * Issue #29: five fixed periods meant a merchant billing fortnightly or
+ * quarterly could not use Payflow. The picker keeps those five and adds
+ * Custom; these tests pin the conversion to whole seconds and the acceptance
+ * criterion — a below-minimum period is rejected in the form, with the
+ * contract's wording, so the wallet never opens for a doomed publish.
+ */
+describe("MerchantPage period picker", () => {
+  it("offers the original five presets plus Custom, opening on monthly", async () => {
+    render(<MerchantPage />);
+
+    const select = (await screen.findByLabelText(/billing period/i)) as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => o.textContent)).toEqual([
+      "Every minute (demo)",
+      "Daily",
+      "Weekly",
+      "Monthly",
+      "Yearly",
+      "Custom…",
+    ]);
+    expect(select.value).toBe("2592000");
+    // Nothing custom is on screen until it is asked for.
+    expect(screen.queryByLabelText(/custom period/i)).toBeNull();
+  });
+
+  it("publishes a fortnightly period once Custom is chosen", async () => {
+    render(<MerchantPage />);
+
+    const publish = await fillPrice("1");
+    await chooseCustom("2", "week");
+
+    expect(publish.disabled).toBe(false);
+    fireEvent.click(publish);
+
+    await waitFor(() => expect(payflowMock.createPlan).toHaveBeenCalled());
+    expect(payflowMock.createPlan.mock.calls[0]?.[2]).toMatchObject({ period: 1_209_600 });
+  });
+
+  it("publishes a quarterly period counted in months", async () => {
+    render(<MerchantPage />);
+
+    const publish = await fillPrice("1");
+    await chooseCustom("3", "month");
+
+    expect(publish.disabled).toBe(false);
+    fireEvent.click(publish);
+
+    await waitFor(() => expect(payflowMock.createPlan).toHaveBeenCalled());
+    expect(payflowMock.createPlan.mock.calls[0]?.[2]).toMatchObject({ period: 7_776_000 });
+  });
+
+  it("still publishes the monthly default when Custom is never chosen", async () => {
+    render(<MerchantPage />);
+
+    const publish = await fillPrice("1");
+    fireEvent.click(publish);
+
+    await waitFor(() => expect(payflowMock.createPlan).toHaveBeenCalled());
+    expect(payflowMock.createPlan.mock.calls[0]?.[2]).toMatchObject({ period: 2_592_000 });
+  });
+
+  it("rejects a below-minimum custom period with the contract's own words", async () => {
+    render(<MerchantPage />);
+
+    const publish = await fillPrice("1");
+    await chooseCustom("0");
+
+    expect(publish.disabled).toBe(true);
+    expect(screen.getByText("Billing period must be at least 60 seconds.")).toBeTruthy();
+    // Disabled buttons swallow clicks, so this stays an unsubmitted form even
+    // if something re-dispatches one.
+    fireEvent.click(publish);
+    expect(payflowMock.createPlan).not.toHaveBeenCalled();
+  });
+
+  it("keeps Publish off for an empty custom count and says what is missing", async () => {
+    render(<MerchantPage />);
+
+    const publish = await fillPrice("1");
+    await chooseCustom("");
+
+    // Choosing Custom is itself the request for a period, so the form names
+    // the gap at once rather than waiting to be told — but nothing below the
+    // 60-second floor (an uncomputed period included) can be published.
+    expect(publish.disabled).toBe(true);
+    expect(screen.getByText("Enter a whole number of days.")).toBeTruthy();
+  });
+
+  it("points a bad custom count at its message for screen readers", async () => {
+    render(<MerchantPage />);
+    await fillPrice("1");
+    await chooseCustom("0");
+
+    const field = screen.getByLabelText(/custom period/i);
+    expect(field.getAttribute("aria-invalid")).toBe("true");
+    const describedBy = field.getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    expect(document.getElementById(describedBy as string)?.textContent).toBe(
+      "Billing period must be at least 60 seconds.",
+    );
+  });
+
+  it("rejects a fractional count and names the unit in the message", async () => {
+    render(<MerchantPage />);
+
+    const publish = await fillPrice("1");
+    await chooseCustom("2.5");
+
+    expect(publish.disabled).toBe(true);
+    expect(screen.getByText("Enter a whole number of days.")).toBeTruthy();
+
+    // Changing the unit re-labels the complaint: the count is still unusable,
+    // and the message still names the unit now selected.
+    fireEvent.change(screen.getByLabelText(/^unit$/i), { target: { value: "week" } });
+    expect(screen.getByText("Enter a whole number of weeks.")).toBeTruthy();
+  });
+
+  it("lets the merchant change their mind back to a preset", async () => {
+    render(<MerchantPage />);
+
+    const publish = await fillPrice("1");
+    await chooseCustom("0");
+    expect(publish.disabled).toBe(true);
+
+    fireEvent.change(screen.getByLabelText(/billing period/i), { target: { value: "604800" } });
+    expect(screen.queryByLabelText(/custom period/i)).toBeNull();
+    expect(publish.disabled).toBe(false);
+
+    fireEvent.click(publish);
+    await waitFor(() => expect(payflowMock.createPlan).toHaveBeenCalled());
+    expect(payflowMock.createPlan.mock.calls[0]?.[2]).toMatchObject({ period: 604_800 });
   });
 });
