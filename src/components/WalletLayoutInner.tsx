@@ -76,6 +76,16 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
     setOpen(false);
   }, [pathname]);
 
+  // Register service worker for app shell caching in PWA mode
+  useEffect(() => {
+    if (typeof window !== "undefined" && "serviceWorker" in navigator) {
+      const bp = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+      const swUrl = `${bp}/sw.js`;
+      const scope = `${bp}/`;
+      navigator.serviceWorker.register(swUrl, { scope }).catch(() => {});
+    }
+  }, []);
+
   // While open, move focus into the menu and let Escape close it. Escape
   // returns focus to the toggle so a keyboard user does not lose their place.
   useEffect(() => {

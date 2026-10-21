@@ -203,6 +203,31 @@ export async function chainMandatesFor(
   return mandates.map(mandateToApi).sort((a, b) => b.id - a.id);
 }
 
+/**
+ * Read a single mandate from contract state.
+ */
+export async function chainMandate(
+  source: string,
+  mandateId: number,
+): Promise<ApiMandate | null> {
+  try {
+    const raw = await payflow.getMandate(source, mandateId);
+    if (!raw) return null;
+    return mandateToApi(raw);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reads protocol counters directly from contract state when the indexer is offline.
+ * Only returns what contract state can determine (plans count from next_plan_id).
+ */
+export async function chainProtocolStats(source: string): Promise<{ plans: number }> {
+  const next = Number(await payflow.nextPlanId(source));
+  return { plans: Math.max(0, next - 1) };
+}
+
 /** A merchant can end a mandate that could still be charged. */
 export function endable(m: Pick<ApiMandate, "status">): boolean {
   return m.status === "Active" || m.status === "Paused";

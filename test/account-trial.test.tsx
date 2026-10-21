@@ -23,7 +23,12 @@ const wallet = vi.hoisted(() => ({
   signXdr: vi.fn(),
 }));
 
-const apiMock = vi.hoisted(() => ({ mandatesOf: vi.fn(), vaultHistory: vi.fn() }));
+const apiMock = vi.hoisted(() => ({
+  isConfigured: vi.fn(() => true),
+  mandatesOf: vi.fn(),
+  vaultHistory: vi.fn(),
+  stream: vi.fn(),
+}));
 const payflowMock = vi.hoisted(() => ({
   vaultBalance: vi.fn(),
   deposit: vi.fn(),
@@ -35,10 +40,16 @@ const payflowMock = vi.hoisted(() => ({
 const chainMock = vi.hoisted(() => ({ chainMandatesOf: vi.fn() }));
 
 vi.mock("@/lib/wallet", () => ({ useWallet: () => wallet }));
-vi.mock("@/lib/api", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/api")>();
-  return { api: apiMock, checkWebhookUrl: actual.checkWebhookUrl };
-});
+
+vi.mock("@/lib/api", () => ({
+  api: {
+    isConfigured: apiMock.isConfigured,
+    mandatesOf: apiMock.mandatesOf,
+    vaultHistory: apiMock.vaultHistory,
+    stream: apiMock.stream,
+  },
+  checkWebhookUrl: vi.fn(),
+}));
 vi.mock("@/lib/payflow", () => ({
   payflow: payflowMock,
   // This page's tests predate payflow-contract#41; the dated pause stays off.

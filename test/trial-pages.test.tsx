@@ -32,6 +32,7 @@ const apiMock = vi.hoisted(() => ({
   merchantRevenue: vi.fn(),
   merchantChurn: vi.fn(),
   planStats: vi.fn(),
+  stream: vi.fn(),
   webhooks: vi.fn(),
   addWebhook: vi.fn(),
   deleteWebhook: vi.fn(),

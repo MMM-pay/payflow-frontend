@@ -1,7 +1,9 @@
 import {
   Address,
+  Asset,
   BASE_FEE,
   Contract,
+  Operation,
   StrKey,
   TransactionBuilder,
   nativeToScVal,
@@ -878,4 +880,90 @@ export const payflow = {
       arg.u64(mandateId),
       arg.i128(amount),
     ]),
+
+  /** Check if an account has established a trustline on Horizon */
+  checkTrustline: (
+    address: string,
+    assetCode: string,
+    assetIssuer?: string,
+    horizonUrl: string = config.horizonUrl,
+  ) => checkTrustline(address, assetCode, assetIssuer, horizonUrl),
+
+  /** Establish a trustline for a classic Stellar asset via ChangeTrust */
+  addTrustline: (
+    source: string,
+    sign: SignXdr,
+    assetCode: string,
+    assetIssuer: string,
+  ) => addTrustline(source, sign, assetCode, assetIssuer),
 };
+
+/**
+ * Checks whether an account has an established trustline for a classic asset on Horizon.
+ * Returns true if the account holds or has a trustline for the specified asset.
+ */
+export async function checkTrustline(
+  address: string,
+  assetCode: string,
+  assetIssuer?: string,
+  horizonUrl: string = config.horizonUrl,
+): Promise<boolean> {
+  if (!address || !assetCode || !horizonUrl) return true;
+  try {
+    const res = await fetch(`${horizonUrl}/accounts/${address}`, { cache: "no-store" });
+    if (!res.ok) return false;
+    const data = (await res.json()) as {
+      balances?: Array<{ asset_type: string; asset_code?: string; asset_issuer?: string }>;
+    };
+    if (!data.balances) return false;
+    return data.balances.some(
+      (b) =>
+        b.asset_code === assetCode &&
+        (!assetIssuer || b.asset_issuer === assetIssuer),
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Builds and submits a ChangeTrust operation to establish a trustline for a classic asset.
+ */
+export async function addTrustline(
+  source: string,
+  sign: SignXdr,
+  assetCode: string,
+  assetIssuer: string,
+): Promise<string> {
+  const account = await server.getAccount(source);
+  const tx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: config.networkPassphrase,
+  })
+    .addOperation(
+      Operation.changeTrust({
+        asset: new Asset(assetCode, assetIssuer),
+      }),
+    )
+    .setTimeout(30)
+    .build();
+
+  let signedXdr: string;
+  try {
+    signedXdr = await sign(tx.toXDR());
+  } catch (err) {
+    translateSignatureError(err);
+    throw err;
+  }
+
+  const signed = TransactionBuilder.fromXDR(signedXdr, config.networkPassphrase);
+  const sent = await server.sendTransaction(signed);
+  if (sent.status === "ERROR") {
+    throw new Error(`changeTrust rejected: ${JSON.stringify(sent.errorResult)}`);
+  }
+  const confirmed = await pollTransaction(sent.hash);
+  if (confirmed.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
+    throw new Error(`changeTrust failed on-chain (${confirmed.status})`);
+  }
+  return sent.hash;
+}
