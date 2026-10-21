@@ -195,6 +195,18 @@ describe("api.planStats", () => {
         expect(fetchMock).not.toHaveBeenCalled();
       });
 
+      it("does not issue a request for ordinary endpoints when the backend is unset", async () => {
+        vi.stubEnv("NEXT_PUBLIC_API_URL", "");
+        vi.resetModules();
+        const { api: unconfiguredApi } = await import("@/lib/api");
+        const fetchMock = vi.fn();
+        vi.stubGlobal("fetch", fetchMock);
+
+        expect(await unconfiguredApi.stats()).toBeNull();
+        expect(await unconfiguredApi.plans()).toBeNull();
+        expect(fetchMock).not.toHaveBeenCalled();
+      });
+
       it("returns null when the endpoint is unavailable or fails", async () => {
         mockFetch(async () => jsonResponse({ error: "not found" }, 404, false));
         expect(await api.merchantChurn("GABC")).toBeNull();

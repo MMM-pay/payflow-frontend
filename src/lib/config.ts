@@ -12,6 +12,20 @@ function required(name: string, value: string | undefined): string {
   return value;
 }
 
+function httpsOrigins(value: string | undefined): string[] {
+  return (value ?? "")
+    .split(",")
+    .map((entry) => {
+      try {
+        const url = new URL(entry.trim());
+        return url.protocol === "https:" ? url.origin : "";
+      } catch {
+        return "";
+      }
+    })
+    .filter(Boolean);
+}
+
 export interface ClassicAsset {
   code: string;
   issuer: string;
@@ -59,7 +73,11 @@ export const config = {
   networkPassphrase:
     process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015",
   network: process.env.NEXT_PUBLIC_STELLAR_NETWORK ?? "TESTNET",
-  apiUrl: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080",
+  apiUrl:
+    process.env.NEXT_PUBLIC_API_URL === undefined
+      ? "http://localhost:8080"
+      : process.env.NEXT_PUBLIC_API_URL.trim(),
+  stellarTomlOrigins: httpsOrigins(process.env.NEXT_PUBLIC_STELLAR_TOML_ORIGINS),
   /**
    * Source account used for read-only contract simulation before a wallet is
    * connected. Simulation never touches this account — it only has to exist on

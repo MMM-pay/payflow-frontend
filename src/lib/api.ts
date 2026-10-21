@@ -269,6 +269,7 @@ export type StreamEvent =
  * app still works when the backend is down.
  */
 async function get<T>(path: string): Promise<T | null> {
+  if (!apiConfigured()) return null;
   try {
     const res = await fetch(`${config.apiUrl}${path}`, { cache: "no-store" });
     if (!res.ok) return null;
@@ -279,6 +280,7 @@ async function get<T>(path: string): Promise<T | null> {
 }
 
 async function post<T>(path: string, body: unknown): Promise<T | null> {
+  if (!apiConfigured()) return null;
   try {
     const res = await fetch(`${config.apiUrl}${path}`, {
       method: "POST",
@@ -294,6 +296,7 @@ async function post<T>(path: string, body: unknown): Promise<T | null> {
 }
 
 async function del(path: string): Promise<boolean> {
+  if (!apiConfigured()) return false;
   try {
     const res = await fetch(`${config.apiUrl}${path}`, {
       method: "DELETE",
@@ -305,9 +308,14 @@ async function del(path: string): Promise<boolean> {
   }
 }
 
+function apiConfigured(): boolean {
+  return process.env.NEXT_PUBLIC_API_URL === undefined ||
+    Boolean(process.env.NEXT_PUBLIC_API_URL.trim());
+}
+
 export const api = {
   /** Whether the backend URL was explicitly supplied for this build. */
-  isConfigured: () => Boolean(process.env.NEXT_PUBLIC_API_URL?.trim()),
+  isConfigured: apiConfigured,
   stats: () => get<ProtocolStats>("/api/stats"),
   plans: (merchant?: string) =>
     get<{ plans: ApiPlan[] }>(`/api/plans${merchant ? `?merchant=${merchant}` : ""}`),
