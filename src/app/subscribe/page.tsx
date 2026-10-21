@@ -29,7 +29,11 @@ export default function SubscribePage() {
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const request = useRef(0);
   const walletState = useRef({ address, networkMismatch });
-  walletState.current = { address, networkMismatch };
+  // Mirrored in an effect: the wallet-changed guard is read from the signing
+  // flow (event handler / async callback), never during render.
+  useEffect(() => {
+    walletState.current = { address, networkMismatch };
+  }, [address, networkMismatch]);
 
   // Each plan can name a different token, so the cards read their own.
   const metas = useTokenMetas((plans ?? []).map((p) => p.token));
