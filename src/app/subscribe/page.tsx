@@ -8,13 +8,159 @@ import { chainPlans } from "@/lib/chain";
 import { config } from "@/lib/config";
 import { payflow } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
-import { formatDate, formatWhen, formatPeriod, fromStroops } from "@/lib/format";
+import {
+  formatAmount,
+  formatDate,
+  formatWhen,
+  formatPeriod,
+  fromStroops,
+  type TokenMeta,
+} from "@/lib/format";
 import { formatTrialLength, trialBadge, trialSeconds } from "@/lib/trial";
-import { planAvailability } from "@/lib/availability";
+import { availabilityInteger, planAvailability } from "@/lib/availability";
+import {
+  COMPARE_LIMIT,
+  planMonthlyEquivalent,
+  plansForComparison,
+  togglePlanComparison,
+} from "@/lib/compare";
 import { metaFor, useTokenMetas } from "@/lib/token";
 import { filterAndSortPlans, type PlanPeriodOption, type PlanSortOption } from "@/lib/plans";
 import { formatUsdEstimate, formatUsdcEstimate, useXlmUsdPrice } from "@/lib/price";
 import { Empty, MerchantAccount, Notice, Panel, SkeletonPlanCards, TxLink } from "@/components/ui";
+
+/** Remaining seats in words, without inventing a count the source cannot provide. */
+function seatsLabel(plan: ApiPlan, now: number): string {
+  const availability = planAvailability(plan, now);
+  if (availability.seats !== null) {
+    return `${availability.seats} ${availability.seats === 1 ? "seat" : "seats"} left`;
+  }
+  const cap = availabilityInteger(plan.max_subscribers);
+  if (cap && cap > 0) return "Count unavailable";
+  return "Unlimited";
+}
+
+/**
+ * The comparison itself is a real table: plan names are column headers and
+ * each attribute is a row header, so a screen reader announces "Price,
+ * Monthly Software, 5 XLM" instead of an undifferentiated run of cells. The
+ * scroll container is focusable and labelled for narrow screens, where the
+ * three columns cannot fit without horizontal scrolling.
+ */
+function ComparisonTable({
+  plans,
+  metas,
+  now,
+}: {
+  plans: ApiPlan[];
+  metas: Map<string, TokenMeta>;
+  now: number;
+}) {
+  return (
+    <div
+      className="mt-3 overflow-x-auto rounded-lg border border-edge"
+      tabIndex={0}
+      role="region"
+      aria-label="Plan comparison, scroll horizontally if needed"
+    >
+      <table className="w-full min-w-[34rem] border-collapse text-sm">
+        <caption className="sr-only">
+          Side-by-side comparison of {plans.length} selected plans
+        </caption>
+        <thead>
+          <tr className="border-b border-edge bg-fg/5">
+            <th scope="col" className="px-3 py-2 text-left font-medium text-muted">
+              Feature
+            </th>
+            {plans.map((plan) => (
+              <th key={plan.id} scope="col" className="px-3 py-2 text-left font-semibold">
+                {plan.name || `Plan #${plan.id}`}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          <tr className="border-b border-edge/60">
+            <th scope="row" className="px-3 py-2 text-left font-medium text-muted">
+              Price
+            </th>
+            {plans.map((plan) => {
+              const meta = metaFor(metas, plan.token);
+              return (
+                <td key={plan.id} className="px-3 py-2 tabular-nums">
+                  {fromStroops(plan.amount, 4, meta.decimals)}{" "}
+                  <span className="text-xs text-muted">{meta.symbol}</span>
+                </td>
+              );
+            })}
+          </tr>
+          <tr className="border-b border-edge/60">
+            <th scope="row" className="px-3 py-2 text-left font-medium text-muted">
+              Billing period
+            </th>
+            {plans.map((plan) => (
+              <td key={plan.id} className="px-3 py-2">
+                {formatPeriod(plan.period)}
+              </td>
+            ))}
+          </tr>
+          <tr className="border-b border-edge/60">
+            <th scope="row" className="px-3 py-2 text-left font-medium text-muted">
+              Monthly equivalent
+              <span className="block text-xs font-normal">30-day month</span>
+            </th>
+            {plans.map((plan) => {
+              const meta = metaFor(metas, plan.token);
+              const monthly = planMonthlyEquivalent(plan);
+              return (
+                <td key={plan.id} className="px-3 py-2 tabular-nums">
+                  {monthly === null ? "—" : formatAmount(monthly, meta)}
+                </td>
+              );
+            })}
+          </tr>
+          <tr className="border-b border-edge/60">
+            <th scope="row" className="px-3 py-2 text-left font-medium text-muted">
+              Free trial
+            </th>
+            {plans.map((plan) => {
+              const trial = trialSeconds(plan);
+              return (
+                <td key={plan.id} className="px-3 py-2">
+                  {plan.trial === undefined
+                    ? "Not reported"
+                    : trial > 0
+                      ? formatTrialLength(trial)
+                      : "None"}
+                </td>
+              );
+            })}
+          </tr>
+          <tr className="border-b border-edge/60">
+            <th scope="row" className="px-3 py-2 text-left font-medium text-muted">
+              Seats
+            </th>
+            {plans.map((plan) => (
+              <td key={plan.id} className="px-3 py-2">
+                {seatsLabel(plan, now)}
+              </td>
+            ))}
+          </tr>
+          <tr>
+            <th scope="row" className="px-3 py-2 text-left font-medium text-muted">
+              Merchant
+            </th>
+            {plans.map((plan) => (
+              <td key={plan.id} className="px-3 py-2">
+                <MerchantAccount value={plan.merchant} />
+              </td>
+            ))}
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 function SubscribeInner() {
   const searchParams = useSearchParams();
@@ -23,6 +169,9 @@ function SubscribeInner() {
 
   const [sort, setSort] = useState<PlanSortOption>(sortParam);
   const [period, setPeriod] = useState<PlanPeriodOption>(periodParam);
+  // Plans ticked for the side-by-side table, in the order they were picked.
+  const [compareIds, setCompareIds] = useState<number[]>([]);
+  const [showComparison, setShowComparison] = useState(false);
 
   const { address, networkMismatch, signXdr } = useWallet();
   const [plans, setPlans] = useState<ApiPlan[] | null>(null);
@@ -161,6 +310,31 @@ function SubscribeInner() {
   const filteredPlans = useMemo(() => {
     return filterAndSortPlans(active, { sort, period });
   }, [active, sort, period]);
+  // Compare from the full active list rather than the filtered one: changing
+  // the filter must not silently drop a column the subscriber already picked.
+  const comparedPlans = useMemo(
+    () => plansForComparison(active, compareIds),
+    [active, compareIds],
+  );
+
+  function toggleCompare(planId: number) {
+    const next = togglePlanComparison(compareIds, planId);
+    setCompareIds(next);
+    // A one-plan table is not a comparison; close it rather than leaving a
+    // stale table on screen when the second plan is unticked.
+    if (next.length < 2) setShowComparison(false);
+  }
+
+  function clearComparison() {
+    setCompareIds([]);
+    setShowComparison(false);
+  }
+
+  // A refresh can deactivate one of the selected plans; a table with one
+  // column is not a comparison, so close it rather than leave it half full.
+  useEffect(() => {
+    if (comparedPlans.length < 2) setShowComparison(false);
+  }, [comparedPlans.length]);
 
   return (
     <div className="space-y-6">
@@ -273,6 +447,45 @@ function SubscribeInner() {
             </span>
           </div>
 
+          {compareIds.length > 0 && (
+            <section
+              className="rounded-lg border border-edge bg-surface/50 p-3"
+              aria-label="Plan comparison"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm text-muted" role="status">
+                  {compareIds.length} of {COMPARE_LIMIT} plans selected for comparison
+                  {compareIds.length === COMPARE_LIMIT ? " (maximum)" : ""}.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={comparedPlans.length < 2}
+                    aria-expanded={showComparison}
+                    aria-controls="plan-comparison"
+                    onClick={() => setShowComparison((open) => !open)}
+                  >
+                    {showComparison ? "Hide comparison" : "Compare plans"}
+                  </button>
+                  <button type="button" className="btn-ghost" onClick={clearComparison}>
+                    Clear selection
+                  </button>
+                </div>
+              </div>
+              {comparedPlans.length < 2 && (
+                <p className="mt-2 text-xs text-muted">
+                  Select at least two plans to compare them side by side.
+                </p>
+              )}
+              {showComparison && comparedPlans.length >= 2 && (
+                <div id="plan-comparison">
+                  <ComparisonTable plans={comparedPlans} metas={metas} now={now} />
+                </div>
+              )}
+            </section>
+          )}
+
           {filteredPlans.length === 0 ? (
             <Empty
               title="No plans match this filter"
@@ -300,8 +513,25 @@ function SubscribeInner() {
                     : meta.symbol === "USDC"
                       ? formatUsdcEstimate(plan.amount, meta.decimals)
                       : null;
+                const selectedForCompare = compareIds.includes(plan.id);
                 return (
-                  <Panel key={plan.id} title={plan.name || `Plan #${plan.id}`}>
+                  <Panel
+                    key={plan.id}
+                    title={plan.name || `Plan #${plan.id}`}
+                    actions={
+                      <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg px-1 py-1 text-sm text-muted">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 accent-accent"
+                          checked={selectedForCompare}
+                          disabled={!selectedForCompare && compareIds.length >= COMPARE_LIMIT}
+                          onChange={() => toggleCompare(plan.id)}
+                          aria-label={`Compare ${plan.name || `Plan #${plan.id}`}`}
+                        />
+                        Compare
+                      </label>
+                    }
+                  >
                     <div className="space-y-3">
                       <div>
                         <div className="flex flex-wrap items-baseline gap-2">

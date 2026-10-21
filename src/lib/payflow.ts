@@ -12,6 +12,7 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 import { config } from "./config";
+import { mandateStatus } from "./mandate-status";
 import { MIN_PERIOD_MESSAGE } from "./period";
 import {
   SIGNATURE_CANCELLED_MESSAGE,
@@ -421,10 +422,7 @@ export interface Mandate {
  * with `=== "Active"` is always false, which on the contract-only path hid
  * "Charge now" and made Pause send a resume.
  */
-export function mandateStatus(raw: unknown): string {
-  if (Array.isArray(raw)) return String(raw[0] ?? "");
-  return String(raw ?? "");
-}
+export { mandateStatus };
 
 // ---------------------------------------------------------------------------
 // Session cache for get_plan.
