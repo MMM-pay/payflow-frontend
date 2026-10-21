@@ -53,10 +53,22 @@ import {
   vaultSupportsDepositFor,
   validateRecipient,
 } from "@/lib/payflow";
-import { mandateStatus } from "@/lib/payflow";
+import { mandateStatus } from "@/lib/mandate-status";
 import { createdAtDate, paymentDateRange, paymentRow, sortPaymentsNewestFirst } from "@/lib/payments";
 import { useWallet } from "@/lib/wallet";
 import { useStream } from "@/lib/stream";
+import {
+  addReminder,
+  buildReminderSchedule,
+  hasReminder,
+  pruneEndedReminders,
+  readReminderPrefs,
+  reminderEligible,
+  removeReminder,
+  saveReminderPrefs,
+  type ReminderPrefs,
+  type ScheduledReminder,
+} from "@/lib/reminders";
 import {
   checkAmount,
   formatAmount,
@@ -133,6 +145,13 @@ function AccountInner() {
   // Updated by the SSE stream when available.
   const [pausedBy, setPausedBy] = useState<Map<number, "subscriber" | "merchant">>(new Map());
   const [missingTrustlines, setMissingTrustlines] = useState<ConfiguredToken[]>([]);
+  // Reminder preferences are per connected address. Loading them never asks
+  // for notification permission; only the "Remind me" click can do that.
+  const [reminderPrefs, setReminderPrefs] = useState<ReminderPrefs>({});
+  const [reminderBusy, setReminderBusy] = useState<number | null>(null);
+  // Notifications already shown for a particular charge, so a reload or a
+  // data refresh does not repeat one the subscriber has seen.
+  const shownReminders = useRef<Set<string>>(new Set());
 
   const configuredTokens: readonly ConfiguredToken[] =
     (config as unknown as { tokens?: ConfiguredToken[] }).tokens ?? DEFAULT_TOKENS;
@@ -141,6 +160,9 @@ function AccountInner() {
   // the closure's `who` is the account the request started for, which may
   // no longer be the account whose page is on screen.
   const addressRef = useRef<string | null>(viewAddress);
+  // Keep the guard current on every render: an async permission prompt can
+  // resolve after a wallet switch, before the next `load` has started.
+  addressRef.current = viewAddress;
 
   // The vault holds the configured token; each mandate carries the token it
   // was opened against, which the indexer does not report.
@@ -279,7 +301,171 @@ function AccountInner() {
     setConfirmCancel(null);
     setPauseFor(null);
     setFundFor(null);
+    setReminderBusy(null);
   }, [address]);
+
+  // Preferences belong to the connected subscriber, not the browser. Reading
+  // them is silent: no permission prompt is allowed on page load.
+  useEffect(() => {
+    if (!address || typeof window === "undefined") {
+      setReminderPrefs({});
+      return;
+    }
+    setReminderPrefs(readReminderPrefs(window.localStorage, address));
+  }, [address]);
+
+  // A mandate that ended — cancelled here, by the merchant, or settled to its
+  // charge cap — must stop reminding. `pruneEndedReminders` reads the status
+  // through `mandateStatus`, so `["Cancelled"]` from contract state and
+  // `"Cancelled"` from the indexer behave the same.
+  useEffect(() => {
+    if (!address || mandates === null || typeof window === "undefined") return;
+    const pruned = pruneEndedReminders(reminderPrefs, mandates);
+    if (pruned.removed.length === 0) return;
+    setReminderPrefs(pruned.prefs);
+    saveReminderPrefs(window.localStorage, address, pruned.prefs);
+  }, [address, mandates, reminderPrefs]);
+
+  /**
+   * Deliver a reminder through the app's service worker when one is
+   * installed, so clicking it opens the account page. A browser without a
+   * service worker falls back to a page notification.
+   */
+  const showReminder = useCallback(async (reminder: ScheduledReminder) => {
+    if (typeof window === "undefined") return;
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    const options: NotificationOptions & { icon?: string } = {
+      body: reminder.body,
+      tag: reminder.tag,
+      icon: `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/icon-192.png`,
+    };
+    if ("serviceWorker" in navigator) {
+      try {
+        const registration = await navigator.serviceWorker.ready;
+        if (registration && "showNotification" in registration) {
+          await registration.showNotification(reminder.title, options);
+          return;
+        }
+      } catch {
+        // Fall through to the page notification below.
+      }
+    }
+    new Notification(reminder.title, options);
+  }, []);
+
+  /**
+   * Keep the service worker and this tab in step with the reminder set.
+   *
+   * Where the browser supports scheduled notifications (`TimestampTrigger`),
+   * the installed PWA hands the schedule to the service worker and the page
+   * sets no timer. Otherwise the page holds the timers for as long as it is
+   * open — the limitation the panel text explains.
+   */
+  useEffect(() => {
+    if (!address || typeof window === "undefined" || typeof navigator === "undefined") return;
+    const schedule = buildReminderSchedule(mandates ?? [], reminderPrefs, Date.now());
+    const payload = schedule.map((reminder) => ({
+      id: reminder.mandateId,
+      at: reminder.at,
+      title: reminder.title,
+      body: reminder.body,
+      tag: reminder.tag,
+    }));
+
+    if ("serviceWorker" in navigator) {
+      // Send an empty list when nothing is enabled, which also cancels timers
+      // the worker was holding from a previous render.
+      navigator.serviceWorker.ready
+        .then((registration) => {
+          registration.active?.postMessage({ type: "payflow-reminders-sync", reminders: payload });
+        })
+        .catch(() => {});
+    }
+
+    const triggerCtor = (window as unknown as { TimestampTrigger?: unknown }).TimestampTrigger;
+    const backgroundScheduling = typeof triggerCtor === "function";
+    if (backgroundScheduling) return;
+
+    // `setTimeout` cannot wait longer than 2^31-1 ms (~24.8 days), and a
+    // monthly reminder is about 29 days away. Walk to the target in chunks
+    // instead of clamping, which would fire days early.
+    const timers = schedule.map((reminder) => {
+      const key = `${reminder.mandateId}:${reminder.nextCharge}`;
+      if (shownReminders.current.has(key)) return () => {};
+      let cancelled = false;
+      let timer: number | null = null;
+      const tick = () => {
+        if (cancelled) return;
+        const remaining = reminder.at - Date.now();
+        if (remaining <= 0) {
+          shownReminders.current.add(key);
+          void showReminder(reminder);
+          return;
+        }
+        timer = window.setTimeout(tick, Math.min(remaining, 2_147_483_647));
+      };
+      tick();
+      return () => {
+        cancelled = true;
+        if (timer !== null) window.clearTimeout(timer);
+      };
+    });
+
+    return () => {
+      for (const cancel of timers) cancel();
+    };
+  }, [address, mandates, reminderPrefs, showReminder]);
+
+  /**
+   * Toggle a mandate's reminder. Permission is requested here and nowhere
+   * else, after a click — never during render or on page load.
+   */
+  async function toggleReminder(mandateId: number) {
+    if (!address || isReadOnly) return;
+    const who = address;
+    const enabled = hasReminder(reminderPrefs, mandateId);
+    setError(null);
+    setInfo(null);
+
+    if (!enabled) {
+      if (typeof window === "undefined" || typeof Notification === "undefined") {
+        setInfo(
+          "This browser does not support notifications. Upcoming charges are still listed here and can be added to your calendar.",
+        );
+        return;
+      }
+      setReminderBusy(mandateId);
+      let permission = Notification.permission;
+      if (permission === "default") {
+        try {
+          permission = await Notification.requestPermission();
+        } catch {
+          permission = "denied";
+        }
+      }
+      if (addressRef.current !== who) return;
+      setReminderBusy(null);
+      if (permission !== "granted") {
+        setInfo(
+          "Notifications are blocked for this site. Allow them in your browser settings, then try again. Nothing was saved.",
+        );
+        return;
+      }
+    }
+
+    const next = enabled
+      ? removeReminder(reminderPrefs, mandateId)
+      : addReminder(reminderPrefs, mandateId);
+    setReminderPrefs(next);
+    if (typeof window !== "undefined") {
+      saveReminderPrefs(window.localStorage, who, next);
+    }
+    setInfo(
+      enabled
+        ? "Reminder off for this subscription."
+        : "Reminder on. You will be notified about a day before the next charge while Payflow is open, or in the background where your browser supports scheduled notifications.",
+    );
+  }
 
   // Probe whether the deployed vault contract carries deposit_for. The sponsor
   // control stays hidden until the contract answers: a contract that predates
@@ -1010,6 +1196,16 @@ function AccountInner() {
         ) : (
           <div className="space-y-3">
             {!isReadOnly && (
+              <p className="mt-3 text-xs text-muted">
+                Browser reminders are opt-in per subscription and ask for
+                notification permission only when you choose “Remind me”. While
+                Payflow is open they fire a day before the charge; in browsers
+                that support scheduled notifications the installed app can
+                deliver them in the background. Reminders stop when a
+                subscription is cancelled or completed.
+              </p>
+            )}
+            {!isReadOnly && (
               <div className="flex gap-2 mt-3">
                 <button
                   type="button"
@@ -1200,6 +1396,26 @@ function AccountInner() {
                             }
                           >
                             Pause
+                          </button>
+                        )}
+                        {/* Opting in is local and needs no network, so a
+                            mismatched wallet network does not block it. */}
+                        {reminderEligible(m) && (
+                          <button
+                            type="button"
+                            className={`btn-ghost ${
+                              hasReminder(reminderPrefs, m.id) ? "text-accent" : ""
+                            }`}
+                            disabled={reminderBusy === m.id}
+                            aria-pressed={hasReminder(reminderPrefs, m.id)}
+                            title="Notify me a day before this subscription charges"
+                            onClick={() => void toggleReminder(m.id)}
+                          >
+                            {reminderBusy === m.id
+                              ? "Saving…"
+                              : hasReminder(reminderPrefs, m.id)
+                                ? "Reminder on"
+                                : "Remind me"}
                           </button>
                         )}
                         {m.status === "Paused" && pausedBy.get(m.id) !== "merchant" && (
