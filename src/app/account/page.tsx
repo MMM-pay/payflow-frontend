@@ -161,9 +161,13 @@ function AccountInner() {
   // the closure's `who` is the account the request started for, which may
   // no longer be the account whose page is on screen.
   const addressRef = useRef<string | null>(viewAddress);
-  // Keep the guard current on every render: an async permission prompt can
-  // resolve after a wallet switch, before the next `load` has started.
-  addressRef.current = viewAddress;
+  // The guard is kept current in an effect rather than during render
+  // (react-hooks/refs). Reads happen in async callbacks; the effect flushes
+  // long before any wallet prompt resolves, so a switch mid-load is still
+  // caught.
+  useEffect(() => {
+    addressRef.current = viewAddress;
+  }, [viewAddress]);
 
   // The vault holds the configured token; each mandate carries the token it
   // was opened against, which the indexer does not report.
