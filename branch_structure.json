@@ -1,0 +1,18 @@
+{
+  "default_branch": "main",
+  "branches": [
+    "feat/issue-79-feat-account-change-a-mandate-s-charge-cap",
+    "main",
+    "origin"
+  ],
+  "parent": {
+    "feat/issue-79-feat-account-change-a-mandate-s-charge-cap": "main",
+    "main": null,
+    "origin": "main"
+  },
+  "order": [
+    "main",
+    "feat/issue-79-feat-account-change-a-mandate-s-charge-cap",
+    "origin"
+  ]
+}
