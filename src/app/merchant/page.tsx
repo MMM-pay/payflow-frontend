@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { api, checkWebhookUrl, type ApiMandate, type ApiPlan, type ApiWebhook, type MerchantSummary, type StreamEvent } from "@/lib/api";
 import { RevenueChart } from "@/components/RevenueChart";
+import { WebhookDeliveryHistory } from "@/components/WebhookDeliveryHistory";
 import { buildCsv, downloadCsv, exportFilename, type ChargeRow } from "@/lib/csv";
 import { fillBuckets, parseRevenue, type BucketSize, type RevenuePoint } from "@/lib/revenue";
 import { parseMerchantChurn, type MerchantChurnMonth } from "@/lib/churn";
@@ -262,8 +263,9 @@ function WebhooksPanel({
   const [webhooks, setWebhooks] = useState<ApiWebhook[] | null>(null);
   const [url, setUrl] = useState("");
   const [events, setEvents] = useState<string[]>([]);
-  const [showSecret, setShowSecret] = useState<{ id: string; secret: string } | null>(null);
+  const [showSecret, setShowSecret] = useState<{ id: string; secret: string; rotated?: boolean } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [confirmRotate, setConfirmRotate] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
@@ -345,6 +347,24 @@ function WebhooksPanel({
     }
   }
 
+  async function rotateSecret(id: string) {
+    setBusy(`webhook-rotate-${id}`);
+    try {
+      const result = await api.rotateWebhookSecret(merchant, id);
+      if (!result) {
+        setError("The backend could not rotate the secret.");
+        return;
+      }
+      setShowSecret({ id, secret: result.secret, rotated: true });
+      setDone("Secret rotated.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+      setConfirmRotate(null);
+    }
+  }
+
   function toggleEvent(value: string) {
     setEvents((prev) => (prev.includes(value) ? prev.filter((e) => e !== value) : [...prev, value]));
   }
@@ -414,7 +434,9 @@ function WebhooksPanel({
 
           {showSecret && (
             <div className="mt-3 rounded-lg border border-accent/40 bg-accent/10 p-3">
-              <p className="text-sm font-medium">Signing secret (shown once)</p>
+              <p className="text-sm font-medium">
+                {showSecret.rotated ? "New signing secret (shown once)" : "Signing secret (shown once)"}
+              </p>
               <div className="mt-2 flex items-end gap-2">
                 <input
                   id="webhook-secret"
@@ -426,7 +448,9 @@ function WebhooksPanel({
                 <CopyButton value={showSecret.secret} label="signing secret" />
               </div>
               <p className="mt-1 text-xs text-muted">
-                Copy it now — the backend never returns this secret again.
+                {showSecret.rotated
+                  ? "Copy it now — the backend never returns this secret again. The old secret remains valid for a brief overlap period so you can update your system without missing events."
+                  : "Copy it now — the backend never returns this secret again."}
               </p>
             </div>
           )}
@@ -442,9 +466,9 @@ function WebhooksPanel({
               </Empty>
             ) : (
               webhooks.map((w) => (
-                <div key={w.id} className="rounded-lg border border-edge p-4">
+                <div key={w.id} className="min-w-0 rounded-lg border border-edge p-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
+                    <div className="min-w-0 max-w-full">
                       <div className="font-medium mono truncate" title={w.url}>
                         {w.url}
                       </div>
@@ -483,6 +507,36 @@ function WebhooksPanel({
                           Delete
                         </button>
                       )}
+                      {confirmRotate === w.id ? (
+                        <>
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            disabled={busy !== null}
+                            onClick={() => setConfirmRotate(null)}
+                          >
+                            Keep current
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-primary"
+                            disabled={busy !== null}
+                            onClick={() => void rotateSecret(w.id)}
+                          >
+                            {busy === `webhook-rotate-${w.id}` ? "Rotating…" : "Confirm: rotate"}
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          disabled={busy !== null}
+                          onClick={() => setConfirmRotate(w.id)}
+                          aria-label={`Rotate secret for webhook ${w.url}`}
+                        >
+                          Rotate secret
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="btn-ghost"
@@ -493,6 +547,7 @@ function WebhooksPanel({
                       </button>
                     </div>
                   </div>
+                  <WebhookDeliveryHistory merchant={merchant} webhookId={String(w.id)} />
                 </div>
               ))
             )}
@@ -2017,7 +2072,7 @@ export default function MerchantPage() {
         )}
       </Panel>
 
-      <WebhooksPanel merchant={address} apiConfigured={api.isConfigured()} />
+      <WebhooksPanel key={`webhooks:${address}`} merchant={address} apiConfigured={api.isConfigured()} />
     </div>
   );
 }

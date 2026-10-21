@@ -1,4 +1,5 @@
 import { config } from "./config";
+import { parseWebhookDeliveries } from "./webhook-deliveries";
 
 export interface ApiPlan {
   id: number;
@@ -372,6 +373,29 @@ export const api = {
     get<{ webhooks: ApiWebhook[] }>(`/api/merchants/${merchant}/webhooks`).then(
       (body) => body?.webhooks ?? null,
     ),
+  /** Proposed authenticated read for payflow-backend#140. Never cache proofs. */
+  webhookDeliveries: async (
+    id: string,
+    proof: { merchant: string; timestamp: number; signature: string },
+    signal?: AbortSignal,
+  ) => {
+    if (!api.isConfigured()) return null;
+    try {
+      const response = await fetch(`${config.apiUrl}/api/webhooks/${encodeURIComponent(id)}/deliveries`, {
+        cache: "no-store",
+        redirect: "error",
+        signal,
+        headers: {
+          "X-Payflow-Merchant": proof.merchant,
+          "X-Payflow-Timestamp": String(proof.timestamp),
+          "X-Payflow-Signature": proof.signature,
+        },
+      });
+      return response.ok ? parseWebhookDeliveries(await response.json()) : null;
+    } catch {
+      return null;
+    }
+  },
   /**
    * Proposed by payflow-backend#5. Returns the created webhook including the
    * signing secret, which the merchant must copy immediately — it is shown
@@ -383,6 +407,16 @@ export const api = {
     del(`/api/merchants/${merchant}/webhooks/${id}`),
   testWebhook: (merchant: string, id: string) =>
     post<{ ok: boolean }>(`/api/merchants/${merchant}/webhooks/${id}/test`, {}),
+  /**
+   * Rotate a webhook's signing secret, proposed by payflow-backend#139.
+   *
+   * Returns the new secret, which the merchant must copy immediately — it is
+   * shown once and never returned again. The old secret remains valid for a
+   * brief overlap period so the merchant can update their system without
+   * missing events.
+   */
+  rotateWebhookSecret: (merchant: string, id: string) =>
+    post<{ secret: string }>(`/api/merchants/${merchant}/webhooks/${id}/rotate-secret`, {}),
   /**
    * Recent charges across the protocol, proposed by payflow-backend#30.
    *

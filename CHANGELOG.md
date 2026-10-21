@@ -33,6 +33,23 @@ All notable changes to payflow-frontend. The format follows
 
 ### Added
 
+- **Side-by-side plan comparison on the subscribe page (#175).** Tick up to
+  three plans and open a table covering price, billing period, 30-day monthly
+  equivalent, free trial, remaining seats and merchant. The monthly figure is
+  pure bigint arithmetic in `src/lib/compare.ts` — never floating point — and
+  the table is a real `<table>` with column and row headers plus a labelled,
+  focusable scroll region for 375px screens. It works from whichever plan list
+  the page loaded, so contract-only mode needs no backend.
+
+- **Opt-in browser reminders before a charge (#174).** A "Remind me" button on
+  each active subscription asks for notification permission only on that
+  click, stores the choice per wallet address, and notifies a day before the
+  next charge. Where the browser supports Notification Triggers the installed
+  service worker holds the schedule; otherwise the page does so while it is
+  open, which the panel explains. Cancelled and completed mandates lose their
+  reminder, including statuses decoded as `["Cancelled"]` from contract state.
+  Scheduling and preference logic is pure in `src/lib/reminders.ts`.
+
 - **Custom billing periods on the publish form.** The five presets stay, and a
   Custom option takes a number of days, weeks or months (30-day months, the
   same seconds the Monthly preset uses) for merchants billing fortnightly or
