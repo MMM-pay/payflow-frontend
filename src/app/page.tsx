@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { api, type ProtocolStats, type RecentCharge } from "@/lib/api";
+import { chainProtocolStats } from "@/lib/chain";
 import { config } from "@/lib/config";
 import { AddressLink, Panel, Stat, TxLink } from "@/components/ui";
 import { formatAmount, formatDate, shortAddress } from "@/lib/format";
@@ -29,6 +30,7 @@ const STEPS = [
 
 export default function HomePage() {
   const [stats, setStats] = useState<ProtocolStats | null>(null);
+  const [contractPlanCount, setContractPlanCount] = useState<number | null>(null);
   const [recentCharges, setRecentCharges] = useState<RecentCharge[] | null>(null);
   const [loaded, setLoaded] = useState(false);
   const metas = useTokenMetas([config.contracts.token]);
@@ -37,7 +39,18 @@ export default function HomePage() {
   useEffect(() => {
     const load = async () => {
       const [s, r] = await Promise.allSettled([api.stats(), api.recentCharges(10)]);
-      if (s.status === "fulfilled") setStats(s.value);
+      const statsValue = s.status === "fulfilled" ? s.value : null;
+      if (statsValue) {
+        setStats(statsValue);
+      } else {
+        // Only read contract counters when the indexer API is unreachable (no extra RPC when API works!)
+        try {
+          const chainStats = await chainProtocolStats(config.readSource);
+          setContractPlanCount(chainStats.plans);
+        } catch {
+          // Keep blank if contract read fails
+        }
+      }
       if (r.status === "fulfilled" && r.value) setRecentCharges(r.value.charges);
       setLoaded(true);
     };
@@ -67,24 +80,32 @@ export default function HomePage() {
       </section>
 
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat label="Plans" value={loaded ? (stats?.plans ?? "—") : "…"} />
-        <Stat label="Mandates" value={loaded ? (stats?.mandates ?? "—") : "…"} />
+        <Stat
+          label="Plans"
+          value={loaded ? (stats?.plans ?? contractPlanCount ?? "—") : "…"}
+          hint={!stats && contractPlanCount !== null ? "from contract" : undefined}
+        />
+        <Stat
+          label="Mandates"
+          value={loaded ? (stats?.mandates ?? "—") : "…"}
+          hint={!stats ? "needs indexer" : undefined}
+        />
         <Stat
           label="Active"
           value={loaded ? (stats?.activeMandates ?? "—") : "…"}
-          hint="currently billable"
+          hint={stats ? "currently billable" : "needs indexer"}
         />
         <Stat
           label="Charges settled"
           value={loaded ? (stats?.charges ?? "—") : "…"}
-          hint={stats ? `ledger ${stats.lastIndexedLedger}` : "indexer offline"}
+          hint={stats ? `ledger ${stats.lastIndexedLedger}` : "needs indexer"}
         />
       </section>
 
       {loaded && !stats && (
         <p className="text-sm text-muted">
-          The indexer is unreachable, so these counters are blank. Everything else on this
-          site reads contract state directly and still works.
+          The indexer is unreachable, so historical activity counters require the indexer.
+          {contractPlanCount !== null ? " Plan count is loaded directly from contract state." : ""}
         </p>
       )}
 

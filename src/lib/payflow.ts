@@ -1,7 +1,10 @@
 import {
   Address,
+  Asset,
   BASE_FEE,
   Contract,
+  Operation,
+  StrKey,
   TransactionBuilder,
   nativeToScVal,
   scValToNative,
@@ -640,6 +643,40 @@ export function mandateRefundableAmount(mandate: unknown): bigint | null {
   return null;
 }
 
+/** A Stellar account a sponsor can pay into: a valid ed25519 public key. */
+export function validateRecipient(recipient: string): string | null {
+  const trimmed = recipient.trim();
+  if (!trimmed) return "Enter a Stellar address.";
+  return StrKey.isValidEd25519PublicKey(trimmed)
+    ? null
+    : "That is not a valid Stellar account address.";
+}
+
+/**
+ * Whether the deployed vault contract exposes `deposit_for`.
+ *
+ * readContract simulates without committing, so a failed probe costs nothing
+ * and no tokens move. A contract built before payflow-contract#29 has no such
+ * method, so the simulation throws and the UI keeps the sponsor control
+ * hidden rather than offering a write it cannot service.
+ */
+export async function vaultSupportsDepositFor(source: string): Promise<boolean> {
+  if (!config.contracts.vault) return false;
+  try {
+    // Probe depositing the smallest possible amount into the caller's own
+    // vault: if the method exists the contract answers, and nothing commits.
+    await readContract(
+      config.contracts.vault,
+      "deposit_for",
+      source,
+      [arg.address(source), arg.address(config.contracts.token), arg.i128(1n)],
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const payflow = {
   // Proposed read interface for #25's open-mandate counter. Callers must
   // tolerate missing support until the contract ships this getter.
@@ -716,6 +753,25 @@ export const payflow = {
   withdraw: (source: string, sign: SignXdr, token: string, amount: bigint) =>
     writeContract(config.contracts.vault, "withdraw", source, sign, [
       arg.address(source),
+      arg.address(token),
+      arg.i128(amount),
+    ]),
+
+  /**
+   * Sponsor another account's vault: the caller's tokens are credited to the
+   * recipient's vault balance, and only the recipient can withdraw.
+   *
+   * Built against the interface proposed in payflow-contract#29:
+   * `deposit_for(recipient: Address, token: Address, amount: i128)`. The
+   * caller is the transaction's source account and is not passed as an
+   * argument — it authorizes the payment by signing the transaction.
+   *
+   * Only call this when `vaultSupportsDepositFor` confirms the deployed
+   * contract carries the method.
+   */
+  depositFor: (source: string, sign: SignXdr, recipient: string, token: string, amount: bigint) =>
+    writeContract(config.contracts.vault, "deposit_for", source, sign, [
+      arg.address(recipient),
       arg.address(token),
       arg.i128(amount),
     ]),
@@ -920,4 +976,90 @@ export const payflow = {
       arg.u64(mandateId),
       arg.i128(amount),
     ]),
+
+  /** Check if an account has established a trustline on Horizon */
+  checkTrustline: (
+    address: string,
+    assetCode: string,
+    assetIssuer?: string,
+    horizonUrl: string = config.horizonUrl,
+  ) => checkTrustline(address, assetCode, assetIssuer, horizonUrl),
+
+  /** Establish a trustline for a classic Stellar asset via ChangeTrust */
+  addTrustline: (
+    source: string,
+    sign: SignXdr,
+    assetCode: string,
+    assetIssuer: string,
+  ) => addTrustline(source, sign, assetCode, assetIssuer),
 };
+
+/**
+ * Checks whether an account has an established trustline for a classic asset on Horizon.
+ * Returns true if the account holds or has a trustline for the specified asset.
+ */
+export async function checkTrustline(
+  address: string,
+  assetCode: string,
+  assetIssuer?: string,
+  horizonUrl: string = config.horizonUrl,
+): Promise<boolean> {
+  if (!address || !assetCode || !horizonUrl) return true;
+  try {
+    const res = await fetch(`${horizonUrl}/accounts/${address}`, { cache: "no-store" });
+    if (!res.ok) return false;
+    const data = (await res.json()) as {
+      balances?: Array<{ asset_type: string; asset_code?: string; asset_issuer?: string }>;
+    };
+    if (!data.balances) return false;
+    return data.balances.some(
+      (b) =>
+        b.asset_code === assetCode &&
+        (!assetIssuer || b.asset_issuer === assetIssuer),
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Builds and submits a ChangeTrust operation to establish a trustline for a classic asset.
+ */
+export async function addTrustline(
+  source: string,
+  sign: SignXdr,
+  assetCode: string,
+  assetIssuer: string,
+): Promise<string> {
+  const account = await server.getAccount(source);
+  const tx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: config.networkPassphrase,
+  })
+    .addOperation(
+      Operation.changeTrust({
+        asset: new Asset(assetCode, assetIssuer),
+      }),
+    )
+    .setTimeout(30)
+    .build();
+
+  let signedXdr: string;
+  try {
+    signedXdr = await sign(tx.toXDR());
+  } catch (err) {
+    translateSignatureError(err);
+    throw err;
+  }
+
+  const signed = TransactionBuilder.fromXDR(signedXdr, config.networkPassphrase);
+  const sent = await server.sendTransaction(signed);
+  if (sent.status === "ERROR") {
+    throw new Error(`changeTrust rejected: ${JSON.stringify(sent.errorResult)}`);
+  }
+  const confirmed = await pollTransaction(sent.hash);
+  if (confirmed.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
+    throw new Error(`changeTrust failed on-chain (${confirmed.status})`);
+  }
+  return sent.hash;
+}

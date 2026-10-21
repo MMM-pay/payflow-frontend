@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { api, type ApiPlan } from "@/lib/api";
 import { chainPlans } from "@/lib/chain";
 import { config } from "@/lib/config";
@@ -11,9 +12,18 @@ import { formatDate, formatWhen, formatPeriod, fromStroops } from "@/lib/format"
 import { formatTrialLength, trialBadge, trialSeconds } from "@/lib/trial";
 import { planAvailability } from "@/lib/availability";
 import { metaFor, useTokenMetas } from "@/lib/token";
+import { filterAndSortPlans, type PlanPeriodOption, type PlanSortOption } from "@/lib/plans";
+import { formatUsdEstimate, formatUsdcEstimate, useXlmUsdPrice } from "@/lib/price";
 import { Empty, MerchantAccount, Notice, Panel, SkeletonPlanCards, TxLink } from "@/components/ui";
 
-export default function SubscribePage() {
+function SubscribeInner() {
+  const searchParams = useSearchParams();
+  const sortParam = (searchParams?.get("sort") as PlanSortOption) || "newest";
+  const periodParam = (searchParams?.get("period") as PlanPeriodOption) || "all";
+
+  const [sort, setSort] = useState<PlanSortOption>(sortParam);
+  const [period, setPeriod] = useState<PlanPeriodOption>(periodParam);
+
   const { address, networkMismatch, signXdr } = useWallet();
   const [plans, setPlans] = useState<ApiPlan[] | null>(null);
   const [maxCharges, setMaxCharges] = useState<Record<number, string>>({});
@@ -21,15 +31,42 @@ export default function SubscribePage() {
   const [direct, setDirect] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
-  // The plan just subscribed to, so the confirmation can say when the trial it
-  // advertised actually ends. The mandate id is not returned by `subscribe`, so
-  // this is the only place the trial length is known at signing time.
   const [doneTrial, setDoneTrial] = useState<{ plan: string; seconds: number } | null>(null);
+  const { priceData: xlmPrice } = useXlmUsdPrice();
 
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const request = useRef(0);
   const walletState = useRef({ address, networkMismatch });
   walletState.current = { address, networkMismatch };
+
+  // Sync state if searchParams change externally
+  useEffect(() => {
+    if (searchParams) {
+      const s = searchParams.get("sort") as PlanSortOption;
+      if (s) setSort(s);
+      const p = searchParams.get("period") as PlanPeriodOption;
+      if (p) setPeriod(p);
+    }
+  }, [searchParams]);
+
+  function updateParams(newSort: PlanSortOption, newPeriod: PlanPeriodOption) {
+    setSort(newSort);
+    setPeriod(newPeriod);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      if (newSort && newSort !== "newest") {
+        url.searchParams.set("sort", newSort);
+      } else {
+        url.searchParams.delete("sort");
+      }
+      if (newPeriod && newPeriod !== "all") {
+        url.searchParams.set("period", newPeriod);
+      } else {
+        url.searchParams.delete("period");
+      }
+      window.history.replaceState(null, "", url.toString());
+    }
+  }
 
   // Each plan can name a different token, so the cards read their own.
   const metas = useTokenMetas((plans ?? []).map((p) => p.token));
@@ -53,7 +90,9 @@ export default function SubscribePage() {
   useEffect(() => {
     void load();
     const pending = request;
-    return () => { pending.current++; };
+    return () => {
+      pending.current++;
+    };
   }, [load]);
 
   useEffect(() => {
@@ -84,8 +123,6 @@ export default function SubscribePage() {
       if (!Number.isInteger(limit) || limit < 0) {
         throw new Error("Charge limit must be a whole number, or 0 for open-ended.");
       }
-      // Re-read before signing: another subscriber may have taken the last seat.
-      // The contract remains authoritative for races after this read.
       const latest = (await load()).find((p) => p.id === plan.id);
       if (walletState.current.address !== address || walletState.current.networkMismatch) {
         throw new Error("Wallet changed. Check your wallet and try again.");
@@ -93,14 +130,19 @@ export default function SubscribePage() {
       if (!latest || latest.active !== 1) throw new Error("This plan is no longer available.");
       const reason = planAvailability(latest).reason;
       if (reason) throw new Error(reason);
-      const hash = await payflow.subscribe(address, async (xdr) => {
-        if (walletState.current.address !== address || walletState.current.networkMismatch) {
-          throw new Error("Wallet changed. Check your wallet and try again.");
-        }
-        const closed = planAvailability(latest).reason;
-        if (closed) throw new Error(closed);
-        return signXdr(xdr);
-      }, plan.id, limit);
+      const hash = await payflow.subscribe(
+        address,
+        async (xdr) => {
+          if (walletState.current.address !== address || walletState.current.networkMismatch) {
+            throw new Error("Wallet changed. Check your wallet and try again.");
+          }
+          const closed = planAvailability(latest).reason;
+          if (closed) throw new Error(closed);
+          return signXdr(xdr);
+        },
+        plan.id,
+        limit,
+      );
       setDone(hash);
       setDoneTrial(
         trialSeconds(plan) > 0
@@ -115,7 +157,10 @@ export default function SubscribePage() {
     }
   }
 
-  const active = (plans ?? []).filter((p) => p.active === 1);
+  const active = useMemo(() => (plans ?? []).filter((p) => p.active === 1), [plans]);
+  const filteredPlans = useMemo(() => {
+    return filterAndSortPlans(active, { sort, period });
+  }, [active, sort, period]);
 
   return (
     <div className="space-y-6">
@@ -182,91 +227,196 @@ export default function SubscribePage() {
           </Empty>
         )
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2">
-          {active.map((plan) => {
-            const meta = metaFor(metas, plan.token);
-            const badge = trialBadge(plan);
-            const availability = planAvailability(plan, now);
-            return (
-            <Panel key={plan.id} title={plan.name || `Plan #${plan.id}`}>
-              <div className="space-y-3">
-                <div>
-                  <div className="text-2xl font-semibold tabular-nums">
-                    {fromStroops(plan.amount, 4, meta.decimals)}{" "}
-                    <span className="text-sm font-normal text-muted">{meta.symbol}</span>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 text-sm text-muted">
-                    <span>{formatPeriod(plan.period)}</span>
-                    {badge && (
-                      <span className="rounded-full bg-accent/15 px-2 py-0.5 text-xs font-medium text-accent">
-                        {badge}
-                      </span>
-                    )}
-                  </div>
-                  {badge && (
-                    <p className="mt-1 text-xs text-muted">
-                      Nothing is charged for {formatTrialLength(trialSeconds(plan))}. You can
-                      cancel any time before the first charge and pay nothing.
-                    </p>
-                  )}
-                </div>
+        <div className="space-y-4">
+          {/* Filter and Sort Toolbar */}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-edge bg-surface/50 p-3">
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="flex items-center gap-2">
+                <label htmlFor="period-filter" className="text-sm font-medium text-muted">
+                  Billing period:
+                </label>
+                <select
+                  id="period-filter"
+                  className="input py-1 px-2.5 text-sm"
+                  value={period}
+                  onChange={(e) => updateParams(sort, e.target.value as PlanPeriodOption)}
+                >
+                  <option value="all">All periods</option>
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                  <option value="yearly">Annual</option>
+                </select>
+              </div>
 
-                {availability.until !== null && (
-                  <p className="text-sm text-muted">
-                    Available until <time dateTime={new Date(availability.until * 1000).toISOString()}>
-                      {formatDate(availability.until)} ({formatWhen(availability.until, now * 1000)})
-                    </time>
-                  </p>
-                )}
-                {availability.seats !== null && (
-                  <p className="text-sm text-accent">{availability.seats} {availability.seats === 1 ? "seat" : "seats"} left</p>
-                )}
-                {availability.countUnavailable && (
-                  <p className="text-sm text-muted">Remaining seats are unavailable from this source. Availability is checked by the contract when subscribing.</p>
-                )}
-                {availability.reason && (
-                  <p id={`availability-${plan.id}`} className="text-sm text-muted">{availability.reason}</p>
-                )}
+              <div className="flex items-center gap-2">
+                <label htmlFor="sort-select" className="text-sm font-medium text-muted">
+                  Sort by:
+                </label>
+                <select
+                  id="sort-select"
+                  className="input py-1 px-2.5 text-sm"
+                  value={sort}
+                  onChange={(e) => updateParams(e.target.value as PlanSortOption, period)}
+                >
+                  <option value="newest">Newest first</option>
+                  <option value="price_asc">Price: Low to High</option>
+                  <option value="price_desc">Price: High to Low</option>
+                  <option value="period_asc">Period: Short to Long</option>
+                  <option value="period_desc">Period: Long to Short</option>
+                </select>
+              </div>
+            </div>
 
-                <div className="flex items-center justify-between gap-2 text-sm">
-                  <span className="text-muted">Merchant</span>
-                  <MerchantAccount value={plan.merchant} />
-                </div>
+            <span className="text-xs text-muted" aria-live="polite">
+              Showing {filteredPlans.length} of {active.length} plans
+            </span>
+          </div>
 
-                <div>
-                  <label className="label" htmlFor={`limit-${plan.id}`}>
-                    Charge limit (0 = open-ended)
-                  </label>
-                  <input
-                    id={`limit-${plan.id}`}
-                    className="input"
-                    inputMode="numeric"
-                    placeholder="0"
-                    value={maxCharges[plan.id] ?? ""}
-                    onChange={(e) =>
-                      setMaxCharges((m) => ({ ...m, [plan.id]: e.target.value }))
-                    }
-                  />
-                </div>
-
+          {filteredPlans.length === 0 ? (
+            <Empty
+              title="No plans match this filter"
+              action={
                 <button
                   type="button"
-                  className="btn-primary w-full"
-                  disabled={busy !== null || !address || networkMismatch || availability.reason !== null}
-                  aria-describedby={availability.reason ? `availability-${plan.id}` : undefined}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void subscribe(plan);
-                  }}
+                  className="btn-ghost"
+                  onClick={() => updateParams("newest", "all")}
                 >
-                  {busy === plan.id ? "Confirming…" : networkMismatch ? "Wrong network" : address ? "Subscribe" : "Connect wallet"}
+                  Reset filters
                 </button>
-              </div>
-            </Panel>
-            );
-          })}
+              }
+            >
+              No active subscription plans match the selected billing period.
+            </Empty>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {filteredPlans.map((plan) => {
+                const meta = metaFor(metas, plan.token);
+                const badge = trialBadge(plan);
+                const availability = planAvailability(plan, now);
+                const usdEstimate =
+                  meta.symbol === "XLM" && xlmPrice
+                    ? formatUsdEstimate(plan.amount, xlmPrice.price, xlmPrice.decimals, meta.decimals)
+                    : meta.symbol === "USDC"
+                      ? formatUsdcEstimate(plan.amount, meta.decimals)
+                      : null;
+                return (
+                  <Panel key={plan.id} title={plan.name || `Plan #${plan.id}`}>
+                    <div className="space-y-3">
+                      <div>
+                        <div className="flex flex-wrap items-baseline gap-2">
+                          <div className="text-2xl font-semibold tabular-nums">
+                            {fromStroops(plan.amount, 4, meta.decimals)}{" "}
+                            <span className="text-sm font-normal text-muted">{meta.symbol}</span>
+                          </div>
+                          {usdEstimate && (
+                            <span
+                              className="text-sm text-muted tabular-nums"
+                              title="Estimated USD value based on Reflector oracle price"
+                              aria-label={`Approximately ${usdEstimate} US Dollars`}
+                            >
+                              (≈ {usdEstimate})
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 text-sm text-muted">
+                          <span>{formatPeriod(plan.period)}</span>
+                          {badge && (
+                            <span className="rounded-full bg-accent/15 px-2 py-0.5 text-xs font-medium text-accent">
+                              {badge}
+                            </span>
+                          )}
+                        </div>
+                        {badge && (
+                          <p className="mt-1 text-xs text-muted">
+                            Nothing is charged for {formatTrialLength(trialSeconds(plan))}. You can
+                            cancel any time before the first charge and pay nothing.
+                          </p>
+                        )}
+                      </div>
+
+                      {availability.until !== null && (
+                        <p className="text-sm text-muted">
+                          Available until{" "}
+                          <time dateTime={new Date(availability.until * 1000).toISOString()}>
+                            {formatDate(availability.until)} ({formatWhen(availability.until, now * 1000)})
+                          </time>
+                        </p>
+                      )}
+                      {availability.seats !== null && (
+                        <p className="text-sm text-accent">
+                          {availability.seats} {availability.seats === 1 ? "seat" : "seats"} left
+                        </p>
+                      )}
+                      {availability.countUnavailable && (
+                        <p className="text-sm text-muted">
+                          Remaining seats are unavailable from this source. Availability is checked by the
+                          contract when subscribing.
+                        </p>
+                      )}
+                      {availability.reason && (
+                        <p id={`availability-${plan.id}`} className="text-sm text-muted">
+                          {availability.reason}
+                        </p>
+                      )}
+
+                      <div className="flex items-center justify-between gap-2 text-sm">
+                        <span className="text-muted">Merchant</span>
+                        <MerchantAccount value={plan.merchant} />
+                      </div>
+
+                      <div>
+                        <label className="label" htmlFor={`limit-${plan.id}`}>
+                          Charge limit (0 = open-ended)
+                        </label>
+                        <input
+                          id={`limit-${plan.id}`}
+                          className="input"
+                          inputMode="numeric"
+                          placeholder="0"
+                          value={maxCharges[plan.id] ?? ""}
+                          onChange={(e) =>
+                            setMaxCharges((m) => ({ ...m, [plan.id]: e.target.value }))
+                          }
+                        />
+                      </div>
+
+                      <button
+                        type="button"
+                        className="btn-primary w-full"
+                        disabled={
+                          busy !== null || !address || networkMismatch || availability.reason !== null
+                        }
+                        aria-describedby={availability.reason ? `availability-${plan.id}` : undefined}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void subscribe(plan);
+                        }}
+                      >
+                        {busy === plan.id
+                          ? "Confirming…"
+                          : networkMismatch
+                          ? "Wrong network"
+                          : address
+                          ? "Subscribe"
+                          : "Connect wallet"}
+                      </button>
+                    </div>
+                  </Panel>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>
+  );
+}
+
+export default function SubscribePage() {
+  return (
+    <Suspense fallback={<SkeletonPlanCards label="Loading plans" />}>
+      <SubscribeInner />
+    </Suspense>
   );
 }
