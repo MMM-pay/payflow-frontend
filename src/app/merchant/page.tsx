@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { api, checkWebhookUrl, type ApiMandate, type ApiPlan, type ApiWebhook, type MerchantSummary, type StreamEvent } from "@/lib/api";
 import { RevenueChart } from "@/components/RevenueChart";
+import { WebhookDeliveryHistory } from "@/components/WebhookDeliveryHistory";
 import { buildCsv, downloadCsv, exportFilename, type ChargeRow } from "@/lib/csv";
 import { fillBuckets, parseRevenue, type BucketSize, type RevenuePoint } from "@/lib/revenue";
 import { parseMerchantChurn, type MerchantChurnMonth } from "@/lib/churn";
@@ -429,9 +430,9 @@ function WebhooksPanel({
               </Empty>
             ) : (
               webhooks.map((w) => (
-                <div key={w.id} className="rounded-lg border border-edge p-4">
+                <div key={w.id} className="min-w-0 rounded-lg border border-edge p-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
+                    <div className="min-w-0 max-w-full">
                       <div className="font-medium mono truncate" title={w.url}>
                         {w.url}
                       </div>
@@ -480,6 +481,7 @@ function WebhooksPanel({
                       </button>
                     </div>
                   </div>
+                  <WebhookDeliveryHistory merchant={merchant} webhookId={String(w.id)} />
                 </div>
               ))
             )}
@@ -1994,7 +1996,7 @@ export default function MerchantPage() {
         )}
       </Panel>
 
-      <WebhooksPanel merchant={address} apiConfigured={api.isConfigured()} />
+      <WebhooksPanel key={`webhooks:${address}`} merchant={address} apiConfigured={api.isConfigured()} />
     </div>
   );
 }
