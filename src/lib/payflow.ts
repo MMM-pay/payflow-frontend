@@ -13,6 +13,13 @@ import {
 } from "@stellar/stellar-sdk";
 import { config } from "./config";
 import { MIN_PERIOD_MESSAGE } from "./period";
+import {
+  SIGNATURE_CANCELLED_MESSAGE,
+  isSignatureRejection,
+  translateSignatureError,
+} from "./signature-error";
+
+export { SIGNATURE_CANCELLED_MESSAGE, isSignatureRejection, translateSignatureError };
 
 export const server = new rpc.Server(config.rpcUrl, {
   allowHttp: config.rpcUrl.startsWith("http://"),
