@@ -12,6 +12,45 @@ function required(name: string, value: string | undefined): string {
   return value;
 }
 
+export interface ClassicAsset {
+  code: string;
+  issuer: string;
+}
+
+export interface ConfiguredToken {
+  id: string;
+  symbol: string;
+  name: string;
+  decimals: number;
+  classicAsset?: ClassicAsset;
+}
+
+const DEFAULT_XLM_SAC = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+const DEFAULT_USDC_SAC = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA";
+
+export const XLM_TOKEN: ConfiguredToken = {
+  id: process.env.NEXT_PUBLIC_TOKEN_ID || DEFAULT_XLM_SAC,
+  symbol: "XLM",
+  name: "Stellar Lumens",
+  decimals: 7,
+};
+
+export const USDC_TESTNET_TOKEN: ConfiguredToken = {
+  id: process.env.NEXT_PUBLIC_USDC_TOKEN_ID || DEFAULT_USDC_SAC,
+  symbol: "USDC",
+  name: "USD Coin",
+  decimals: 6,
+  classicAsset: {
+    code: "USDC",
+    issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+  },
+};
+
+export const CONFIGURED_TOKENS: readonly ConfiguredToken[] = [
+  XLM_TOKEN,
+  USDC_TESTNET_TOKEN,
+];
+
 export const config = {
   rpcUrl:
     process.env.NEXT_PUBLIC_SOROBAN_RPC_URL ?? "https://soroban-testnet.stellar.org",
@@ -34,7 +73,9 @@ export const config = {
     vault: process.env.NEXT_PUBLIC_VAULT_ID ?? "",
     subscription: process.env.NEXT_PUBLIC_SUBSCRIPTION_ID ?? "",
     token: process.env.NEXT_PUBLIC_TOKEN_ID ?? "",
+    usdc: process.env.NEXT_PUBLIC_USDC_TOKEN_ID ?? USDC_TESTNET_TOKEN.id,
   },
+  tokens: CONFIGURED_TOKENS,
 } as const;
 
 export function requireContracts(): void {

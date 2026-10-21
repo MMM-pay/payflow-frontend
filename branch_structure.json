@@ -1,0 +1,18 @@
+{
+  "default_branch": "main",
+  "branches": [
+    "feat/issue-100-feat-merchant-edit-the-merchant-profile",
+    "main",
+    "origin"
+  ],
+  "parent": {
+    "feat/issue-100-feat-merchant-edit-the-merchant-profile": "main",
+    "main": null,
+    "origin": "main"
+  },
+  "order": [
+    "main",
+    "feat/issue-100-feat-merchant-edit-the-merchant-profile",
+    "origin"
+  ]
+}

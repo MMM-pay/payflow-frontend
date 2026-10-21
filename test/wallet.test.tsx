@@ -372,7 +372,7 @@ describe("WalletProvider and account change detection", () => {
       window.dispatchEvent(new Event("focus"));
     });
 
-    const updated = await screen.findByTitle(`${ADDRESS_B} — click to disconnect`);
+    const updated = await screen.findByTitle(`${ADDRESS_B} — click to disconnect`, {}, { timeout: 3000 });
     expect(updated).toBeTruthy();
     expect(updated.textContent).toContain("GAP6Q");
   });

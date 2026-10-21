@@ -1,7 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { StrKey } from "@stellar/stellar-sdk";
 import { api, type ApiMandate, type ApiVaultEvent, type StreamEvent } from "@/lib/api";
 import { buildUpcomingChargesCalendar, CALENDAR_FILENAME } from "@/lib/calendar";
 import {
@@ -17,7 +19,26 @@ import {
   vaultEventLabel,
   vaultEventTone,
 } from "@/lib/chain";
-import { config } from "@/lib/config";
+import { config, type ConfiguredToken } from "@/lib/config";
+
+const DEFAULT_TOKENS: readonly ConfiguredToken[] = [
+  {
+    id: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    symbol: "XLM",
+    name: "Stellar Lumens",
+    decimals: 7,
+  },
+  {
+    id: "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+    symbol: "USDC",
+    name: "USD Coin",
+    decimals: 6,
+    classicAsset: {
+      code: "USDC",
+      issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+    },
+  },
+];
 import {
   discountBadge,
   nextChargeAmount,
@@ -49,8 +70,10 @@ import {
   shortAddress,
 } from "@/lib/format";
 import { buildChargeSchedule, chargeShortfall } from "@/lib/schedule";
+import { computeVaultRunway } from "@/lib/runway";
 import { describeTrialEnd } from "@/lib/trial";
 import { loadTokenMeta, metaFor, useTokenMetas } from "@/lib/token";
+import { VirtualList } from "@/components/VirtualList";
 import { AmountInput } from "@/components/AmountInput";
 import {
   Badge,
@@ -64,8 +87,22 @@ import {
   TxLink,
 } from "@/components/ui";
 
-export default function AccountPage() {
+function AccountInner() {
+  const searchParams = useSearchParams();
+  const paramAddress = searchParams?.get("address");
+  const targetAddress =
+    paramAddress && StrKey.isValidEd25519PublicKey(paramAddress.trim())
+      ? paramAddress.trim()
+      : null;
+
   const { address, networkMismatch, signXdr, connect, connecting } = useWallet();
+
+  // The account whose data is displayed on screen
+  const viewAddress = targetAddress ?? address;
+  // Read-only mode applies if an address parameter was supplied and either no wallet
+  // is connected or the connected wallet's address differs from the target.
+  const isReadOnly = Boolean(targetAddress && (!address || address !== targetAddress));
+
   const [balance, setBalance] = useState<bigint | null>(null);
   const [mandates, setMandates] = useState<ApiMandate[] | null>(null);
   const [history, setHistory] = useState<ApiVaultEvent[] | null>(null);
@@ -73,11 +110,8 @@ export default function AccountPage() {
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   // Cancelling is permanent, so the first click only reveals Keep/Confirm.
-  // One id, not a set: only one mandate can be awaiting confirmation at a
-  // time, which keeps the destructive action unambiguous.
   const [confirmCancel, setConfirmCancel] = useState<number | null>(null);
-  // The mandate whose date picker is open, and the date typed into it. Like
-  // `confirmCancel`, one at a time keeps the pending write unambiguous.
+  // The mandate whose date picker is open, and the date typed into it.
   const [pauseFor, setPauseFor] = useState<number | null>(null);
   const [pauseDate, setPauseDate] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -98,16 +132,21 @@ export default function AccountPage() {
   // Track who paused each mandate: "subscriber" | "merchant" | undefined
   // Updated by the SSE stream when available.
   const [pausedBy, setPausedBy] = useState<Map<number, "subscriber" | "merchant">>(new Map());
+  const [missingTrustlines, setMissingTrustlines] = useState<ConfiguredToken[]>([]);
+
+  const configuredTokens: readonly ConfiguredToken[] =
+    (config as unknown as { tokens?: ConfiguredToken[] }).tokens ?? DEFAULT_TOKENS;
 
   // Read inside async callbacks to detect a wallet account switch mid-load:
-  // the closure's `address` is the account the request started for, which may
+  // the closure's `who` is the account the request started for, which may
   // no longer be the account whose page is on screen.
-  const addressRef = useRef<string | null>(address);
+  const addressRef = useRef<string | null>(viewAddress);
 
   // The vault holds the configured token; each mandate carries the token it
   // was opened against, which the indexer does not report.
   const metas = useTokenMetas([
     config.contracts.token,
+    ...configuredTokens.map((t) => t.id),
     ...(mandates ?? []).map((m) => m.token ?? config.contracts.token),
   ]);
   const vaultMeta = metaFor(metas, config.contracts.token);
@@ -119,13 +158,14 @@ export default function AccountPage() {
   const fundAmountCheck = checkAmount(fundAmount, vaultMeta.decimals);
   const fundStroops = fundAmountCheck.ok ? fundAmountCheck.stroops : 0n;
 
-  // Load function defined early so it can be referenced by the SSE stream hook
+  // Source account for simulation
+  const source = address ?? config.readSource;
   const load = useCallback(async () => {
-    addressRef.current = address;
-    if (!address) return;
-    const who = address;
+    addressRef.current = viewAddress;
+    if (!viewAddress) return;
+    const who = viewAddress;
     const [bal, res, hist] = await Promise.allSettled([
-      payflow.vaultBalance(who, who, config.contracts.token),
+      payflow.vaultBalance(source, who, config.contracts.token),
       api.mandatesOf(who),
       api.vaultHistory(who),
     ]);
@@ -140,7 +180,7 @@ export default function AccountPage() {
     } else {
       // No indexer: read the subscriber's mandates from the contract.
       try {
-        const fromChain = await chainMandatesOf(who, who);
+        const fromChain = await chainMandatesOf(source, who);
         if (addressRef.current !== who) return;
         setMandates(fromChain);
       } catch {
@@ -163,7 +203,27 @@ export default function AccountPage() {
       setHistory([]);
       setIndexerAvailable(false);
     }
-  }, [address]);
+
+    // Check classic asset trustlines for mandates in other tokens
+    if (who && configuredTokens.length > 0 && typeof payflow.checkTrustline === "function") {
+      const missing: ConfiguredToken[] = [];
+      for (const tok of configuredTokens) {
+        if (tok.classicAsset) {
+          const hasTrust = await payflow.checkTrustline(
+            who,
+            tok.classicAsset.code,
+            tok.classicAsset.issuer,
+          );
+          if (!hasTrust) {
+            missing.push(tok);
+          }
+        }
+      }
+      if (addressRef.current === who) {
+        setMissingTrustlines(missing);
+      }
+    }
+  }, [viewAddress, source, configuredTokens]);
 
   // SSE stream for live updates (payflow-backend#19)
   useStream({
@@ -239,6 +299,57 @@ export default function AccountPage() {
     };
   }, [address]);
 
+  // Identify classic asset tokens in use by the subscriber's mandates
+  const classicTokens = useMemo(() => {
+    const tokenIds = new Set(
+      (mandates ?? []).map((m) => m.token ?? config.contracts.token),
+    );
+    return configuredTokens.filter((t) => t.classicAsset && tokenIds.has(t.id));
+  }, [mandates, configuredTokens]);
+
+  const checkTrustlines = useCallback(async () => {
+    if (!viewAddress || classicTokens.length === 0) {
+      setMissingTrustlines([]);
+      return;
+    }
+    const missing: ConfiguredToken[] = [];
+    for (const t of classicTokens) {
+      if (t.classicAsset) {
+        const has = await payflow.checkTrustline(
+          viewAddress,
+          t.classicAsset.code,
+          t.classicAsset.issuer,
+        );
+        if (!has) missing.push(t);
+      }
+    }
+    setMissingTrustlines(missing);
+  }, [viewAddress, classicTokens]);
+
+  useEffect(() => {
+    void checkTrustlines();
+  }, [checkTrustlines]);
+
+  async function handleAddTrustline(token: ConfiguredToken) {
+    if (!address || !token.classicAsset) return;
+    try {
+      setBusy(`trustline-${token.symbol}`);
+      setError(null);
+      await payflow.addTrustline(
+        address,
+        signXdr,
+        token.classicAsset.code,
+        token.classicAsset.issuer,
+      );
+      setDone(`Added trustline for ${token.symbol}.`);
+      await checkTrustlines();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function run(key: string, fn: () => Promise<string>) {
     setBusy(key);
     setError(null);
@@ -271,7 +382,7 @@ export default function AccountPage() {
   }
 
   async function handleCancelAll() {
-    if (!address) return;
+    if (!address || isReadOnly) return;
 
     const allMandates = await chainMandatesOf(address, address);
     const toCancel = allMandates.filter((m) =>
@@ -283,7 +394,11 @@ export default function AccountPage() {
       return;
     }
 
-    if (!window.confirm(`This will cancel ${toCancel.length} mandate${toCancel.length !== 1 ? "s" : ""}. Continue?`)) {
+    if (
+      !window.confirm(
+        `This will cancel ${toCancel.length} mandate${toCancel.length !== 1 ? "s" : ""}. Continue?`,
+      )
+    ) {
       return;
     }
 
@@ -298,14 +413,15 @@ export default function AccountPage() {
     for (let i = 0; i < toCancel.length; i += PAGE_SIZE) {
       const page = toCancel.slice(i, i + PAGE_SIZE);
       const promises = page.map((m) =>
-        payflow.cancel(address, signXdr, m.id).then(() => {
-          completed += 1;
-        }).catch((err) => {
-          failed += 1;
-          setError(
-            err instanceof Error ? err.message : String(err),
-          );
-        }),
+        payflow
+          .cancel(address, signXdr, m.id)
+          .then(() => {
+            completed += 1;
+          })
+          .catch((err) => {
+            failed += 1;
+            setError(err instanceof Error ? err.message : String(err));
+          }),
       );
       await Promise.all(promises);
     }
@@ -322,25 +438,20 @@ export default function AccountPage() {
   }
 
   const activeCount = mandates?.filter((m) => m.status === "Active").length ?? 0;
+  const runway = useMemo(() => {
+    return computeVaultRunway(balance, mandates, config.contracts.token);
+  }, [balance, mandates]);
 
   /**
    * Whether the contract behind these mandates can service a dated pause.
-   *
-   * A contract built before payflow-contract#41 decodes its mandates without
-   * `pause_until`, so the absence of that field is the signal; there is no
-   * method to probe. Checking the mandates already on screen costs no extra
-   * round trip. With an indexer configured, it has to serve the field too —
-   * when it cannot, hiding the control is still the honest choice, because
-   * offering it would send a transaction the deployed contract may reject.
    */
   const pauseSupported = (mandates ?? []).some(
     (m) => mandatePauseUntil(m) !== null,
   );
 
   function openPausePicker(mandateId: number) {
+    if (isReadOnly) return;
     setPauseFor(mandateId);
-    // Default to a week out: long enough to be the common case, short enough
-    // that the user can still see what they picked.
     const week = new Date(Date.now() + 7 * 86_400_000);
     setPauseDate(week.toISOString().slice(0, 10));
     setConfirmCancel(null);
@@ -348,7 +459,7 @@ export default function AccountPage() {
   }
 
   async function pauseUntil(mandateId: number) {
-    if (!address) return;
+    if (!address || isReadOnly) return;
     const until = parsePauseDate(pauseDate);
     if (until === null) {
       setError("Pick a date for the mandate to resume on.");
@@ -381,10 +492,11 @@ export default function AccountPage() {
       document.body.appendChild(link);
       link.click();
       link.remove();
-      // Revoke after the browser has started the download.
       setTimeout(() => URL.revokeObjectURL(url), 0);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not build the calendar file.");
+      setError(
+        err instanceof Error ? err.message : "Could not build the calendar file.",
+      );
     }
   }
 
@@ -419,8 +531,8 @@ export default function AccountPage() {
    * written under another account's address.
    */
   async function exportPayments() {
-    if (!address || !mandates || !mandatesFromApi) return;
-    const who = address;
+    if (!viewAddress || !mandates || !mandatesFromApi) return;
+    const who = viewAddress;
     setExporting(true);
     setError(null);
     setInfo(null);
@@ -475,7 +587,7 @@ export default function AccountPage() {
     }
   }
 
-  if (!address) {
+  if (!viewAddress) {
     return (
       <Panel title="My account">
         <Empty
@@ -501,7 +613,57 @@ export default function AccountPage() {
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 sm:grid-cols-2">
+      {isReadOnly && (
+        <div
+          role="status"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-accent/40 bg-accent/10 px-4 py-3"
+        >
+          <div className="flex items-center gap-2">
+            <span className="rounded-full bg-accent/20 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wider text-accent">
+              Read-only
+            </span>
+            <span className="text-sm text-foreground">
+              Viewing subscriptions for{" "}
+              <span className="font-mono">{shortAddress(viewAddress, 6)}</span>
+            </span>
+          </div>
+          <span className="text-xs text-muted">
+            Actions are hidden in read-only mode.
+          </span>
+        </div>
+      )}
+
+      {missingTrustlines.map((t) => (
+        <div
+          key={t.id}
+          role="alert"
+          className="rounded-xl border border-warning/40 bg-warning/10 p-4 text-warning"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <p className="font-semibold text-sm">Trustline required for {t.symbol}</p>
+              <p className="text-xs opacity-90">
+                Your account needs a trustline for {t.name} ({t.symbol}) before
+                subscriptions in this token can be funded or charged.
+              </p>
+            </div>
+            {!isReadOnly && (
+              <button
+                type="button"
+                className="btn-primary text-xs whitespace-nowrap self-start sm:self-auto"
+                disabled={busy !== null || networkMismatch}
+                onClick={() => void handleAddTrustline(t)}
+              >
+                {busy === `trustline-${t.symbol}`
+                  ? "Adding trustline…"
+                  : `Add ${t.symbol} trustline`}
+              </button>
+            )}
+          </div>
+        </div>
+      ))}
+
+      <div className="grid gap-4 sm:grid-cols-3">
         <Stat
           label="Vault balance"
           loading={balance === null}
@@ -513,7 +675,39 @@ export default function AccountPage() {
           loading={mandates === null}
           value={activeCount}
         />
+        <Stat
+          label="Runway"
+          loading={runway === null}
+          value={
+            runway
+              ? runway.hasActiveMandates
+                ? `${runway.chargesCovered} ${runway.chargesCovered === 1 ? "charge" : "charges"}`
+                : "No active charges"
+              : "…"
+          }
+          hint={
+            runway && runway.hasActiveMandates
+              ? runway.runsOutDate
+                ? `until ${formatDate(runway.runsOutDate)}`
+                : "fully funded"
+              : "subscriptions billable"
+          }
+        />
       </div>
+
+      {runway?.isLow && runway.hasActiveMandates && (
+        <Notice tone="error">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              <strong>Low vault balance:</strong> Covers only {runway.chargesCovered}{" "}
+              {runway.chargesCovered === 1 ? "upcoming charge" : "upcoming charges"}.{" "}
+              {runway.runsOutDate
+                ? `Funds will run out on ${formatDate(runway.runsOutDate)}.`
+                : "Deposit funds to avoid subscription interruption."}
+            </span>
+          </div>
+        </Notice>
+      )}
 
       {error && <Notice tone="error">{error}</Notice>}
       {info && (
@@ -525,65 +719,73 @@ export default function AccountPage() {
       )}
       {done && (
         <Notice tone="ok">
-          Done. Transaction <TxLink hash={done} />
+          {done.length === 64 ? (
+            <>
+              Done. Transaction <TxLink hash={done} />
+            </>
+          ) : (
+            done
+          )}
         </Notice>
       )}
 
-      <Panel
-        title="Fund your vault"
-        subtitle="Charges are debited from this balance. Withdraw at any time — nothing is locked."
-      >
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="min-w-[12rem] flex-1">
-            <AmountInput
-              id="amount"
-              label={`Amount (${vaultMeta.symbol})`}
-              value={amount}
-              onChange={setAmount}
-              decimals={vaultMeta.decimals}
-              placeholder="5.0"
-              disabled={busy !== null}
-              hint="Accepts 5, 5.0 — and 5,0 where commas are decimals."
-            />
+      {!isReadOnly && (
+        <Panel
+          title="Fund your vault"
+          subtitle="Charges are debited from this balance. Withdraw at any time — nothing is locked."
+        >
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="min-w-[12rem] flex-1">
+              <AmountInput
+                id="amount"
+                label={`Amount (${vaultMeta.symbol})`}
+                value={amount}
+                onChange={setAmount}
+                decimals={vaultMeta.decimals}
+                placeholder="5.0"
+                disabled={busy !== null}
+                hint="Accepts 5, 5.0 — and 5,0 where commas are decimals."
+              />
+            </div>
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={busy !== null || networkMismatch}
+              onClick={() =>
+                void run("deposit", () =>
+                  payflow.deposit(
+                    address!,
+                    signXdr,
+                    config.contracts.token,
+                    parseAmount(amount, vaultMeta.decimals),
+                  ),
+                )
+              }
+            >
+              {busy === "deposit" ? "Depositing…" : "Deposit"}
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              disabled={busy !== null || networkMismatch}
+              onClick={() =>
+                void run("withdraw", () =>
+                  payflow.withdraw(
+                    address!,
+                    signXdr,
+                    config.contracts.token,
+                    parseAmount(amount, vaultMeta.decimals),
+                  ),
+                )
+              }
+            >
+              {busy === "withdraw" ? "Withdrawing…" : "Withdraw"}
+            </button>
           </div>
-          <button
-            type="button"
-            className="btn-primary"
-            disabled={busy !== null || networkMismatch}
-            onClick={() =>
-              void run("deposit", () =>
-                payflow.deposit(
-                  address,
-                  signXdr,
-                  config.contracts.token,
-                  parseAmount(amount, vaultMeta.decimals),
-                ),
-              )
-            }
-          >
-            {busy === "deposit" ? "Depositing…" : "Deposit"}
-          </button>
-          <button
-            type="button"
-            className="btn-ghost"
-            disabled={busy !== null || networkMismatch}
-            onClick={() =>
-              void run("withdraw", () =>
-                payflow.withdraw(
-                  address,
-                  signXdr,
-                  config.contracts.token,
-                  parseAmount(amount, vaultMeta.decimals),
-                ),
-              )
-            }
-          >
-            {busy === "withdraw" ? "Withdrawing…" : "Withdraw"}
-          </button>
-        </div>
-      </Panel>
+        </Panel>
+      )}
 
-      {fundSupport === true && (
+      {!isReadOnly && address && fundSupport === true && (
         <Panel
           title="Fund another account"
           subtitle="Send tokens to someone else's vault. Only the recipient can withdraw — you cannot cancel or refund the deposit."
@@ -682,21 +884,18 @@ export default function AccountPage() {
             <Empty
               title="No vault activity yet"
               action={
-                <a href="#amount" className="btn-primary">
-                  Make a deposit
-                </a>
+                !isReadOnly ? (
+                  <a href="#amount" className="btn-primary">
+                    Make a deposit
+                  </a>
+                ) : undefined
               }
             >
               Deposits, withdrawals and debit charges appear here as they
               settle. Fund the vault above so charges have a balance to draw
               from.
             </Empty>
-          ) : (
-            // No indexer, no event log: the notice below says why there is
-            // nothing to show. An empty list here would claim “no events”
-            // when the truth is “no event source”.
-            null
-          )
+          ) : null
         ) : (
           <div className="space-y-2">
             {history.map((event) => {
@@ -797,9 +996,11 @@ export default function AccountPage() {
           <Empty
             title="No subscriptions yet"
             action={
-              <Link href="/subscribe" className="btn-primary">
-                Browse plans
-              </Link>
+              !isReadOnly ? (
+                <Link href="/subscribe" className="btn-primary">
+                  Browse plans
+                </Link>
+              ) : undefined
             }
           >
             Subscribing to a plan opens a mandate, and every mandate shows up
@@ -808,51 +1009,59 @@ export default function AccountPage() {
           </Empty>
         ) : (
           <div className="space-y-3">
-            <div className="flex gap-2 mt-3">
-              <button
-                type="button"
-                className="btn-primary"
-                disabled={busy !== null || networkMismatch}
-                onClick={handleCancelAll}
-              >
-                {busy !== null || networkMismatch ? "Cancelling…" : "Cancel all"}
-              </button>
-            </div>
-{mandates.map((m) => {
+            {!isReadOnly && (
+              <div className="flex gap-2 mt-3">
+                <button
+                  type="button"
+                  className="btn-primary"
+                  disabled={busy !== null || networkMismatch}
+                  onClick={handleCancelAll}
+                >
+                  {busy !== null || networkMismatch ? "Cancelling…" : "Cancel all"}
+                </button>
+              </div>
+            )}
+            <VirtualList
+              items={mandates}
+              threshold={100}
+              itemHeight={180}
+              keyExtractor={(m) => m.id}
+              listAriaLabel="Subscriptions"
+              className="space-y-3"
+              renderItem={(m) => {
                 const terminal = m.status === "Cancelled" || m.status === "Completed";
                 const meta = metaFor(metas, m.token ?? config.contracts.token);
                 const resumes = resumeDate(mandatePauseUntil(m));
                 const pastDueUntil = mandatePastDueUntil(m);
                 const isPastDue = mandateIsPastDue(m);
                 const trial = describeTrialEnd(m);
-                // What the next charge costs while the merchant's discount runs.
                 const discounted = nextChargeAmount(m);
                 const badge = discountBadge(m);
                 const remaining = remainingDiscountCharges(m);
-                // Both of these read from data the page already has, so the
-                // timeline works in contract-only mode: the mandates may come
-                // from chain state and the balance from a vault read.
                 const schedule = buildChargeSchedule(m);
                 const nextAmount = schedule.charges[0]?.amount;
-                // `balance` is the configured token's vault balance. A mandate
-                // denominated in another token cannot be compared against it, so
-                // leave the warning out rather than reporting a false shortfall.
                 const sameToken =
                   (m.token ?? config.contracts.token) === config.contracts.token;
                 const shortfall =
                   nextAmount === undefined || !sameToken
                     ? null
                     : chargeShortfall(balance, nextAmount);
-                // Past-due shortfall is the same as the next charge shortfall.
-                const pastDueShortfall = isPastDue && sameToken && nextAmount !== undefined
-                  ? chargeShortfall(balance, nextAmount)
-                  : null;
+                const pastDueShortfall =
+                  isPastDue && sameToken && nextAmount !== undefined
+                    ? chargeShortfall(balance, nextAmount)
+                    : null;
+
                 return (
                   <div key={m.id} className="rounded-lg border border-edge p-4">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-medium">Mandate #{m.id}</span>
+                          <Link
+                            href={`/mandates/?id=${m.id}`}
+                            className="font-medium hover:underline text-soft focus:outline-none focus:ring-1 focus:ring-accent rounded"
+                          >
+                            Mandate #{m.id}
+                          </Link>
                           <Badge status={m.status} />
                           {isPastDue && (
                             <span className="rounded-full bg-danger/15 px-2 py-0.5 text-xs font-medium text-danger">
@@ -944,33 +1153,35 @@ export default function AccountPage() {
                                   </p>
                                 )}
                               </div>
-                              <button
-                                type="button"
-                                className="btn-primary whitespace-nowrap"
-                                disabled={busy !== null || networkMismatch}
-                                onClick={() =>
-                                  void run(`deposit-past-due-${m.id}`, () =>
-                                    payflow.deposit(
-                                      address,
-                                      signXdr,
-                                      config.contracts.token,
-                                      parseAmount(
-                                        fromStroops(pastDueShortfall + 1n, 4, meta.decimals),
-                                        meta.decimals,
+                              {!isReadOnly && (
+                                <button
+                                  type="button"
+                                  className="btn-primary whitespace-nowrap"
+                                  disabled={busy !== null || networkMismatch}
+                                  onClick={() =>
+                                    void run(`deposit-past-due-${m.id}`, () =>
+                                      payflow.deposit(
+                                        address!,
+                                        signXdr,
+                                        config.contracts.token,
+                                        parseAmount(
+                                          fromStroops(pastDueShortfall + 1n, 4, meta.decimals),
+                                          meta.decimals,
+                                        ),
                                       ),
-                                    ),
-                                  )
-                                }
-                              >
-                                {busy === `deposit-past-due-${m.id}` ? "Depositing…" : "Deposit to fix"}
-                              </button>
+                                    )
+                                  }
+                                >
+                                  {busy === `deposit-past-due-${m.id}` ? "Depositing…" : "Deposit to fix"}
+                                </button>
+                              )}
                             </div>
                           </Notice>
                         )}
                       </div>
 
-                    {!terminal && (
-                      <div className="flex flex-wrap items-center gap-2">
+                    {!terminal && !isReadOnly && (
+                      <div className="flex flex-wrap items-center gap-2 mt-4 pt-3 border-t border-edge">
                         {/* Subscriber can pause, but cannot resume if paused by merchant */}
                         {m.status === "Active" && (
                           <button
@@ -980,7 +1191,7 @@ export default function AccountPage() {
                             onClick={() =>
                               void run(`pause-${m.id}`, () =>
                                 payflow.setPaused(
-                                  address,
+                                  address!,
                                   signXdr,
                                   m.id,
                                   true,
@@ -999,7 +1210,7 @@ export default function AccountPage() {
                             onClick={() =>
                               void run(`pause-${m.id}`, () =>
                                 payflow.setPaused(
-                                  address,
+                                  address!,
                                   signXdr,
                                   m.id,
                                   false,
@@ -1010,12 +1221,13 @@ export default function AccountPage() {
                             Resume
                           </button>
                         )}
-                        {/* Offered only against a contract that carries
-                            pause_until; see `pauseSupported`. */}
                         {pauseSupported &&
                           (pauseFor === m.id ? (
                             <>
-                              <label className="sr-only" htmlFor={`pause-until-${m.id}`}>
+                              <label
+                                className="sr-only"
+                                htmlFor={`pause-until-${m.id}`}
+                              >
                                 Resume date for mandate {m.id}
                               </label>
                               <input
@@ -1033,7 +1245,9 @@ export default function AccountPage() {
                                 disabled={busy !== null || networkMismatch}
                                 onClick={() => void pauseUntil(m.id)}
                               >
-                                {busy === `pause-until-${m.id}` ? "Pausing…" : "Pause until…"}
+                                {busy === `pause-until-${m.id}`
+                                  ? "Pausing…"
+                                  : "Pause until…"}
                               </button>
                               <button
                                 type="button"
@@ -1072,7 +1286,7 @@ export default function AccountPage() {
                               aria-label={`Confirm cancelling subscription #${m.id}`}
                               onClick={() =>
                                 void run(`cancel-${m.id}`, () =>
-                                  payflow.cancel(address, signXdr, m.id),
+                                  payflow.cancel(address!, signXdr, m.id),
                                 ).then(() => setConfirmCancel(null))
                               }
                             >
@@ -1094,68 +1308,76 @@ export default function AccountPage() {
                     )}
                   </div>
 
-                  {schedule.charges.length > 0 && (
-                    <section
-                      className="mt-4 border-t border-edge pt-3"
-                      aria-labelledby={`schedule-${m.id}`}
-                    >
-                      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-                        <h3 id={`schedule-${m.id}`} className="text-sm font-medium">
-                          Upcoming charges
-                        </h3>
-                        <span className="text-xs text-muted">
-                          Next {schedule.charges.length} total{" "}
-                          {formatAmount(schedule.total, meta)}
-                        </span>
-                      </div>
-                      <ol className="mt-2 space-y-1.5">
-                        {schedule.charges.map((charge) => (
-                          <li
-                            key={charge.due}
-                            className="flex items-baseline justify-between gap-3 text-sm"
-                          >
-                            <time
-                              dateTime={new Date(charge.due * 1000).toISOString()}
-                              className="text-muted"
-                            >
-                              {formatDate(charge.due)}
-                            </time>
-                            <span className="tabular-nums">
-                              {formatAmount(charge.amount, meta)}
-                            </span>
-                          </li>
-                        ))}
-                      </ol>
-                      <div className="mt-2 flex flex-wrap justify-between gap-2 text-xs text-muted">
-                        <span>
-                          Running total{" "}
-                          <strong className="font-medium text-fg">
+                    {schedule.charges.length > 0 && (
+                      <section
+                        className="mt-4 border-t border-edge pt-3"
+                        aria-labelledby={`schedule-${m.id}`}
+                      >
+                        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                          <h3 id={`schedule-${m.id}`} className="text-sm font-medium">
+                            Upcoming charges
+                          </h3>
+                          <span className="text-xs text-muted">
+                            Next {schedule.charges.length} total{" "}
                             {formatAmount(schedule.total, meta)}
-                          </strong>
-                        </span>
-                        {schedule.finalDate !== null && (
-                          <span>Final charge {formatDate(schedule.finalDate)}</span>
+                          </span>
+                        </div>
+                        <ol className="mt-2 space-y-1.5">
+                          {schedule.charges.map((charge) => (
+                            <li
+                              key={charge.due}
+                              className="flex items-baseline justify-between gap-3 text-sm"
+                            >
+                              <time
+                                dateTime={new Date(charge.due * 1000).toISOString()}
+                                className="text-muted"
+                              >
+                                {formatDate(charge.due)}
+                              </time>
+                              <span className="tabular-nums">
+                                {formatAmount(charge.amount, meta)}
+                              </span>
+                            </li>
+                          ))}
+                        </ol>
+                        <div className="mt-2 flex flex-wrap justify-between gap-2 text-xs text-muted">
+                          <span>
+                            Running total{" "}
+                            <strong className="font-medium text-fg">
+                              {formatAmount(schedule.total, meta)}
+                            </strong>
+                          </span>
+                          {schedule.finalDate !== null && (
+                            <span>Final charge {formatDate(schedule.finalDate)}</span>
+                          )}
+                        </div>
+                        {shortfall !== null && (
+                          <p
+                            role="status"
+                            className="mt-2 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger"
+                          >
+                            Your vault is short by {formatAmount(shortfall, meta)} for
+                            the next charge. Deposit before {formatDate(m.next_charge)}{" "}
+                            or it will fail.
+                          </p>
                         )}
-                      </div>
-                      {shortfall !== null && (
-                        <p
-                          role="status"
-                          className="mt-2 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger"
-                        >
-                          Your vault is short by{" "}
-                          {formatAmount(shortfall, meta)} for the next charge.
-                          Deposit before {formatDate(m.next_charge)} or it will
-                          fail.
-                        </p>
-                      )}
-                    </section>
-                  )}
-                </div>
-              );
-            })}
+                      </section>
+                    )}
+                  </div>
+                );
+              }}
+            />
           </div>
         )}
       </Panel>
     </div>
+  );
+}
+
+export default function AccountPage() {
+  return (
+    <Suspense fallback={<SkeletonRows rows={3} label="Loading account" />}>
+      <AccountInner />
+    </Suspense>
   );
 }

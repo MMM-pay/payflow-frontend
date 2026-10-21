@@ -1,7 +1,9 @@
 import {
   Address,
+  Asset,
   BASE_FEE,
   Contract,
+  Operation,
   StrKey,
   TransactionBuilder,
   nativeToScVal,
@@ -362,4 +364,560 @@ export interface Mandate {
   token: string;
   amount: bigint;
   period: bigint;
+}
+
+/**
+ * The status name from a decoded `MandateStatus`. Comparing the raw value
+ * with `=== "Active"` is always false, which on the contract-only path hid
+ * "Charge now" and made Pause send a resume.
+ */
+export function mandateStatus(raw: unknown): string {
+  if (Array.isArray(raw)) return String(raw[0] ?? "");
+  return String(raw ?? "");
+}
+
+// ---------------------------------------------------------------------------
+// Session cache for get_plan.
+// ---------------------------------------------------------------------------
+
+/**
+ * The registry lets a plan change in exactly one way after `create_plan`: the
+ * merchant flips `active` with `set_plan_active`. The name, price, period,
+ * token and trial are frozen for the life of the plan, yet every page that
+ * lists plans re-reads all of them — the subscribe page alone issues one
+ * `get_plan` per plan on every visit.
+ *
+ * The cache lives here rather than in `chain.ts` because `get_plan` and the one
+ * write that can invalidate a plan are both in this module: a write path cannot
+ * forget to tell a cache it does not know about. It is per session (plain
+ * module memory, so a reload starts clean) and only the mutable `active` flag
+ * is trusted for `PLAN_ACTIVE_TTL_MS`. When that expires, the next `get_plan`
+ * re-reads the whole record in one call and replaces the entry — the immutable
+ * fields come along for free, so they never cost a read of their own.
+ *
+ * A future write that changes an immutable field (renaming a plan, #88) must
+ * call `forgetPlan` afterwards, or the old name stays cached for the session.
+ */
+export const PLAN_ACTIVE_TTL_MS = 30_000;
+
+interface CachedPlan {
+  /** Everything but `active`: `create_plan` is the only writer of these. */
+  immutable: Omit<Plan, "active">;
+  active: boolean;
+  /** When `active` was last read from the contract. */
+  activeCheckedAt: number;
+}
+
+const planCache = new Map<string, CachedPlan>();
+
+function planKey(planId: number | bigint): string {
+  return String(planId);
+}
+
+/** Exported for tests. */
+export function clearPlanCache(): void {
+  planCache.clear();
+}
+
+/**
+ * The cached plan when its `active` flag is still trusted, otherwise null so
+ * the caller reads it again. `now` is a parameter so the TTL is testable
+ * without fake timers.
+ */
+export function cachedPlan(
+  planId: number | bigint,
+  now: number = Date.now(),
+): Plan | null {
+  const entry = planCache.get(planKey(planId));
+  if (!entry) return null;
+  if (now - entry.activeCheckedAt >= PLAN_ACTIVE_TTL_MS) return null;
+  return { ...entry.immutable, active: entry.active };
+}
+
+/** Cache a `get_plan` result, which is authoritative for every field. */
+export function rememberPlan(plan: Plan, now: number = Date.now()): Plan {
+  const { active, ...immutable } = plan;
+  planCache.set(planKey(plan.id), { immutable, active, activeCheckedAt: now });
+  return plan;
+}
+
+/**
+ * Drop a plan from the cache. Called after our own successful write so the
+ * next read comes from contract state: there is then no window in which a page
+ * can serve the value the merchant just changed, and the refresh also picks up
+ * any field a future contract version lets a write touch.
+ */
+export function forgetPlan(planId: number | bigint): void {
+  planCache.delete(planKey(planId));
+}
+
+/**
+ * When a mandate resumes, or null when the contract does not report it.
+ *
+ * A contract built before payflow-contract#41 decodes without `pause_until`,
+ * so its absence *is* the capability signal: there is no method to probe and
+ * no version to guess at, and treating null as "no such feature" hides the
+ * date picker exactly when the contract cannot service it. Read through this
+ * helper rather than the raw field because contract state carries a bigint
+ * while an indexer row carries a number.
+ */
+export function mandatePauseUntil(mandate: unknown): number | null {
+  const value = (mandate as { pause_until?: unknown } | null | undefined)?.pause_until;
+  const seconds =
+    typeof value === "bigint"
+      ? Number(value)
+      : typeof value === "number"
+        ? value
+        : Number.NaN;
+  return Number.isFinite(seconds) ? seconds : null;
+}
+
+/**
+ * Whether a mandate is past due (vault could not cover a due charge).
+ *
+ * Proposed in payflow-contract#34. A contract built before that change decodes
+ * without the `PastDue` status variant, so this returns false — the UI hides
+ * the past-due badge and notice rather than guessing at support.
+ */
+export function mandateIsPastDue(mandate: unknown): boolean {
+  return mandateStatus(mandate) === "PastDue";
+}
+
+/**
+ * When the past-due grace period ends, or null when the contract does not
+ * report it or the mandate is not past due.
+ *
+ * Proposed in payflow-contract#34 as `past_due_until`. Absent means the
+ * contract cannot say, which the UI treats as "no grace period visible".
+ */
+export function mandatePastDueUntil(mandate: unknown): number | null {
+  const value = (mandate as { past_due_until?: unknown } | null | undefined)?.past_due_until;
+  const seconds =
+    typeof value === "bigint"
+      ? Number(value)
+      : typeof value === "number"
+        ? value
+        : Number.NaN;
+  return Number.isFinite(seconds) ? seconds : null;
+}
+
+/**
+ * Whether the deployed contract supports refunds on mandates.
+ *
+ * Proposed in payflow-contract#36. A contract built before that change does
+ * not have the `refund` method, so calling it would fail. The UI hides the
+ * refund button rather than building a transaction the contract would reject.
+ *
+ * Since there's no version probe, we check if the contract's `Mandate` type
+ * carries a `refundable_amount` field (proposed as part of the refund feature).
+ * If the field is absent, the contract cannot say, and the control stays hidden.
+ */
+export function mandateSupportsRefund(mandate: unknown): boolean {
+  const value = (mandate as { refundable_amount?: unknown } | null | undefined)?.refundable_amount;
+  return typeof value === "bigint" || typeof value === "number" || typeof value === "string";
+}
+
+/**
+ * The maximum amount that can be refunded on this mandate, in the token's
+ * smallest unit. Returns null when the contract cannot say.
+ *
+ * Proposed in payflow-contract#36 as `refundable_amount`. This represents the
+ * net amount the merchant received (after fees) that can be refunded to the
+ * subscriber.
+ */
+export function mandateRefundableAmount(mandate: unknown): bigint | null {
+  const value = (mandate as { refundable_amount?: unknown } | null | undefined)?.refundable_amount;
+  if (typeof value === "bigint") return value;
+  if (typeof value === "number") return BigInt(value);
+  return null;
+}
+
+/** A Stellar account a sponsor can pay into: a valid ed25519 public key. */
+export function validateRecipient(recipient: string): string | null {
+  const trimmed = recipient.trim();
+  if (!trimmed) return "Enter a Stellar address.";
+  return StrKey.isValidEd25519PublicKey(trimmed)
+    ? null
+    : "That is not a valid Stellar account address.";
+}
+
+/**
+ * Whether the deployed vault contract exposes `deposit_for`.
+ *
+ * readContract simulates without committing, so a failed probe costs nothing
+ * and no tokens move. A contract built before payflow-contract#29 has no such
+ * method, so the simulation throws and the UI keeps the sponsor control
+ * hidden rather than offering a write it cannot service.
+ */
+export async function vaultSupportsDepositFor(source: string): Promise<boolean> {
+  if (!config.contracts.vault) return false;
+  try {
+    // Probe depositing the smallest possible amount into the caller's own
+    // vault: if the method exists the contract answers, and nothing commits.
+    await readContract(
+      config.contracts.vault,
+      "deposit_for",
+      source,
+      [arg.address(source), arg.address(config.contracts.token), arg.i128(1n)],
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export const payflow = {
+  // Proposed read interface for #25's open-mandate counter. Callers must
+  // tolerate missing support until the contract ships this getter.
+  planSubscriberCount: (source: string, planId: number | bigint) =>
+    readContract<number>(config.contracts.subscription, "plan_subscriber_count", source, [arg.u64(planId)]),
+  // --- plan registry ---
+  getPlan: async (source: string, planId: number | bigint) => {
+    const hit = cachedPlan(planId);
+    if (hit) return hit;
+    return rememberPlan(
+      await readContract<Plan>(config.contracts.planRegistry, "get_plan", source, [
+        arg.u64(planId),
+      ]),
+    );
+  },
+
+  createPlan: (
+    source: string,
+    sign: SignXdr,
+    params: { token: string; amount: bigint; period: number; name: string; trial?: number },
+  ) =>
+    writeContract(
+      config.contracts.planRegistry,
+      "create_plan",
+      source,
+      sign,
+      [
+        arg.address(source),
+        arg.address(params.token),
+        arg.i128(params.amount),
+        arg.u64(params.period),
+        arg.string(params.name),
+        // `trial` is appended only when the caller supplies one. The deployed
+        // contract predates payflow-contract#9 and takes five arguments; adding
+        // a sixth would make every publish fail. Callers pass it only after
+        // `supportsTrials` confirms the contract answers with the field.
+        ...(params.trial === undefined ? [] : [arg.u64(params.trial)]),
+      ],
+    ),
+
+  setPlanActive: async (
+    source: string,
+    sign: SignXdr,
+    planId: number | bigint,
+    active: boolean,
+  ) => {
+    const hash = await writeContract(
+      config.contracts.planRegistry,
+      "set_plan_active",
+      source,
+      sign,
+      [arg.address(source), arg.u64(planId), arg.bool(active)],
+    );
+    // `writeContract` polls until the transaction is confirmed, so the cached
+    // record is now the only stale copy of this plan.
+    forgetPlan(planId);
+    return hash;
+  },
+
+  // --- vault ---
+  vaultBalance: (source: string, user: string, token: string) =>
+    readContract<bigint>(config.contracts.vault, "balance", source, [
+      arg.address(user),
+      arg.address(token),
+    ]),
+
+  deposit: (source: string, sign: SignXdr, token: string, amount: bigint) =>
+    writeContract(config.contracts.vault, "deposit", source, sign, [
+      arg.address(source),
+      arg.address(token),
+      arg.i128(amount),
+    ]),
+
+  withdraw: (source: string, sign: SignXdr, token: string, amount: bigint) =>
+    writeContract(config.contracts.vault, "withdraw", source, sign, [
+      arg.address(source),
+      arg.address(token),
+      arg.i128(amount),
+    ]),
+
+  /**
+   * Sponsor another account's vault: the caller's tokens are credited to the
+   * recipient's vault balance, and only the recipient can withdraw.
+   *
+   * Built against the interface proposed in payflow-contract#29:
+   * `deposit_for(recipient: Address, token: Address, amount: i128)`. The
+   * caller is the transaction's source account and is not passed as an
+   * argument — it authorizes the payment by signing the transaction.
+   *
+   * Only call this when `vaultSupportsDepositFor` confirms the deployed
+   * contract carries the method.
+   */
+  depositFor: (source: string, sign: SignXdr, recipient: string, token: string, amount: bigint) =>
+    writeContract(config.contracts.vault, "deposit_for", source, sign, [
+      arg.address(recipient),
+      arg.address(token),
+      arg.i128(amount),
+    ]),
+
+  // --- subscription ---
+  getMandate: (source: string, mandateId: number | bigint) =>
+    readContract<Mandate>(config.contracts.subscription, "get_mandate", source, [
+      arg.u64(mandateId),
+    ]),
+
+  /**
+   * The protocol's current fee, in basis points. Read live rather than hardcoded
+   * so a merchant previewing a fee split sees the rate their subscribers will
+   * actually be charged: the contract freezes `fee_bps` into each mandate at
+   * subscribe time, but an admin can change it between mandates.
+   */
+  feeBps: (source: string) =>
+    readContract<number>(config.contracts.subscription, "fee_bps", source),
+
+  // Index getters are paged: at most MAX_PAGE ids per call, oldest first.
+  merchantPlanCount: (source: string, merchant: string) =>
+    readContract<number>(config.contracts.planRegistry, "merchant_plan_count", source, [
+      arg.address(merchant),
+    ]),
+
+  merchantPlans: (source: string, merchant: string, start: number, limit: number) =>
+    readContract<bigint[]>(config.contracts.planRegistry, "merchant_plans", source, [
+      arg.address(merchant),
+      arg.u32(start),
+      arg.u32(limit),
+    ]),
+
+  /** Plans are numbered from 1, so this minus one is how many exist. */
+  nextPlanId: (source: string) =>
+    readContract<bigint>(config.contracts.planRegistry, "next_plan_id", source),
+
+  subscriberMandateCount: (source: string, subscriber: string) =>
+    readContract<number>(
+      config.contracts.subscription,
+      "subscriber_mandate_count",
+      source,
+      [arg.address(subscriber)],
+    ),
+
+  subscriberMandates: (source: string, subscriber: string, start: number, limit: number) =>
+    readContract<bigint[]>(
+      config.contracts.subscription,
+      "subscriber_mandates",
+      source,
+      [arg.address(subscriber), arg.u32(start), arg.u32(limit)],
+    ),
+
+  merchantMandateCount: (source: string, merchant: string) =>
+    readContract<number>(
+      config.contracts.subscription,
+      "merchant_mandate_count",
+      source,
+      [arg.address(merchant)],
+    ),
+
+  merchantMandates: (source: string, merchant: string, start: number, limit: number) =>
+    readContract<bigint[]>(
+      config.contracts.subscription,
+      "merchant_mandates",
+      source,
+      [arg.address(merchant), arg.u32(start), arg.u32(limit)],
+    ),
+
+  isDue: (source: string, mandateId: number | bigint) =>
+    readContract<boolean>(config.contracts.subscription, "is_due", source, [
+      arg.u64(mandateId),
+    ]),
+
+  subscribe: (
+    source: string,
+    sign: SignXdr,
+    planId: number | bigint,
+    maxCharges: number,
+  ) =>
+    writeContract(config.contracts.subscription, "subscribe", source, sign, [
+      arg.address(source),
+      arg.u64(planId),
+      arg.u32(maxCharges),
+    ]),
+
+  cancel: (source: string, sign: SignXdr, mandateId: number | bigint) =>
+    writeContract(config.contracts.subscription, "cancel", source, sign, [
+      arg.address(source),
+      arg.u64(mandateId),
+    ]),
+
+  /** Merchant side: permanently stop billing one of the merchant's mandates. */
+  endMandate: (source: string, sign: SignXdr, mandateId: number | bigint) =>
+    writeContract(config.contracts.subscription, "end_mandate", source, sign, [
+      arg.address(source),
+      arg.u64(mandateId),
+    ]),
+
+  setPaused: (
+    source: string,
+    sign: SignXdr,
+    mandateId: number | bigint,
+    paused: boolean,
+  ) =>
+    writeContract(config.contracts.subscription, "set_paused", source, sign, [
+      arg.u64(mandateId),
+      arg.bool(paused),
+    ]),
+
+  /**
+   * Subscriber side: pause billing until a point in time, from the interface
+   * proposed in payflow-contract#41. Only callable against a contract that
+   * carries `pause_until` — see `mandatePauseUntil`, which is how the UI
+   * decides whether to offer this at all.
+   */
+  pauseUntil: (
+    source: string,
+    sign: SignXdr,
+    mandateId: number | bigint,
+    untilUnixSeconds: number,
+  ) =>
+    writeContract(config.contracts.subscription, "pause_until", source, sign, [
+      arg.address(source),
+      arg.u64(mandateId),
+      arg.u64(untilUnixSeconds),
+    ]),
+
+  /**
+   * Merchant side: attach a discount to one of the merchant's mandates.
+   *
+   * Built against the interface proposed in payflow-contract#37: the
+   * discount is a rate in basis points and covers a number of charges. The
+   * contract charges the discounted amount for those charges and the full
+   * price afterwards; a discount can only lower the price.
+   */
+  setDiscount: (
+    source: string,
+    sign: SignXdr,
+    mandateId: number | bigint,
+    discountBps: number,
+    discountCharges: number,
+  ) =>
+    writeContract(config.contracts.subscription, "set_discount", source, sign, [
+      arg.u64(mandateId),
+      arg.u32(discountBps),
+      arg.u32(discountCharges),
+    ]),
+
+  /** Permissionless: anyone may settle a due mandate. */
+  charge: (source: string, sign: SignXdr, mandateId: number | bigint) =>
+    writeContract(config.contracts.subscription, "charge", source, sign, [
+      arg.u64(mandateId),
+    ]),
+
+  /**
+   * Merchant side: issue a refund on one of the merchant's mandates.
+   *
+   * Built against the interface proposed in payflow-contract#36: the refund
+   * is linked to a mandate and specifies the amount to return to the
+   * subscriber. The amount is capped at what the merchant received (net of
+   * fees) for that mandate.
+   */
+  refund: (
+    source: string,
+    sign: SignXdr,
+    mandateId: number | bigint,
+    amount: bigint,
+  ) =>
+    writeContract(config.contracts.subscription, "refund", source, sign, [
+      arg.address(source),
+      arg.u64(mandateId),
+      arg.i128(amount),
+    ]),
+
+  /** Check if an account has established a trustline on Horizon */
+  checkTrustline: (
+    address: string,
+    assetCode: string,
+    assetIssuer?: string,
+    horizonUrl: string = config.horizonUrl,
+  ) => checkTrustline(address, assetCode, assetIssuer, horizonUrl),
+
+  /** Establish a trustline for a classic Stellar asset via ChangeTrust */
+  addTrustline: (
+    source: string,
+    sign: SignXdr,
+    assetCode: string,
+    assetIssuer: string,
+  ) => addTrustline(source, sign, assetCode, assetIssuer),
+};
+
+/**
+ * Checks whether an account has an established trustline for a classic asset on Horizon.
+ * Returns true if the account holds or has a trustline for the specified asset.
+ */
+export async function checkTrustline(
+  address: string,
+  assetCode: string,
+  assetIssuer?: string,
+  horizonUrl: string = config.horizonUrl,
+): Promise<boolean> {
+  if (!address || !assetCode || !horizonUrl) return true;
+  try {
+    const res = await fetch(`${horizonUrl}/accounts/${address}`, { cache: "no-store" });
+    if (!res.ok) return false;
+    const data = (await res.json()) as {
+      balances?: Array<{ asset_type: string; asset_code?: string; asset_issuer?: string }>;
+    };
+    if (!data.balances) return false;
+    return data.balances.some(
+      (b) =>
+        b.asset_code === assetCode &&
+        (!assetIssuer || b.asset_issuer === assetIssuer),
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Builds and submits a ChangeTrust operation to establish a trustline for a classic asset.
+ */
+export async function addTrustline(
+  source: string,
+  sign: SignXdr,
+  assetCode: string,
+  assetIssuer: string,
+): Promise<string> {
+  const account = await server.getAccount(source);
+  const tx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: config.networkPassphrase,
+  })
+    .addOperation(
+      Operation.changeTrust({
+        asset: new Asset(assetCode, assetIssuer),
+      }),
+    )
+    .setTimeout(30)
+    .build();
+
+  let signedXdr: string;
+  try {
+    signedXdr = await sign(tx.toXDR());
+  } catch (err) {
+    translateSignatureError(err);
+    throw err;
+  }
+
+  const signed = TransactionBuilder.fromXDR(signedXdr, config.networkPassphrase);
+  const sent = await server.sendTransaction(signed);
+  if (sent.status === "ERROR") {
+    throw new Error(`changeTrust rejected: ${JSON.stringify(sent.errorResult)}`);
+  }
+  const confirmed = await pollTransaction(sent.hash);
+  if (confirmed.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
+    throw new Error(`changeTrust failed on-chain (${confirmed.status})`);
+  }
+  return sent.hash;
 }
