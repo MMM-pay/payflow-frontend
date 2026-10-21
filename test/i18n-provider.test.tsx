@@ -60,7 +60,9 @@ describe("persistent locale without remounting wallet or form state", () => {
   });
   it("hydrates the English static export before adopting stored French without mismatch", async () => {
     const container = document.createElement("div");
-    container.innerHTML = renderToString(app());
+    // Parse the trusted SSR fixture in an inert document, without an HTML execution sink.
+    const snapshot = new DOMParser().parseFromString(renderToString(app()), "text/html");
+    container.replaceChildren(...Array.from(snapshot.body.childNodes));
     expect(container.textContent).toContain("No wallet connected");
     document.body.appendChild(container);
     localStorage.setItem(LOCALE_STORAGE_KEY, "fr");
