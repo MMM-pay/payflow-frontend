@@ -4,6 +4,7 @@ import type { ApiCharge, ApiMandate, ApiPlan, ApiVaultEvent, MerchantSummary } f
 import { availabilityInteger } from "./availability";
 import { fromStroops } from "./format";
 import { chargeShortfall } from "./schedule";
+import { loadPayflow } from "./lazy-payflow";
 
 /**
  * Contract-only fallbacks for the lists the indexer normally serves.
@@ -41,7 +42,7 @@ function planToApi(plan: Plan): ApiPlan {
 }
 
 async function planWithAvailability(source: string, plan: Plan): Promise<ApiPlan> {
-  const { payflow } = await import("./payflow");
+  const { payflow } = await loadPayflow();
   const result = planToApi(plan);
   if (result.max_subscribers) {
     try {
@@ -146,7 +147,7 @@ async function newestIds(
  * published plan changes.
  */
 export async function chainPlans(source: string): Promise<ApiPlan[]> {
-  const { payflow } = await import("./payflow");
+  const { payflow } = await loadPayflow();
   const next = Number(await payflow.nextPlanId(source));
   const newest = Math.min(MAX_PLAN_PROBE, Math.max(0, next - 1));
   const ids = Array.from({ length: newest }, (_, i) => next - 1 - i);
@@ -155,7 +156,7 @@ export async function chainPlans(source: string): Promise<ApiPlan[]> {
 }
 
 export async function chainPlansOf(source: string, merchant: string): Promise<ApiPlan[]> {
-  const { payflow } = await import("./payflow");
+  const { payflow } = await loadPayflow();
   const count = await payflow.merchantPlanCount(source, merchant);
   const ids = await newestIds(count, (s, l) => payflow.merchantPlans(source, merchant, s, l));
   const plans = await settledValues(ids.map((id) => payflow.getPlan(source, id)));
@@ -176,6 +177,7 @@ export async function chainPlanSubscriberCount(
   planId: number,
 ): Promise<number | null> {
   try {
+    const { payflow } = await loadPayflow();
     return await payflow.planSubscriberCount(source, planId);
   } catch {
     // Old contracts do not expose this getter. Return null so the UI can
@@ -188,7 +190,7 @@ export async function chainMandatesOf(
   source: string,
   subscriber: string,
 ): Promise<ApiMandate[]> {
-  const { payflow } = await import("./payflow");
+  const { payflow } = await loadPayflow();
   const count = await payflow.subscriberMandateCount(source, subscriber);
   const ids = await newestIds(count, (s, l) =>
     payflow.subscriberMandates(source, subscriber, s, l),
@@ -201,7 +203,7 @@ export async function chainMandatesFor(
   source: string,
   merchant: string,
 ): Promise<ApiMandate[]> {
-  const { payflow } = await import("./payflow");
+  const { payflow } = await loadPayflow();
   const count = await payflow.merchantMandateCount(source, merchant);
   const ids = await newestIds(count, (s, l) => payflow.merchantMandates(source, merchant, s, l));
   const mandates = await settledValues(ids.map((id) => payflow.getMandate(source, id)));
@@ -216,6 +218,7 @@ export async function chainMandate(
   mandateId: number,
 ): Promise<ApiMandate | null> {
   try {
+    const { payflow } = await loadPayflow();
     const raw = await payflow.getMandate(source, mandateId);
     if (!raw) return null;
     return mandateToApi(raw);
@@ -229,6 +232,7 @@ export async function chainMandate(
  * Only returns what contract state can determine (plans count from next_plan_id).
  */
 export async function chainProtocolStats(source: string): Promise<{ plans: number }> {
+  const { payflow } = await loadPayflow();
   const next = Number(await payflow.nextPlanId(source));
   return { plans: Math.max(0, next - 1) };
 }

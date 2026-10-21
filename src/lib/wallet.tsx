@@ -13,6 +13,7 @@ import {
 import type { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit";
 import { config } from "./config";
 import type { SignXdr } from "./payflow-core";
+import { translateSignatureError } from "./signature-error";
 
 export const STORAGE_KEY = "payflow.wallet";
 export const ACCOUNT_CHANGED_ERROR =

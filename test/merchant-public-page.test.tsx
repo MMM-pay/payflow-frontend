@@ -74,11 +74,7 @@ vi.mock("@/lib/token", () => ({
   useTokenMetas: () => new Map(),
 }));
 vi.mock("@/lib/toml", () => ({ useOrgName: () => "Acme Payments" }));
-vi.mock("@/lib/payflow", async (importOriginal) => ({
-  // The real chain.ts (imported above) needs MAX_PAGE and mandateStatus.
-  ...(await importOriginal<typeof import("@/lib/payflow")>()),
-  payflow: payflowMock,
-}));
+vi.mock("@/lib/payflow", () => ({ payflow: payflowMock }));
 
 function plan(overrides: Partial<ApiPlan> = {}): ApiPlan {
   return {

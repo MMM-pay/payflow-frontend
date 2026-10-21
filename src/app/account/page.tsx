@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { StrKey } from "@stellar/stellar-sdk";
+import { StrKey } from "@stellar/stellar-sdk/base";
 import { api, type ApiMandate, type ApiVaultEvent, type StreamEvent } from "@/lib/api";
 import { buildUpcomingChargesCalendar, CALENDAR_FILENAME } from "@/lib/calendar";
 import {
@@ -19,7 +19,39 @@ import {
   vaultEventLabel,
   vaultEventTone,
 } from "@/lib/chain";
-import { config } from "@/lib/config";
+import { config, type ConfiguredToken } from "@/lib/config";
+
+const DEFAULT_TOKENS: readonly ConfiguredToken[] = [
+  {
+    id: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    symbol: "XLM",
+    name: "Stellar Lumens",
+    decimals: 7,
+  },
+  {
+    id: "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+    symbol: "USDC",
+    name: "USD Coin",
+    decimals: 6,
+    classicAsset: {
+      code: "USDC",
+      issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+    },
+  },
+];
+import {
+  discountBadge,
+  nextChargeAmount,
+  remainingDiscountCharges,
+} from "@/lib/discount";
+import {
+  mandateIsPastDue,
+  mandatePastDueUntil,
+  mandatePauseUntil,
+  mandateStatus,
+  validateRecipient,
+} from "@/lib/payflow-core";
+import { createdAtDate, paymentDateRange, paymentRow, sortPaymentsNewestFirst } from "@/lib/payments";
 import { useWallet } from "@/lib/wallet";
 import { useStream } from "@/lib/stream";
 import {
@@ -51,6 +83,7 @@ import {
   TimeAgo,
   TxLink,
 } from "@/components/ui";
+import { loadPayflow } from "@/lib/lazy-payflow";
 
 /**
  * The SDK-backed contract module loads on demand. Keeping it out of the
@@ -58,9 +91,16 @@ import {
  * is only needed once the wallet talks to the chain, which happens after the
  * first paint.
  */
-const loadPayflow = () => import("@/lib/payflow");
 
-export default function AccountPage() {
+
+function AccountInner() {
+  const searchParams = useSearchParams();
+  const paramAddress = searchParams?.get("address");
+  const targetAddress =
+    paramAddress && StrKey.isValidEd25519PublicKey(paramAddress.trim())
+      ? paramAddress.trim()
+      : null;
+
   const { address, networkMismatch, signXdr, connect, connecting } = useWallet();
 
   // The account whose data is displayed on screen
@@ -127,7 +167,9 @@ export default function AccountPage() {
   // Source account for simulation
   const source = address ?? config.readSource;
   const load = useCallback(async () => {
-    if (!address) return;
+    addressRef.current = viewAddress;
+    if (!viewAddress) return;
+    const who = viewAddress;
     const { payflow } = await loadPayflow();
     const [bal, res, hist] = await Promise.allSettled([
       payflow.vaultBalance(source, who, config.contracts.token),
@@ -256,9 +298,11 @@ export default function AccountPage() {
       return;
     }
     let live = true;
-    void vaultSupportsDepositFor(address).then((supported) => {
-      if (live) setFundSupport(supported);
-    });
+    void loadPayflow()
+      .then(({ vaultSupportsDepositFor }) => vaultSupportsDepositFor(address))
+      .then((supported) => {
+        if (live) setFundSupport(supported);
+      });
     return () => {
       live = false;
     };
@@ -277,6 +321,7 @@ export default function AccountPage() {
       setMissingTrustlines([]);
       return;
     }
+    const { payflow } = await loadPayflow();
     const missing: ConfiguredToken[] = [];
     for (const t of classicTokens) {
       if (t.classicAsset) {
@@ -300,6 +345,7 @@ export default function AccountPage() {
     try {
       setBusy(`trustline-${token.symbol}`);
       setError(null);
+      const { payflow } = await loadPayflow();
       await payflow.addTrustline(
         address,
         signXdr,
@@ -338,9 +384,10 @@ export default function AccountPage() {
 
   async function fundConfirmed() {
     if (!address || !signXdr || !fundFor || !fundAmountCheck.ok) return;
-    await run(`fund-for-${fundFor}`, () =>
-      payflow.depositFor(address, signXdr, fundFor, config.contracts.token, fundStroops),
-    );
+    await run(`fund-for-${fundFor}`, async () => {
+      const { payflow } = await loadPayflow();
+      return payflow.depositFor(address, signXdr, fundFor, config.contracts.token, fundStroops);
+    });
     setFundFor(null);
     setFundRecipient("");
     setFundAmount("");
@@ -374,6 +421,7 @@ export default function AccountPage() {
     const PAGE_SIZE = 50;
     let completed = 0;
     let failed = 0;
+    const { payflow } = await loadPayflow();
 
     for (let i = 0; i < toCancel.length; i += PAGE_SIZE) {
       const page = toCancel.slice(i, i + PAGE_SIZE);
@@ -434,9 +482,10 @@ export default function AccountPage() {
       setError("Pick a date in the future.");
       return;
     }
-    await run(`pause-until-${mandateId}`, () =>
-      payflow.pauseUntil(address, signXdr, mandateId, until),
-    );
+    await run(`pause-until-${mandateId}`, async () => {
+      const { payflow } = await loadPayflow();
+      return payflow.pauseUntil(address, signXdr, mandateId, until);
+    });
     setPauseFor(null);
   }
 
@@ -474,6 +523,7 @@ export default function AccountPage() {
    */
   async function chargeDate(txHash: string): Promise<string> {
     try {
+      const { server } = await loadPayflow();
       const tx = await server.getTransaction(txHash);
       if ("createdAt" in tx) return createdAtDate(tx.createdAt as number);
     } catch {
@@ -717,14 +767,15 @@ export default function AccountPage() {
               className="btn-primary"
               disabled={busy !== null || networkMismatch}
               onClick={() =>
-                void run("deposit", () =>
-                  payflow.deposit(
+                void run("deposit", async () => {
+                  const { payflow } = await loadPayflow();
+                  return payflow.deposit(
                     address!,
                     signXdr,
                     config.contracts.token,
                     parseAmount(amount, vaultMeta.decimals),
-                  ),
-                )
+                  );
+                })
               }
             >
               {busy === "deposit" ? "Depositing…" : "Deposit"}
@@ -734,57 +785,110 @@ export default function AccountPage() {
               className="btn-ghost"
               disabled={busy !== null || networkMismatch}
               onClick={() =>
-                void run("withdraw", () =>
-                  payflow.withdraw(
+                void run("withdraw", async () => {
+                  const { payflow } = await loadPayflow();
+                  return payflow.withdraw(
                     address!,
                     signXdr,
                     config.contracts.token,
                     parseAmount(amount, vaultMeta.decimals),
-                  ),
-                )
+                  );
+                })
               }
             >
               {busy === "withdraw" ? "Withdrawing…" : "Withdraw"}
             </button>
           </div>
-          <button
-            type="button"
-            className="btn-primary"
-            disabled={busy !== null || networkMismatch}
-            onClick={() =>
-              void run("deposit", async () => {
-                const { payflow } = await loadPayflow();
-                return payflow.deposit(
-                  address,
-                  signXdr,
-                  config.contracts.token,
-                  parseAmount(amount, vaultMeta.decimals),
-                );
-              })
-            }
-          >
-            {busy === "deposit" ? "Depositing…" : "Deposit"}
-          </button>
-          <button
-            type="button"
-            className="btn-ghost"
-            disabled={busy !== null || networkMismatch}
-            onClick={() =>
-              void run("withdraw", async () => {
-                const { payflow } = await loadPayflow();
-                return payflow.withdraw(
-                  address,
-                  signXdr,
-                  config.contracts.token,
-                  parseAmount(amount, vaultMeta.decimals),
-                );
-              })
-            }
-          >
-            {busy === "withdraw" ? "Withdrawing…" : "Withdraw"}
-          </button>
-        </div>
-      </Panel>
+        </Panel>
+      )}
+
+      {!isReadOnly && address && fundSupport === true && (
+        <Panel
+          title="Fund another account"
+          subtitle="Send tokens to someone else's vault. Only the recipient can withdraw — you cannot cancel or refund the deposit."
+        >
+          {fundFor ? (
+            <div className="space-y-3">
+              <p className="text-sm">
+                <span className="font-mono truncate">{shortAddress(address)}</span>{" "}
+                pays{" "}
+                <span className="font-medium">{formatAmount(fundStroops, vaultMeta)}</span>{" "}
+                into <span className="font-mono truncate">{shortAddress(fundFor)}</span>{"'s vault"}
+              </p>
+              <p className="mt-1 text-xs text-muted">
+                Only{" "}
+                <span className="font-mono truncate">{shortAddress(fundFor)}</span> can withdraw
+                it — you cannot cancel or refund this deposit.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="btn-primary"
+                  disabled={busy !== null || networkMismatch}
+                  onClick={fundConfirmed}
+                >
+                  {busy === `fund-for-${fundFor}` ? "Funding…" : "Fund"}
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  disabled={busy !== null}
+                  onClick={() => setFundFor(null)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="min-w-[14rem] flex-1">
+                <label className="label" htmlFor="fund-recipient">
+                  Recipient address
+                </label>
+                <input
+                  id="fund-recipient"
+                  className="input"
+                  placeholder="GABC…"
+                  value={fundRecipient}
+                  onChange={(e) => setFundRecipient(e.target.value)}
+                  aria-invalid={Boolean(recipientDisplayError)}
+                  aria-describedby={recipientDisplayError ? "fund-recipient-error" : undefined}
+                  disabled={busy !== null}
+                />
+                {recipientDisplayError && (
+                  <p id="fund-recipient-error" className="mt-1 text-sm text-danger">
+                    {recipientDisplayError}
+                  </p>
+                )}
+              </div>
+              <div className="min-w-[12rem] flex-1">
+                <AmountInput
+                  id="fund-amount"
+                  label={`Amount (${vaultMeta.symbol})`}
+                  value={fundAmount}
+                  onChange={setFundAmount}
+                  decimals={vaultMeta.decimals}
+                  placeholder="5.0"
+                  disabled={busy !== null}
+                />
+              </div>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={
+                  busy !== null ||
+                  networkMismatch ||
+                  Boolean(recipientDisplayError) ||
+                  !fundAmountCheck.ok
+                }
+                onClick={fundAnother}
+              >
+                {busy === "fund-another" ? "Funding…" : "Fund"}
+              </button>
+            </div>
+          )}
+        </Panel>
+      )}
 
       <Panel
         title="Vault history"
@@ -1072,8 +1176,9 @@ export default function AccountPage() {
                                   className="btn-primary whitespace-nowrap"
                                   disabled={busy !== null || networkMismatch}
                                   onClick={() =>
-                                    void run(`deposit-past-due-${m.id}`, () =>
-                                      payflow.deposit(
+                                    void run(`deposit-past-due-${m.id}`, async () => {
+                                      const { payflow } = await loadPayflow();
+                                      return payflow.deposit(
                                         address!,
                                         signXdr,
                                         config.contracts.token,
@@ -1081,8 +1186,8 @@ export default function AccountPage() {
                                           fromStroops(pastDueShortfall + 1n, 4, meta.decimals),
                                           meta.decimals,
                                         ),
-                                      ),
-                                    )
+                                      );
+                                    })
                                   }
                                 >
                                   {busy === `deposit-past-due-${m.id}` ? "Depositing…" : "Deposit to fix"}
@@ -1093,39 +1198,123 @@ export default function AccountPage() {
                         )}
                       </div>
 
-                    {!terminal && (
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button
-                          type="button"
-                          className="btn-ghost"
-                          disabled={busy !== null || networkMismatch}
-                          onClick={() =>
-                            void run(`pause-${m.id}`, async () => {
-                              const { payflow } = await loadPayflow();
-                              return payflow.setPaused(
-                                address,
-                                signXdr,
-                                m.id,
-                                m.status === "Active",
-                              );
-                            })
-                          }
-                        >
-                          {m.status === "Active" ? "Pause" : "Resume"}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-ghost text-rose-300"
-                          disabled={busy !== null || networkMismatch}
-                          onClick={() =>
-                            void run(`cancel-${m.id}`, async () => {
-                              const { payflow } = await loadPayflow();
-                              return payflow.cancel(address, signXdr, m.id);
-                            })
-                          }
-                        >
-                          Cancel
-                        </button>
+                    {!terminal && !isReadOnly && (
+                      <div className="flex flex-wrap items-center gap-2 mt-4 pt-3 border-t border-edge">
+                        {/* Subscriber can pause, but cannot resume if paused by merchant */}
+                        {m.status === "Active" && (
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            disabled={busy !== null || networkMismatch}
+                            onClick={() =>
+                              void run(`pause-${m.id}`, async () => {
+                                const { payflow } = await loadPayflow();
+                                return payflow.setPaused(address!, signXdr, m.id, true);
+                              })
+                            }
+                          >
+                            Pause
+                          </button>
+                        )}
+                        {m.status === "Paused" && pausedBy.get(m.id) !== "merchant" && (
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            disabled={busy !== null || networkMismatch}
+                            onClick={() =>
+                              void run(`pause-${m.id}`, async () => {
+                                const { payflow } = await loadPayflow();
+                                return payflow.setPaused(address!, signXdr, m.id, false);
+                              })
+                            }
+                          >
+                            Resume
+                          </button>
+                        )}
+                        {pauseSupported &&
+                          (pauseFor === m.id ? (
+                            <>
+                              <label
+                                className="sr-only"
+                                htmlFor={`pause-until-${m.id}`}
+                              >
+                                Resume date for mandate {m.id}
+                              </label>
+                              <input
+                                id={`pause-until-${m.id}`}
+                                type="date"
+                                className="input"
+                                min={minPauseDate()}
+                                value={pauseDate}
+                                disabled={busy !== null}
+                                onChange={(e) => setPauseDate(e.target.value)}
+                              />
+                              <button
+                                type="button"
+                                className="btn-primary"
+                                disabled={busy !== null || networkMismatch}
+                                onClick={() => void pauseUntil(m.id)}
+                              >
+                                {busy === `pause-until-${m.id}`
+                                  ? "Pausing…"
+                                  : "Pause until…"}
+                              </button>
+                              <button
+                                type="button"
+                                className="btn-ghost"
+                                disabled={busy !== null}
+                                onClick={() => setPauseFor(null)}
+                              >
+                                Back
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              className="btn-ghost"
+                              disabled={busy !== null || networkMismatch}
+                              onClick={() => openPausePicker(m.id)}
+                            >
+                              Pause until…
+                            </button>
+                          ))}
+                        {confirmCancel === m.id ? (
+                          <>
+                            <button
+                              type="button"
+                              className="btn-ghost"
+                              disabled={busy !== null}
+                              autoFocus
+                              onClick={() => setConfirmCancel(null)}
+                            >
+                              Keep
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-danger"
+                              disabled={busy !== null || networkMismatch}
+                              aria-label={`Confirm cancelling subscription #${m.id}`}
+                              onClick={() =>
+                                void run(`cancel-${m.id}`, async () => {
+                                  const { payflow } = await loadPayflow();
+                                  return payflow.cancel(address!, signXdr, m.id);
+                                }).then(() => setConfirmCancel(null))
+                              }
+                            >
+                              {busy === `cancel-${m.id}` ? "Cancelling…" : "Confirm"}
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn-ghost text-danger"
+                            disabled={busy !== null || networkMismatch}
+                            aria-label={`Cancel subscription #${m.id}`}
+                            onClick={() => setConfirmCancel(m.id)}
+                          >
+                            Cancel
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>

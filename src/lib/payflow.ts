@@ -4,7 +4,6 @@ import {
   BASE_FEE,
   Contract,
   Operation,
-  StrKey,
   TransactionBuilder,
   nativeToScVal,
   scValToNative,
@@ -13,6 +12,14 @@ import {
 } from "@stellar/stellar-sdk";
 import { config } from "./config";
 import type { Mandate, Plan, SignXdr } from "./payflow-core";
+import { MIN_PERIOD_MESSAGE } from "./period";
+import {
+  SIGNATURE_CANCELLED_MESSAGE,
+  isSignatureRejection,
+  translateSignatureError,
+} from "./signature-error";
+
+export { SIGNATURE_CANCELLED_MESSAGE, isSignatureRejection, translateSignatureError };
 
 /**
  * The pure contract constants, types and helpers live in `payflow-core`, which
@@ -23,8 +30,14 @@ import type { Mandate, Plan, SignXdr } from "./payflow-core";
 export {
   MAX_NAME_LEN,
   MAX_PAGE,
+  mandateIsPastDue,
+  mandatePauseUntil,
+  mandatePastDueUntil,
+  mandateRefundableAmount,
   mandateStatus,
+  mandateSupportsRefund,
   nameByteLength,
+  validateRecipient,
 } from "./payflow-core";
 export type { Mandate, Plan, SignXdr };
 
@@ -32,14 +45,80 @@ export const server = new rpc.Server(config.rpcUrl, {
   allowHttp: config.rpcUrl.startsWith("http://"),
 });
 
-export const arg = {
-  address: (v: string): xdr.ScVal => new Address(v).toScVal(),
-  u64: (v: number | bigint): xdr.ScVal => nativeToScVal(v, { type: "u64" }),
-  u32: (v: number): xdr.ScVal => nativeToScVal(v, { type: "u32" }),
-  i128: (v: bigint): xdr.ScVal => nativeToScVal(v, { type: "i128" }),
-  bool: (v: boolean): xdr.ScVal => nativeToScVal(v, { type: "bool" }),
-  string: (v: string): xdr.ScVal => nativeToScVal(v, { type: "string" }),
-};
+/**
+ * Semaphore to limit concurrent contract simulations.
+ * Prevents hammering the RPC endpoint when many reads fire in parallel.
+ */
+class Semaphore {
+  private permits: number;
+  private waiters: Array<() => void> = [];
+
+  constructor(permits: number) {
+    this.permits = permits;
+  }
+
+  async acquire(): Promise<void> {
+    if (this.permits > 0) {
+      this.permits -= 1;
+      return;
+    }
+    return new Promise((resolve) => {
+      this.waiters.push(resolve);
+    });
+  }
+
+  release(): void {
+    this.permits += 1;
+    const next = this.waiters.shift();
+    if (next) {
+      this.permits -= 1;
+      next();
+    }
+  }
+}
+
+/**
+ * Maximum concurrent contract simulations (reads).
+ * Writes are never limited here — they are user-initiated and serialized by the wallet.
+ */
+export const MAX_CONCURRENT_READS = 6;
+
+const readSemaphore = new Semaphore(MAX_CONCURRENT_READS);
+
+/**
+ * Error types that should trigger a retry.
+ * Only applied to reads — writes are never retried.
+ */
+function isRetryableError(error: unknown): boolean {
+  if (error instanceof TypeError && error.message.includes("fetch")) {
+    // Network error (e.g., offline, DNS, CORS)
+    return true;
+  }
+  if (error instanceof Response) {
+    // HTTP error from fetch
+    return error.status === 429 || error.status === 503;
+  }
+  // The stellar-sdk wraps RPC errors; check for rate limit / unavailable in message
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes("429") ||
+    message.includes("503") ||
+    message.toLowerCase().includes("rate limit") ||
+    message.toLowerCase().includes("service unavailable")
+  );
+}
+
+/**
+ * Exponential backoff with jitter.
+ * attempt: 0-based attempt number (0 = first retry)
+ */
+function backoffDelay(attempt: number): number {
+  const baseMs = 250; // 250ms, 500ms, 1000ms...
+  const maxMs = 2000;
+  const exponential = Math.min(baseMs * 2 ** attempt, maxMs);
+  // Full jitter: random value in [0, exponential]
+  return Math.random() * exponential;
+}
 
 /**
  * Read contract state via simulation with retry on rate limits and transient errors.
@@ -101,8 +180,6 @@ export async function readContract<T>(
   throw lastError;
 }
 
-/** Signs a transaction XDR and returns the signed XDR. Supplied by the wallet. */
-export type SignXdr = (xdrString: string) => Promise<string>;
 
 export const arg = {
   address: (v: string): xdr.ScVal => new Address(v).toScVal(),
@@ -264,6 +341,107 @@ export function decodeContractError(error: unknown, method: string): string {
 // ---------------------------------------------------------------------------
 // Typed wrappers. These mirror payflow-contract's public interface exactly.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Session cache for get_plan.
+// ---------------------------------------------------------------------------
+
+/**
+ * The registry lets a plan change in exactly one way after `create_plan`: the
+ * merchant flips `active` with `set_plan_active`. The name, price, period,
+ * token and trial are frozen for the life of the plan, yet every page that
+ * lists plans re-reads all of them — the subscribe page alone issues one
+ * `get_plan` per plan on every visit.
+ *
+ * The cache lives here rather than in `chain.ts` because `get_plan` and the one
+ * write that can invalidate a plan are both in this module: a write path cannot
+ * forget to tell a cache it does not know about. It is per session (plain
+ * module memory, so a reload starts clean) and only the mutable `active` flag
+ * is trusted for `PLAN_ACTIVE_TTL_MS`. When that expires, the next `get_plan`
+ * re-reads the whole record in one call and replaces the entry — the immutable
+ * fields come along for free, so they never cost a read of their own.
+ *
+ * A future write that changes an immutable field (renaming a plan, #88) must
+ * call `forgetPlan` afterwards, or the old name stays cached for the session.
+ */
+export const PLAN_ACTIVE_TTL_MS = 30_000;
+
+interface CachedPlan {
+  /** Everything but `active`: `create_plan` is the only writer of these. */
+  immutable: Omit<Plan, "active">;
+  active: boolean;
+  /** When `active` was last read from the contract. */
+  activeCheckedAt: number;
+}
+
+const planCache = new Map<string, CachedPlan>();
+
+function planKey(planId: number | bigint): string {
+  return String(planId);
+}
+
+/** Exported for tests. */
+export function clearPlanCache(): void {
+  planCache.clear();
+}
+
+/**
+ * The cached plan when its `active` flag is still trusted, otherwise null so
+ * the caller reads it again. `now` is a parameter so the TTL is testable
+ * without fake timers.
+ */
+export function cachedPlan(
+  planId: number | bigint,
+  now: number = Date.now(),
+): Plan | null {
+  const entry = planCache.get(planKey(planId));
+  if (!entry) return null;
+  if (now - entry.activeCheckedAt >= PLAN_ACTIVE_TTL_MS) return null;
+  return { ...entry.immutable, active: entry.active };
+}
+
+/** Cache a `get_plan` result, which is authoritative for every field. */
+export function rememberPlan(plan: Plan, now: number = Date.now()): Plan {
+  const { active, ...immutable } = plan;
+  planCache.set(planKey(plan.id), { immutable, active, activeCheckedAt: now });
+  return plan;
+}
+
+/**
+ * Drop a plan from the cache. Called after our own successful write so the
+ * next read comes from contract state: there is then no window in which a page
+ * can serve the value the merchant just changed, and the refresh also picks up
+ * any field a future contract version lets a write touch.
+ */
+export function forgetPlan(planId: number | bigint): void {
+  planCache.delete(planKey(planId));
+}
+
+
+/**
+ * Whether the deployed vault contract exposes `deposit_for`.
+ *
+ * readContract simulates without committing, so a failed probe costs nothing
+ * and no tokens move. A contract built before payflow-contract#29 has no such
+ * method, so the simulation throws and the UI keeps the sponsor control
+ * hidden rather than offering a write it cannot service.
+ */
+export async function vaultSupportsDepositFor(source: string): Promise<boolean> {
+  if (!config.contracts.vault) return false;
+  try {
+    // Probe depositing the smallest possible amount into the caller's own
+    // vault: if the method exists the contract answers, and nothing commits.
+    await readContract(
+      config.contracts.vault,
+      "deposit_for",
+      source,
+      [arg.address(source), arg.address(config.contracts.token), arg.i128(1n)],
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export const payflow = {
   // Proposed read interface for #25's open-mandate counter. Callers must

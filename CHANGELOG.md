@@ -85,6 +85,9 @@ All notable changes to payflow-frontend. The format follows
   write path are unchanged; only when the code arrives moved. A new CI step
   (`npm run budget`) fails any build where a route's first-load JS grows past
   the budget in `js-budget.json`.
+- **Cancelling a subscription now asks for confirmation.** The account page
+  shows Keep and Confirm after the first Cancel click, matches the merchant's
+  End flow, and allows only one mandate to be confirming at a time.
 
 ## [0.2.0] - 2026-10-09
 

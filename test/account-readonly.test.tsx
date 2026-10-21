@@ -69,6 +69,10 @@ vi.mock("@/lib/payflow", async (importOriginal) => ({
   mandateStatus: (s: unknown) => (Array.isArray(s) ? s[0] : s),
   ...payflowHelpers,
 }));
+vi.mock("@/lib/payflow-core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/payflow-core")>()),
+  ...payflowHelpers,
+}));
 vi.mock("@/lib/chain", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/chain")>()),
   chainMandatesOf: chainMock.chainMandatesOf,

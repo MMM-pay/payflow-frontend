@@ -8,8 +8,42 @@ import { buildCsv, downloadCsv, exportFilename, type ChargeRow } from "@/lib/csv
 import { fillBuckets, parseRevenue, type BucketSize, type RevenuePoint } from "@/lib/revenue";
 import { parseMerchantChurn, type MerchantChurnMonth } from "@/lib/churn";
 import { chainMandatesFor, chainMerchantSummary, chainPlanSubscriberCount, chainPlansOf, endable, mandateFunding } from "@/lib/chain";
-import { config } from "@/lib/config";
-import { MAX_NAME_LEN, nameByteLength } from "@/lib/payflow-core";
+import { config, type ConfiguredToken } from "@/lib/config";
+import { VirtualList } from "@/components/VirtualList";
+
+const DEFAULT_TOKENS: readonly ConfiguredToken[] = [
+  {
+    id: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    symbol: "XLM",
+    name: "Stellar Lumens",
+    decimals: 7,
+  },
+  {
+    id: "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+    symbol: "USDC",
+    name: "USD Coin",
+    decimals: 6,
+    classicAsset: {
+      code: "USDC",
+      issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+    },
+  },
+];
+import {
+  checkDiscountBps,
+  checkDiscountCharges,
+  discountedAmount,
+  discountBadge,
+  remainingDiscountCharges,
+  supportsDiscounts,
+} from "@/lib/discount";
+import {
+  MAX_NAME_LEN,
+  mandatePauseUntil,
+  mandateRefundableAmount,
+  mandateSupportsRefund,
+  nameByteLength,
+} from "@/lib/payflow-core";
 import { useWallet } from "@/lib/wallet";
 import { useStream } from "@/lib/stream";
 import {
@@ -40,6 +74,7 @@ import { formatUsdEstimate, formatUsdcEstimate, useXlmUsdPrice } from "@/lib/pri
 import { AmountInput } from "@/components/AmountInput";
 import { CopyButton } from "@/components/CopyButton";
 import { AddressLink, Badge, Empty, Notice, Panel, SkeletonRows, Stat, TimeAgo, TxLink } from "@/components/ui";
+import { loadPayflow } from "@/lib/lazy-payflow";
 
 /** How far back the revenue chart looks, in days. */
 const REVENUE_WINDOW_DAYS = 90;
@@ -49,7 +84,6 @@ const REVENUE_WINDOW_DAYS = 90;
  * import graph is what holds this route's first-load JS down: the SDK is only
  * needed once the wallet talks to the chain, which happens after first paint.
  */
-const loadPayflow = () => import("@/lib/payflow");
 
 /**
  * "subscriber pays X, you receive Y after the Z% fee".
@@ -918,8 +952,8 @@ export default function MerchantPage() {
       return;
     }
     let live = true;
-    void payflow
-      .getMandate(address, row.id)
+    void loadPayflow()
+      .then(({ payflow }) => payflow.getMandate(address, row.id))
       .then((mandate) => {
         if (live) setDiscountSupport(supportsDiscounts(mandate));
       })
@@ -949,8 +983,8 @@ export default function MerchantPage() {
       return;
     }
     let live = true;
-    void payflow
-      .getMandate(address, row.id)
+    void loadPayflow()
+      .then(({ payflow }) => payflow.getMandate(address, row.id))
       .then((mandate) => {
         if (live) setRefundSupport(mandateSupportsRefund(mandate));
       })
@@ -983,8 +1017,8 @@ export default function MerchantPage() {
       return;
     }
     let live = true;
-    void payflow
-      .getMandate(address, row.id)
+    void loadPayflow()
+      .then(({ payflow }) => payflow.getMandate(address, row.id))
       .then((mandate) => {
         if (live) setPauseSupport(mandatePauseUntil(mandate) !== null);
       })
@@ -1394,15 +1428,17 @@ export default function MerchantPage() {
               busy !== null || networkMismatch || nameTooLong || !priceCheck.ok || !periodCheck.ok
             }
             onClick={() => {
-              // Publish the amount the form already parsed rather than reading
-              // the field again: a half-typed "1." passes `checkAmount` but
-              // `toStroops` rejects, so re-parsing here would throw on a
-              // click the form had just said was fine.
-              if (!priceCheck.ok) return;
+              // Publish the amounts the form already parsed rather than
+              // reading the fields again: a half-typed "1." passes
+              // `checkAmount` but `toStroops` rejects, so re-parsing here
+              // would throw on a click the form had just said was fine. The
+              // period is the same — the button cannot be clicked with an
+              // unchecked one, and this narrowing is the proof of that.
+              if (!priceCheck.ok || !periodCheck.ok) return;
               void run("create", async () => {
                 const { payflow } = await loadPayflow();
                 return payflow.createPlan(address, signXdr, {
-                  token: config.contracts.token,
+                  token: selectedToken,
                   amount: priceCheck.stroops,
                   period: periodCheck.seconds,
                   name: name.trim(),
@@ -1569,19 +1605,100 @@ export default function MerchantPage() {
                       </dl>
                     ) : null}
                   </div>
-                  <button
-                    type="button"
-                    className="btn-ghost"
-                    disabled={busy !== null || networkMismatch}
-                    onClick={() =>
-                      void run(`toggle-${p.id}`, async () => {
-                        const { payflow } = await loadPayflow();
-                        return payflow.setPlanActive(address, signXdr, p.id, p.active !== 1);
-                      })
-                    }
-                  >
-                    {p.active ? "Deactivate" : "Activate"}
-                  </button>
+                  {confirmDeactivate === p.id ? (
+                    <div
+                      className="w-full mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm"
+                      role="alert"
+                      aria-live="polite"
+                    >
+                      <div className="font-medium text-amber-200">
+                        Confirm plan deactivation
+                      </div>
+                      <p className="mt-1 text-xs text-muted">
+                        This plan has{" "}
+                        <strong className="text-foreground font-semibold">
+                          {openCount === 1 ? "1 open subscription" : `${openCount} open subscriptions`}
+                        </strong>
+                        . Existing subscribers will continue to be billed on schedule until their subscriptions are individually ended or cancelled. New subscribers will no longer be able to subscribe to this plan.
+                      </p>
+                      <div className="mt-3 flex items-center gap-2">
+                        <button
+                          type="button"
+                          className="btn-ghost text-xs"
+                          disabled={busy !== null}
+                          onClick={() => setConfirmDeactivate(null)}
+                        >
+                          Keep active
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-primary text-xs"
+                          disabled={busy !== null || networkMismatch}
+                          onClick={() =>
+                            void run(`toggle-${p.id}`, async () => {
+                              const { payflow } = await loadPayflow();
+                              return payflow.setPlanActive(address, signXdr, p.id, false);
+                            }).then(() => setConfirmDeactivate(null))
+                          }
+                        >
+                          {busy === `toggle-${p.id}` ? "Deactivating…" : "Confirm: deactivate"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="btn-ghost text-xs"
+                        onClick={() => setEmbedFor(embedFor === p.id ? null : p.id)}
+                        aria-expanded={embedFor === p.id}
+                        aria-label={`Embed snippet for plan ${p.name || `#${p.id}`}`}
+                      >
+                        {embedFor === p.id ? "Close embed" : "Embed"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        disabled={busy !== null || networkMismatch}
+                        onClick={() => {
+                          if (p.active) {
+                            setConfirmDeactivate(p.id);
+                          } else {
+                            void run(`toggle-${p.id}`, async () => {
+                              const { payflow } = await loadPayflow();
+                              return payflow.setPlanActive(address, signXdr, p.id, true);
+                            });
+                          }
+                        }}
+                      >
+                        {p.active ? "Deactivate" : "Activate"}
+                      </button>
+                    </div>
+                  )}
+                  {embedFor === p.id && (
+                    <div className="w-full mt-3 rounded-lg border border-edge bg-surface/50 p-3 text-xs space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-foreground">Embed on your website</span>
+                        <button
+                          type="button"
+                          className="btn-ghost text-xs py-0.5 px-2"
+                          onClick={() => setEmbedFor(null)}
+                        >
+                          Close
+                        </button>
+                      </div>
+                      <p className="text-muted">
+                        Add this snippet to any HTML website. Subscribers can click it to subscribe in a secure popup window.
+                      </p>
+                      <pre className="overflow-x-auto rounded border border-edge bg-background p-2 font-mono text-[11px] text-muted">
+                        <code>{`<script src="${typeof window !== "undefined" ? window.location.origin : ""}/payflow-frontend/embed/payflow-embed.js" defer></script>\n<payflow-button\n  plan-id="${p.id}"\n  merchant="${address}"\n  name="${p.name || `Plan #${p.id}`}"\n  amount="${fromStroops(p.amount, 4, meta.decimals)} ${meta.symbol}"\n  period="${formatPeriod(p.period)}">\n</payflow-button>`}</code>
+                      </pre>
+                      <CopyButton
+                        value={`<script src="${typeof window !== "undefined" ? window.location.origin : ""}/payflow-frontend/embed/payflow-embed.js" defer></script>\n<payflow-button plan-id="${p.id}" merchant="${address}" name="${p.name || `Plan #${p.id}`}" amount="${fromStroops(p.amount, 4, meta.decimals)} ${meta.symbol}" period="${formatPeriod(p.period)}"></payflow-button>`}
+                        label="embed snippet"
+                      />
+                    </div>
+                  )}
                 </div>
               );
             }}
@@ -1723,9 +1840,10 @@ export default function MerchantPage() {
                             className="btn-primary"
                             disabled={busy !== null || networkMismatch || short}
                             onClick={() =>
-                              void run(`charge-${m.id}`, () =>
-                                payflow.charge(address, signXdr, m.id),
-                              )
+                              void run(`charge-${m.id}`, async () => {
+                                const { payflow } = await loadPayflow();
+                                return payflow.charge(address, signXdr, m.id);
+                              })
                             }
                           >
                             {busy === `charge-${m.id}` ? "Charging…" : short ? "Short on funds" : "Charge now"}
@@ -1737,28 +1855,18 @@ export default function MerchantPage() {
                           )}
                         </>
                       )}
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {due && (
-                      <>
-                        <button
-                          type="button"
-                          className="btn-primary"
-                          disabled={busy !== null || networkMismatch || short}
-                          onClick={() =>
-                            void run(`charge-${m.id}`, async () => {
-                              const { payflow } = await loadPayflow();
-                              return payflow.charge(address, signXdr, m.id);
-                            })
-                          }
-                        >
-                          {busy === `charge-${m.id}` ? "Charging…" : short ? "Short on funds" : "Charge now"}
-                        </button>
-                        {short && (
-                          <span className="text-xs text-rose-300">
-                            Subscriber vault short by {fromStroops(funding.shortfall)} {meta.symbol}
-                          </span>
+{discountSupport && endable(m) && (
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            disabled={busy !== null || networkMismatch}
+                            aria-expanded={discountFor === m.id}
+                            onClick={() =>
+                              setDiscountFor(discountFor === m.id ? null : m.id)
+                            }
+                          >
+                            {discountFor === m.id ? "Close" : "Discount"}
+                          </button>
                         )}
                         {pauseSupport && endable(m) && (
                           <>
@@ -1777,9 +1885,10 @@ export default function MerchantPage() {
                                   className={m.status === "Active" ? "btn-primary" : "btn-ghost"}
                                   disabled={busy !== null || networkMismatch}
                                   onClick={() =>
-                                    void run(`pause-${m.id}`, () =>
-                                      payflow.setPaused(address, signXdr, m.id, m.status === "Active"),
-                                    ).then(() => setConfirmPause(null))
+                                    void run(`pause-${m.id}`, async () => {
+                                      const { payflow } = await loadPayflow();
+                                      return payflow.setPaused(address, signXdr, m.id, m.status === "Active");
+                                    }).then(() => setConfirmPause(null))
                                   }
                                 >
                                   {busy === `pause-${m.id}`
@@ -1872,9 +1981,10 @@ export default function MerchantPage() {
                       busy={busy === `discount-${m.id}`}
                       onCancel={() => setDiscountFor(null)}
                       onApply={(bps, charges) =>
-                        void run(`discount-${m.id}`, () =>
-                          payflow.setDiscount(address, signXdr, m.id, bps, charges),
-                        ).then(() => setDiscountFor(null))
+                        void run(`discount-${m.id}`, async () => {
+                          const { payflow } = await loadPayflow();
+                          return payflow.setDiscount(address, signXdr, m.id, bps, charges);
+                        }).then(() => setDiscountFor(null))
                       }
                     />
                   )}
@@ -1890,9 +2000,10 @@ export default function MerchantPage() {
                         setRefundAmount("");
                       }}
                       onConfirm={(amount) =>
-                        void run(`refund-${m.id}`, () =>
-                          payflow.refund(address, signXdr, m.id, amount),
-                        ).then(() => {
+                        void run(`refund-${m.id}`, async () => {
+                          const { payflow } = await loadPayflow();
+                          return payflow.refund(address, signXdr, m.id, amount);
+                        }).then(() => {
                           setRefundFor(null);
                           setRefundAmount("");
                         })

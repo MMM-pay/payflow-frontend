@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import MerchantPage from "@/app/merchant/page";
 import AccountPage from "@/app/account/page";
 import type { ApiMandate } from "@/lib/api";
@@ -44,6 +44,7 @@ const payflowMock = vi.hoisted(() => ({
   feeBps: vi.fn(async () => 100),
   checkTrustline: vi.fn(),
   addTrustline: vi.fn(async () => "tx-add-trustline"),
+  vaultSupportsDepositFor: vi.fn(async () => false),
   cancel: vi.fn(),
   setPaused: vi.fn(),
   readContract: vi.fn(async (_id: string, method: string) => {
@@ -64,10 +65,10 @@ vi.mock("@/lib/api", async (importOriginal) => {
     checkWebhookUrl: actual.checkWebhookUrl,
   };
 });
-vi.mock("@/lib/payflow", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/payflow")>()),
+vi.mock("@/lib/payflow", () => ({
   payflow: payflowMock,
   readContract: payflowMock.readContract,
+  vaultSupportsDepositFor: payflowMock.vaultSupportsDepositFor,
 }));
 vi.mock("@/lib/toml", () => ({ useOrgName: () => null }));
 vi.mock("@/lib/chain", async (importOriginal) => ({
@@ -148,6 +149,9 @@ describe("Multi-token plans & trustline prompt (#31)", () => {
     expect(publishBtn.disabled).toBe(false);
     fireEvent.click(publishBtn);
 
+    // The publish path loads the SDK-backed module on demand, so the contract
+    // call lands a tick (or more) after the click.
+    await waitFor(() => expect(payflowMock.createPlan).toHaveBeenCalled());
     expect(payflowMock.createPlan).toHaveBeenCalledWith(
       MERCHANT,
       wallet.signXdr,
@@ -176,6 +180,8 @@ describe("Multi-token plans & trustline prompt (#31)", () => {
 
     fireEvent.click(addBtn);
 
+    // Same on-demand load as the publish path.
+    await waitFor(() => expect(payflowMock.addTrustline).toHaveBeenCalled());
     expect(payflowMock.addTrustline).toHaveBeenCalledWith(
       SUBSCRIBER,
       wallet.signXdr,

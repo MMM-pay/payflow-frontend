@@ -1,12 +1,12 @@
 {
-  "//": "First-load JS budgets in kB (gzip), enforced by scripts/check-js-budget.mjs over out/**/index.html. Measured after deferring the Stellar SDK and the wallet kit to on-demand chunks: / 153, /account 164, /m 162, /merchant 167, /plans/* 162, /subscribe 163. Budgets keep roughly 10% headroom; growth is only ever accepted deliberately, in the PR that causes it.",
-  "default": 165,
+  "//": "First-load JS budgets in kB (gzip), enforced by scripts/check-js-budget.mjs over out/**/index.html. Re-measured after merging upstream/main (discount UI, receipt route, embed, PWA assets) on top of the SDK deferral: / 164.7, /account 175.8, /m 165.9, /mandates 167.3, /merchant 180.3, /plans/* 166.0, /receipt 166.4, /subscribe 169.6. Budgets keep roughly 10% headroom; growth is only ever accepted deliberately, in the PR that causes it.",
+  "default": 185,
   "routes": {
-    "/": 165,
-    "/account": 175,
-    "/m": 175,
-    "/merchant": 180,
-    "/subscribe": 175,
-    "/plans": 175
+    "/": 180,
+    "/account": 195,
+    "/m": 180,
+    "/merchant": 200,
+    "/subscribe": 190,
+    "/plans": 180
   }
 }

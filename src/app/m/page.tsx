@@ -18,9 +18,9 @@ import {
   SkeletonPlanCards,
   TxLink,
 } from "@/components/ui";
+import { loadPayflow } from "@/lib/lazy-payflow";
 
 /** The SDK-backed contract module loads on demand, keeping first-load JS small. */
-const loadPayflow = () => import("@/lib/payflow");
 
 /**
  * The public catalogue a merchant can link to: `/m/?address=G…` lists that

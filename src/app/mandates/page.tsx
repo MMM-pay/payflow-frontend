@@ -6,7 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { api, type ApiCharge, type ApiMandate, type ApiPlan } from "@/lib/api";
 import { chainMandate } from "@/lib/chain";
 import { config } from "@/lib/config";
-import { mandateStatus, payflow, type Plan } from "@/lib/payflow";
+import { mandateStatus, type Plan } from "@/lib/payflow-core";
 import { useWallet } from "@/lib/wallet";
 import { formatAmount, formatDate, formatPeriod, fromStroops } from "@/lib/format";
 import { metaFor, useTokenMetas } from "@/lib/token";
@@ -21,6 +21,9 @@ import {
   Stat,
   TxLink,
 } from "@/components/ui";
+import { loadPayflow } from "@/lib/lazy-payflow";
+
+/** The SDK-backed contract module loads on demand, keeping first-load JS small. */
 
 function MandateDetailsInner() {
   const searchParams = useSearchParams();
@@ -95,6 +98,7 @@ function MandateDetailsInner() {
         }
 
         // 3. Fetch plan details and subscriber vault balance
+        const { payflow } = await loadPayflow();
         const [planRes, balRes] = await Promise.allSettled([
           payflow.getPlan(source, m.plan_id),
           payflow.vaultBalance(source, m.subscriber, m.token || config.contracts.token),
@@ -318,7 +322,10 @@ function MandateDetailsInner() {
                 className="btn-primary"
                 disabled={busy !== null || networkMismatch || !isDue}
                 onClick={() =>
-                  void runAction("charge", () => payflow.charge(address, signXdr, mandate.id))
+                  void runAction("charge", async () => {
+                    const { payflow } = await loadPayflow();
+                    return payflow.charge(address, signXdr, mandate.id);
+                  })
                 }
               >
                 {busy === "charge" ? "Charging…" : isDue ? "Charge now" : "Not due yet"}
@@ -334,9 +341,10 @@ function MandateDetailsInner() {
                     className="btn-ghost"
                     disabled={busy !== null || networkMismatch}
                     onClick={() =>
-                      void runAction("pause", () =>
-                        payflow.setPaused(address, signXdr, mandate.id, true),
-                      )
+                      void runAction("pause", async () => {
+                        const { payflow } = await loadPayflow();
+                        return payflow.setPaused(address, signXdr, mandate.id, true);
+                      })
                     }
                   >
                     {busy === "pause" ? "Pausing…" : "Pause subscription"}
@@ -349,9 +357,10 @@ function MandateDetailsInner() {
                     className="btn-ghost"
                     disabled={busy !== null || networkMismatch}
                     onClick={() =>
-                      void runAction("resume", () =>
-                        payflow.setPaused(address, signXdr, mandate.id, false),
-                      )
+                      void runAction("resume", async () => {
+                        const { payflow } = await loadPayflow();
+                        return payflow.setPaused(address, signXdr, mandate.id, false);
+                      })
                     }
                   >
                     {busy === "resume" ? "Resuming…" : "Resume subscription"}
@@ -375,7 +384,10 @@ function MandateDetailsInner() {
                       className="btn-danger text-xs py-1"
                       disabled={busy !== null || networkMismatch}
                       onClick={() =>
-                        void runAction("cancel", () => payflow.cancel(address, signXdr, mandate.id))
+                        void runAction("cancel", async () => {
+                        const { payflow } = await loadPayflow();
+                        return payflow.cancel(address, signXdr, mandate.id);
+                      })
                       }
                     >
                       {busy === "cancel" ? "Cancelling…" : "Yes, cancel"}
@@ -401,9 +413,10 @@ function MandateDetailsInner() {
                     className="btn-ghost"
                     disabled={busy !== null || networkMismatch}
                     onClick={() =>
-                      void runAction("pause", () =>
-                        payflow.setPaused(address, signXdr, mandate.id, true),
-                      )
+                      void runAction("pause", async () => {
+                        const { payflow } = await loadPayflow();
+                        return payflow.setPaused(address, signXdr, mandate.id, true);
+                      })
                     }
                   >
                     {busy === "pause" ? "Pausing…" : "Pause mandate"}
@@ -416,9 +429,10 @@ function MandateDetailsInner() {
                     className="btn-ghost"
                     disabled={busy !== null || networkMismatch}
                     onClick={() =>
-                      void runAction("resume", () =>
-                        payflow.setPaused(address, signXdr, mandate.id, false),
-                      )
+                      void runAction("resume", async () => {
+                        const { payflow } = await loadPayflow();
+                        return payflow.setPaused(address, signXdr, mandate.id, false);
+                      })
                     }
                   >
                     {busy === "resume" ? "Resuming…" : "Resume mandate"}
@@ -442,9 +456,10 @@ function MandateDetailsInner() {
                       className="btn-danger text-xs py-1"
                       disabled={busy !== null || networkMismatch}
                       onClick={() =>
-                        void runAction("end", () =>
-                          payflow.endMandate(address, signXdr, mandate.id),
-                        )
+                        void runAction("end", async () => {
+                          const { payflow } = await loadPayflow();
+                          return payflow.endMandate(address, signXdr, mandate.id);
+                        })
                       }
                     >
                       {busy === "end" ? "Ending…" : "Yes, end"}

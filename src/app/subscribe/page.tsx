@@ -14,11 +14,17 @@ import { metaFor, useTokenMetas } from "@/lib/token";
 import { filterAndSortPlans, type PlanPeriodOption, type PlanSortOption } from "@/lib/plans";
 import { formatUsdEstimate, formatUsdcEstimate, useXlmUsdPrice } from "@/lib/price";
 import { Empty, MerchantAccount, Notice, Panel, SkeletonPlanCards, TxLink } from "@/components/ui";
+import { loadPayflow } from "@/lib/lazy-payflow";
 
 /** The SDK-backed contract module loads on demand, keeping first-load JS small. */
-const loadPayflow = () => import("@/lib/payflow");
 
-export default function SubscribePage() {
+function SubscribeInner() {
+  const searchParams = useSearchParams();
+  const sortParam = (searchParams?.get("sort") as PlanSortOption) || "newest";
+  const periodParam = (searchParams?.get("period") as PlanPeriodOption) || "all";
+
+  const [sort, setSort] = useState<PlanSortOption>(sortParam);
+  const [period, setPeriod] = useState<PlanPeriodOption>(periodParam);
   const { address, networkMismatch, signXdr } = useWallet();
   const [plans, setPlans] = useState<ApiPlan[] | null>(null);
   const [maxCharges, setMaxCharges] = useState<Record<number, string>>({});
@@ -126,14 +132,19 @@ export default function SubscribePage() {
       const reason = planAvailability(latest).reason;
       if (reason) throw new Error(reason);
       const { payflow } = await loadPayflow();
-      const hash = await payflow.subscribe(address, async (xdr) => {
-        if (walletState.current.address !== address || walletState.current.networkMismatch) {
-          throw new Error("Wallet changed. Check your wallet and try again.");
-        }
-        const closed = planAvailability(latest).reason;
-        if (closed) throw new Error(closed);
-        return signXdr(xdr);
-      }, plan.id, limit);
+      const hash = await payflow.subscribe(
+        address,
+        async (xdr) => {
+          if (walletState.current.address !== address || walletState.current.networkMismatch) {
+            throw new Error("Wallet changed. Check your wallet and try again.");
+          }
+          const closed = planAvailability(latest).reason;
+          if (closed) throw new Error(closed);
+          return signXdr(xdr);
+        },
+        plan.id,
+        limit,
+      );
       setDone(hash);
       setDoneTrial(
         trialSeconds(plan) > 0

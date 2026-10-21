@@ -64,9 +64,9 @@ vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return { api: apiMock, checkWebhookUrl: actual.checkWebhookUrl };
 });
-vi.mock("@/lib/payflow", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/payflow")>()),
-  payflow: payflowMock,
+vi.mock("@/lib/payflow", () => ({ payflow: payflowMock }));
+vi.mock("@/lib/payflow-core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/payflow-core")>()),
   MAX_NAME_LEN: 64,
   nameByteLength: (n: string) => n.length,
   mandateSupportsRefund: () => false,

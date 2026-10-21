@@ -58,7 +58,12 @@ vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return { api: apiMock, checkWebhookUrl: actual.checkWebhookUrl };
 });
-vi.mock("@/lib/payflow", () => ({ payflow: payflowMock, MAX_NAME_LEN: 64, nameByteLength: (n: string) => n.length }));
+vi.mock("@/lib/payflow", () => ({ payflow: payflowMock }));
+vi.mock("@/lib/payflow-core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/payflow-core")>()),
+  MAX_NAME_LEN: 64,
+  nameByteLength: (n: string) => n.length,
+}));
 vi.mock("@/lib/chain", () => chainMock);
 
 const MERCHANT = "GCH5VHWNS24VI75HLDBHK4SSJ2E5XZA5IB6XEZTNE4BJH7AKZI6Z3MHU";

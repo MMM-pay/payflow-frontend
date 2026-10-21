@@ -81,6 +81,12 @@ vi.mock("@/lib/payflow", () => ({
 // Partial mock: the export tests make the vault-history request succeed, and
 // the page uses the real pure helpers for the event list. Only the contract
 // fallback is replaced.
+// The page reads the pure mandate helpers from payflow-core; keep the same
+// fakes there so a pause or past-due fixture drives the UI.
+vi.mock("@/lib/payflow-core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/payflow-core")>()),
+  ...payflowHelpers,
+}));
 vi.mock("@/lib/chain", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/chain")>();
   return { ...actual, chainMandatesOf: chainMock.chainMandatesOf };

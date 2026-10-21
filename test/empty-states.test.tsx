@@ -50,6 +50,7 @@ const chainMock = vi.hoisted(() => ({
 const payflowMock = vi.hoisted(() => ({
   vaultBalance: vi.fn(),
   feeBps: vi.fn(),
+  vaultSupportsDepositFor: vi.fn(async () => false),
 }));
 
 vi.mock("next/link", () => ({
@@ -96,9 +97,9 @@ vi.mock("@/lib/token", () => ({
   useTokenMetas: () => new Map(),
 }));
 vi.mock("@/lib/toml", () => ({ useOrgName: () => null }));
-vi.mock("@/lib/payflow", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/payflow")>()),
+vi.mock("@/lib/payflow", () => ({
   payflow: payflowMock,
+  vaultSupportsDepositFor: payflowMock.vaultSupportsDepositFor,
 }));
 
 function plan(overrides: Partial<ApiPlan> = {}): ApiPlan {
