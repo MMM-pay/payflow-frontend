@@ -13,8 +13,11 @@ import {
   formatWhen,
   fromStroops,
   MAX_FEE_BPS,
+  minPauseDate,
   normaliseAmountInput,
   parseAmount,
+  parsePauseDate,
+  resumeDate,
   shortAddress,
   toStroops,
   XLM,
@@ -361,6 +364,17 @@ describe("formatPeriod", () => {
   it("picks the largest unit that divides evenly", () => {
     // 2 weeks divides by week, not by day.
     expect(formatPeriod(1_209_600)).toBe("every 2 weeks");
+    // A custom quarterly period (3 × 30-day months) reads as quarters of the
+    // same scale the monthly preset uses, on plan cards everywhere.
+    expect(formatPeriod(7_776_000)).toBe("every 3 months");
+  });
+
+  it("names the custom lengths the merchant form now offers", () => {
+    expect(formatPeriod(10 * 86_400)).toBe("every 10 days");
+    // 14 days is a fortnight, and reads as one.
+    expect(formatPeriod(14 * 86_400)).toBe("every 2 weeks");
+    expect(formatPeriod(5 * 604_800)).toBe("every 5 weeks");
+    expect(formatPeriod(6 * 2_592_000)).toBe("every 6 months");
   });
 
   it("falls back to seconds when no unit divides evenly", () => {
@@ -524,5 +538,51 @@ describe("amountError", () => {
     expect(amountError("abc")).toMatch(/positive number/i);
     expect(amountError("1,00000001")).toMatch(/decimal places/i);
     expect(amountError("1,5", 0)).toMatch(/decimal places/i);
+  });
+});
+
+describe("pause dates", () => {
+  it("reads a date picker value as midnight UTC on that day", () => {
+    // "Pause until 2026-10-25" resumes at the start of the 25th, and every
+    // reader sees the same instant.
+    expect(parsePauseDate("2026-10-25")).toBe(Date.UTC(2026, 9, 25) / 1000);
+    expect(parsePauseDate("  2026-01-01  ")).toBe(Date.UTC(2026, 0, 1) / 1000);
+  });
+
+  it("rejects a value a date picker could not produce", () => {
+    for (const bad of ["", "  ", "tomorrow", "2026-10", "25/10/2026", "2026-10-25T00:00"]) {
+      expect(parsePauseDate(bad), `"${bad}"`).toBeNull();
+    }
+  });
+
+  it("rejects a date that does not exist rather than rolling it over", () => {
+    // Date.UTC happily turns 31 February into 3 March.
+    expect(parsePauseDate("2026-02-31")).toBeNull();
+    expect(parsePauseDate("2026-13-01")).toBeNull();
+    expect(parsePauseDate("2026-00-10")).toBeNull();
+    expect(parsePauseDate("2026-04-31")).toBeNull();
+    expect(parsePauseDate("2024-02-29")).not.toBeNull(); // a real leap day
+    expect(parsePauseDate("2026-02-29")).toBeNull(); // not a leap year
+  });
+
+  it("offers tomorrow as the earliest date, in UTC", () => {
+    const now = Date.UTC(2026, 9, 25, 23, 59, 59);
+    expect(minPauseDate(now)).toBe("2026-10-26");
+    expect(minPauseDate(Date.UTC(2026, 9, 25, 0, 0, 0))).toBe("2026-10-26");
+    // Month boundary rolls over.
+    expect(minPauseDate(Date.UTC(2026, 11, 31, 12))).toBe("2027-01-01");
+  });
+
+  it("renders a future resume as a calendar date", () => {
+    const now = Date.UTC(2026, 9, 25);
+    expect(resumeDate(Date.UTC(2026, 9, 30) / 1000, now)).toBe("2026-10-30");
+  });
+
+  it("shows nothing for a resume that has already passed or is absent", () => {
+    const now = Date.UTC(2026, 9, 25);
+    expect(resumeDate(Date.UTC(2026, 9, 24) / 1000, now)).toBeNull();
+    expect(resumeDate(now / 1000, now)).toBeNull();
+    expect(resumeDate(null, now)).toBeNull();
+    expect(resumeDate(Number.NaN, now)).toBeNull();
   });
 });

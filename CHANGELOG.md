@@ -24,12 +24,57 @@ All notable changes to payflow-frontend. The format follows
 
 ### Fixed
 
+- **A successful contract read never released its concurrency slot.**
+  `readContract` takes one of six permits before each simulation, but the
+  success path returned while still holding it, so the seventh read after any
+  six successful reads waited forever and the page stopped loading. Permits are
+  now released in a `finally`, and the backoff sleep no longer holds one.
 - **The publish form accepted any text as a price** and only failed once the
   transaction was simulated, so a merchant paid for a failed attempt. The
   price is validated inline — positive, at most 7 decimal places — and Publish
   stays disabled with a message until it is usable.
 
+### Changed
+
+- **Plans are cached for the session instead of re-read on every visit.** A
+  plan's name, price, period, token and trial are frozen after `create_plan`,
+  so only the `active` flag expires (after 30 seconds); a merchant's own
+  `set_plan_active` drops that plan immediately. Token symbol and decimals were
+  already cached indefinitely. In contract-only mode — the public demo, which
+  has no indexer — the subscribe list drops from 10 RPC calls to 2 on a second
+  visit inside the window at the live registry's 4 plans, and from 50 to 2 at
+  the 24-plan list cap. Each read costs a `getAccount` and a simulation, so a
+  visit is `2 * (1 + plans)` and a repeat is just the `next_plan_id` read; the
+  unit test asserts both counts on fixed 4- and 24-plan contracts.
+
 ### Added
+
+- **Side-by-side plan comparison on the subscribe page (#175).** Tick up to
+  three plans and open a table covering price, billing period, 30-day monthly
+  equivalent, free trial, remaining seats and merchant. The monthly figure is
+  pure bigint arithmetic in `src/lib/compare.ts` — never floating point — and
+  the table is a real `<table>` with column and row headers plus a labelled,
+  focusable scroll region for 375px screens. It works from whichever plan list
+  the page loaded, so contract-only mode needs no backend.
+
+- **Opt-in browser reminders before a charge (#174).** A "Remind me" button on
+  each active subscription asks for notification permission only on that
+  click, stores the choice per wallet address, and notifies a day before the
+  next charge. Where the browser supports Notification Triggers the installed
+  service worker holds the schedule; otherwise the page does so while it is
+  open, which the panel explains. Cancelled and completed mandates lose their
+  reminder, including statuses decoded as `["Cancelled"]` from contract state.
+  Scheduling and preference logic is pure in `src/lib/reminders.ts`.
+
+- **Custom billing periods on the publish form.** The five presets stay, and a
+  Custom option takes a number of days, weeks or months (30-day months, the
+  same seconds the Monthly preset uses) for merchants billing fortnightly or
+  quarterly. The count is converted to whole seconds and checked against the
+  contract's 60-second floor — with the contract's own wording — before
+  Publish is enabled, so a period `create_plan` would reject never reaches the
+  wallet. Pure logic in `src/lib/period.ts`; works in contract-only mode
+  because the period is local form state. `formatPeriod` already renders the
+  custom lengths on plan cards ("every 2 weeks", "every 3 months").
 
 - Subscribe cards show optional availability cutoffs and remaining seats, and
   reject expired/full plans before signing. Unlimited/legacy plans stay unchanged.
@@ -61,6 +106,12 @@ All notable changes to payflow-frontend. The format follows
   management.
 - **Skeleton loading states** for plan cards, mandate rows and dashboard stats.
   The pulse is disabled when the user prefers reduced motion.
+
+### Changed
+
+- **Cancelling a subscription now asks for confirmation.** The account page
+  shows Keep and Confirm after the first Cancel click, matches the merchant's
+  End flow, and allows only one mandate to be confirming at a time.
 
 ## [0.2.0] - 2026-10-09
 

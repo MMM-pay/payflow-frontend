@@ -23,21 +23,45 @@ const wallet = vi.hoisted(() => ({
   signXdr: vi.fn(),
 }));
 
-const apiMock = vi.hoisted(() => ({ mandatesOf: vi.fn(), vaultHistory: vi.fn() }));
+const apiMock = vi.hoisted(() => ({
+  isConfigured: vi.fn(() => true),
+  mandatesOf: vi.fn(),
+  vaultHistory: vi.fn(),
+  stream: vi.fn(),
+}));
 const payflowMock = vi.hoisted(() => ({
   vaultBalance: vi.fn(),
   deposit: vi.fn(),
   withdraw: vi.fn(),
+  depositFor: vi.fn(),
   setPaused: vi.fn(),
   cancel: vi.fn(),
 }));
 const chainMock = vi.hoisted(() => ({ chainMandatesOf: vi.fn() }));
 
 vi.mock("@/lib/wallet", () => ({ useWallet: () => wallet }));
+
 vi.mock("@/lib/api", () => ({
-  api: { mandatesOf: apiMock.mandatesOf, vaultHistory: apiMock.vaultHistory },
+  api: {
+    isConfigured: apiMock.isConfigured,
+    mandatesOf: apiMock.mandatesOf,
+    vaultHistory: apiMock.vaultHistory,
+    stream: apiMock.stream,
+  },
+  checkWebhookUrl: vi.fn(),
 }));
-vi.mock("@/lib/payflow", () => ({ payflow: payflowMock }));
+vi.mock("@/lib/payflow", () => ({
+  payflow: payflowMock,
+  // This page's tests predate payflow-contract#41; the dated pause stays off.
+  mandatePauseUntil: () => null,
+  // payflow-contract#34 not shipped; past-due stays off.
+  mandateIsPastDue: () => false,
+  mandatePastDueUntil: () => null,
+  // payflow-contract#29 not shipped; the sponsor panel stays off.
+  vaultSupportsDepositFor: async () => false,
+  // payflow-contract#28 not shipped; the spend limit panel stays off.
+  mandateSupportsSpendLimit: () => false,
+}));
 vi.mock("@/lib/chain", () => ({ chainMandatesOf: chainMock.chainMandatesOf }));
 
 const SUBSCRIBER = "GAP6QFLXQD73URCC3EXU2WOQHIAREPCGMSIMKF5PFLLI5TR6HTMNDTIE";
@@ -67,6 +91,10 @@ beforeEach(() => {
   wallet.address = SUBSCRIBER;
   wallet.networkMismatch = false;
   payflowMock.vaultBalance.mockResolvedValue(0n);
+  payflowMock.deposit.mockReset();
+  payflowMock.withdraw.mockReset();
+  payflowMock.setPaused.mockReset();
+  payflowMock.cancel.mockReset();
   apiMock.mandatesOf.mockReset();
   apiMock.vaultHistory.mockReset();
   chainMock.chainMandatesOf.mockReset();
