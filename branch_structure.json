@@ -1,0 +1,18 @@
+{
+  "default_branch": "main",
+  "branches": [
+    "feat/issue-179-a11y-respect-reduced-motion-in-charts-and",
+    "main",
+    "origin"
+  ],
+  "parent": {
+    "feat/issue-179-a11y-respect-reduced-motion-in-charts-and": "main",
+    "main": null,
+    "origin": "main"
+  },
+  "order": [
+    "main",
+    "feat/issue-179-a11y-respect-reduced-motion-in-charts-and",
+    "origin"
+  ]
+}

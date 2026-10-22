@@ -5,9 +5,9 @@
   "description": "Merchant dashboard and subscriber portal for the Payflow protocol on Stellar.",
   "license": "Apache-2.0",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "dev": "node api.js && next dev",
+    "build": "node api.js && next build",
+    "start": "node api.js && next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

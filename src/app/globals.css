@@ -60,7 +60,7 @@
   --info: 125 211 252;
 }
 
-:root[data-theme="light"] {
+root[data-theme="light"] {
   color-scheme: light;
 }
 
@@ -97,10 +97,26 @@ body {
   }
 }
 
+/*
+ * Respect the reader's reduced-motion preference.
+ *
+ * Skeletons already honour this, but charts and other transitions were
+ * still animating. Collapsing animation and transition durations to near-zero disables them effectively without having to audit every component.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 @media print {
   body {
     background-color: #ffffff !important;
     color: #000000 !important;
   }
 }
-
