@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import AccountPage from "@/app/account/page";
 import type { ApiMandate } from "@/lib/api";
-import { minPauseDate, resumeDate } from "@/lib/format";
+import { formatDate } from "@/i18n/format";
+import { minPauseDate } from "@/lib/format";
 
 /**
  * The account page is the first page rendered in tests because it exercises
@@ -72,6 +73,7 @@ vi.mock("@/lib/payflow", () => ({
   readContract: payflowMock.readContract,
   server: payflowMock.server,
   ...payflowHelpers,
+  mandateSupportsSpendLimit: vi.fn(() => false),
   // `lib/chain` imports these at module scope; the partial chain mock below
   // loads the real module for its pure vault helpers.
   MAX_PAGE: 50,
@@ -554,7 +556,7 @@ describe("AccountPage pause until", () => {
 
     render(<AccountPage />);
 
-    expect(await screen.findByText(`resumes ${resumeDate(until)}`)).toBeTruthy();
+    expect(await screen.findByText(`resumes ${formatDate(until, "en")}`)).toBeTruthy();
   });
 
   it("shows no resume date once it has passed", async () => {
@@ -566,7 +568,7 @@ describe("AccountPage pause until", () => {
     render(<AccountPage />);
     await screen.findByText("Mandate #7");
 
-    expect(screen.queryByText(/resumes \d{4}-/)).toBeNull();
+    expect(screen.queryByText(/resumes /)).toBeNull();
   });
 
   it("does not offer a picker on a cancelled mandate", async () => {
@@ -801,5 +803,70 @@ describe("AccountPage pause until", () => {
     // The stale result must not replace the new account's mandates.
     expect(screen.queryByText("Mandate #7")).toBeNull();
     expect(screen.getByText("Mandate #99")).toBeTruthy();
+  });
+});
+
+describe("AccountPage charge reminders (#174)", () => {
+  it("never asks for notification permission on page load", async () => {
+    const requestPermission = vi.fn().mockResolvedValue("granted");
+    class FakeNotification {
+      static permission: NotificationPermission = "default";
+      static requestPermission = requestPermission;
+    }
+    Object.defineProperty(globalThis, "Notification", {
+      configurable: true,
+      writable: true,
+      value: FakeNotification,
+    });
+    payflowMock.vaultBalance.mockResolvedValue(0n);
+    apiMock.vaultHistory.mockResolvedValue({ events: [] });
+    apiMock.mandatesOf.mockResolvedValue({
+      mandates: [mandate({ next_charge: Math.floor(Date.now() / 1000) + 86_400 })],
+    });
+
+    render(<AccountPage />);
+    await screen.findByText("Mandate #7");
+
+    expect(requestPermission).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Remind me" })).toBeTruthy();
+  });
+
+  it("asks only on the opt-in click and stores the preference per address", async () => {
+    const requestPermission = vi.fn().mockResolvedValue("granted");
+    class FakeNotification {
+      static permission: NotificationPermission = "default";
+      static requestPermission = requestPermission;
+    }
+    Object.defineProperty(globalThis, "Notification", {
+      configurable: true,
+      writable: true,
+      value: FakeNotification,
+    });
+    window.localStorage.clear();
+    payflowMock.vaultBalance.mockResolvedValue(0n);
+    apiMock.vaultHistory.mockResolvedValue({ events: [] });
+    apiMock.mandatesOf.mockResolvedValue({
+      mandates: [mandate({ next_charge: Math.floor(Date.now() / 1000) + 86_400 })],
+    });
+
+    render(<AccountPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Remind me" }));
+
+    await waitFor(() => expect(requestPermission).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole("button", { name: "Reminder on" })).toBeTruthy();
+    expect(
+      JSON.parse(window.localStorage.getItem(`payflow.reminders.${SUBSCRIBER}`) ?? "{}"),
+    ).toEqual({ "7": true });
+  });
+
+  it("does not offer a reminder on an ended mandate", async () => {
+    payflowMock.vaultBalance.mockResolvedValue(0n);
+    apiMock.vaultHistory.mockResolvedValue({ events: [] });
+    apiMock.mandatesOf.mockResolvedValue({ mandates: [mandate({ status: "Cancelled" })] });
+
+    render(<AccountPage />);
+    await screen.findByText("Mandate #7");
+
+    expect(screen.queryByRole("button", { name: "Remind me" })).toBeNull();
   });
 });

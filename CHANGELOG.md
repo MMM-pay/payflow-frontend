@@ -6,21 +6,21 @@ All notable changes to payflow-frontend. The format follows
 
 ## [Unreleased]
 
-### Added
+### Changed
 
-- **Service status page at `/status`.** Three independent checks — the
-  Soroban RPC node (latest ledger), the indexer API (`/health` status and
-  ledger lag), and the settlement keeper (last pass, tried vs settled,
-  failures) — each failing on its own so one outage never hides the others.
-  With `NEXT_PUBLIC_API_URL` empty (contract-only mode) the two backend
-  checks read "Not configured" rather than crying wolf, and the page still
-  works: RPC needs no backend. Linked from the main navigation.
-- **Dependabot for npm and GitHub Actions.** Weekly update PRs, with minor
-  and patch bumps grouped into one reviewable PR and majors kept individual.
-- **Vitest v8 coverage for `src/lib`, enforced in CI.** `npm test` now
-  collects coverage over the pure library code and fails under the thresholds
-  recorded in `vitest.config.ts` (set at the suite's current coverage); the
-  CI test job uploads the report as an artifact.
+- **Next.js 15 → 16, React 19.0 → 19.3 (#80).** Turbopack is now the default
+  bundler for `next dev` and `next build`. The static export, the
+  `/payflow-frontend` base path and contract-only mode are unchanged: the build
+  was re-verified both plain and with `NEXT_PUBLIC_BASE_PATH` set and
+  `NEXT_PUBLIC_API_URL` empty, and every exported asset and link carries the
+  base path. `eslint.config.mjs` now consumes the flat configs shipped by
+  `eslint-config-next` 16, so the `FlatCompat` bridge and the unused
+  `@eslint/eslintrc` dependency are gone. Two rules that
+  `eslint-plugin-react-hooks` 7 introduces (`set-state-in-effect`, `purity`)
+  are set to `warn` until the data-loading refactor in #185 — complying with
+  them means rewriting how every page loads data, not fixing this upgrade. The
+  `refs` violations they also surfaced (ref mirrors written during render) are
+  fixed in code.
 
 ### Fixed
 
@@ -49,40 +49,32 @@ All notable changes to payflow-frontend. The format follows
 
 ### Added
 
-- **Accessible dialog primitive.** `Dialog` in `src/components/ui.tsx` moves
-  focus into the panel when it opens, keeps it inside while the dialog stays
-  open, closes on Escape or its own dismiss button, and hands focus back to
-  whatever opened it. The panel is labelled by its title through `aria-modal`
-  and `aria-labelledby`, so a screen reader announces what is being confirmed
-  before any action. Confirmations are inline buttons today and the account
-  page falls back to `window.confirm`, which cannot be styled, labelled, or
-  kept in reach on a phone; this is the primitive those calls switch to. It
-  holds no data of its own, so it behaves the same with and without
-  `NEXT_PUBLIC_API_URL` configured and in contract-only mode.
-- **Pause until a date on the account page.** A subscriber can choose the day
-  billing resumes, and a paused mandate shows that date. The control is hidden
-  unless the mandate data carries `pause_until`, so a deployed contract that
-  predates the field — including the current testnet deployment — never offers
-  a write it cannot service. Built against the interface proposed in
-  payflow-contract#41; the indexer must serve the field for the control to
-  appear when a backend is configured.
-- **Light theme with a system default.** Both palettes are exposed as CSS
-  variables, the page follows `prefers-color-scheme` unless the reader chooses
-  Light or Dark from the header, and the choice is saved in `localStorage`. A
-  pre-paint script applies a stored choice so the wrong theme never flashes.
-- **Upcoming charges timeline on the account page.** Each active mandate shows
-  its next six charges, the running total, the final charge date when capped,
-  and a warning when the vault cannot cover the next charge. Built from the
-  mandates and vault balance already on the page, so it also works in
-  contract-only mode.
-- **Merchant discounts on a mandate.** A merchant can attach a discount to one
-  of their mandates — a percentage and the number of charges it covers — and
-  the subscriber sees the discounted price and how many discounted charges are
-  left. The rate is a whole number of basis points, and the amount is computed
-  in the token's smallest unit, so the price shown is the price charged.
-  Built against the interface proposed in payflow-contract#37 and hidden
-  entirely — including the merchant's control — while the deployed contract
-  cannot carry the field.
+- **Side-by-side plan comparison on the subscribe page (#175).** Tick up to
+  three plans and open a table covering price, billing period, 30-day monthly
+  equivalent, free trial, remaining seats and merchant. The monthly figure is
+  pure bigint arithmetic in `src/lib/compare.ts` — never floating point — and
+  the table is a real `<table>` with column and row headers plus a labelled,
+  focusable scroll region for 375px screens. It works from whichever plan list
+  the page loaded, so contract-only mode needs no backend.
+
+- **Opt-in browser reminders before a charge (#174).** A "Remind me" button on
+  each active subscription asks for notification permission only on that
+  click, stores the choice per wallet address, and notifies a day before the
+  next charge. Where the browser supports Notification Triggers the installed
+  service worker holds the schedule; otherwise the page does so while it is
+  open, which the panel explains. Cancelled and completed mandates lose their
+  reminder, including statuses decoded as `["Cancelled"]` from contract state.
+  Scheduling and preference logic is pure in `src/lib/reminders.ts`.
+
+- **Custom billing periods on the publish form.** The five presets stay, and a
+  Custom option takes a number of days, weeks or months (30-day months, the
+  same seconds the Monthly preset uses) for merchants billing fortnightly or
+  quarterly. The count is converted to whole seconds and checked against the
+  contract's 60-second floor — with the contract's own wording — before
+  Publish is enabled, so a period `create_plan` would reject never reaches the
+  wallet. Pure logic in `src/lib/period.ts`; works in contract-only mode
+  because the period is local form state. `formatPeriod` already renders the
+  custom lengths on plan cards ("every 2 weeks", "every 3 months").
 
 - Subscribe cards show optional availability cutoffs and remaining seats, and
   reject expired/full plans before signing. Unlimited/legacy plans stay unchanged.

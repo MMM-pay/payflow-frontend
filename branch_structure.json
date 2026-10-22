@@ -1,0 +1,21 @@
+{
+  "default_branch": "main",
+  "branches": [
+    "feat/issue-109-test-every-contract-error-code-has-a-message",
+    "feat/issue-96-feat-account-move-a-subscription-to-a-new-wallet",
+    "main",
+    "origin"
+  ],
+  "parent": {
+    "feat/issue-109-test-every-contract-error-code-has-a-message": "main",
+    "feat/issue-96-feat-account-move-a-subscription-to-a-new-wallet": "main",
+    "main": null,
+    "origin": "main"
+  },
+  "order": [
+    "main",
+    "feat/issue-109-test-every-contract-error-code-has-a-message",
+    "feat/issue-96-feat-account-move-a-subscription-to-a-new-wallet",
+    "origin"
+  ]
+}
