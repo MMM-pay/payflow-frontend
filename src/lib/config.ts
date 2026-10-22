@@ -79,6 +79,7 @@ export const CONFIGURED_TOKENS: readonly ConfiguredToken[] = [
 ];
 
 export const config = {
+  walletConnectProjectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? "",
   /**
    * Primary REC endpoint. Kept for backward compatibility; prefer
    * `config.rpcUrls` for fallback-aware code.

@@ -46,4 +46,17 @@ describe("PWA Installability & Configuration", () => {
     // Verifies cross-origin requests (e.g. testnet Soroban RPC, Horizon) are never cached
     expect(swCode).toContain("url.origin !== self.location.origin");
   });
+
+  it("handles opt-in charge reminders without touching the API cache", () => {
+    const swCode = fs.readFileSync(path.join(process.cwd(), "public", "sw.js"), "utf8");
+
+    // The account page sends the schedule computed from mandate state.
+    expect(swCode).toContain("payflow-reminders-sync");
+    // Where available, the OS trigger survives the page being closed.
+    expect(swCode).toContain("TimestampTrigger");
+    expect(swCode).toContain("showTrigger");
+    // Clicking the reminder opens the account page through the base path scope.
+    expect(swCode).toContain("notificationclick");
+    expect(swCode).toContain("account/");
+  });
 });
