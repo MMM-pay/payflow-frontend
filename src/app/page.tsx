@@ -9,27 +9,9 @@ import { chainProtocolStats } from "@/lib/chain";
 import { config } from "@/lib/config";
 import { useNetwork } from "@/lib/network";
 import { AddressLink, Panel, Stat, TxLink } from "@/components/ui";
+import { SubscriberGuide } from "@/components/SubscriberGuide";
 import{ shortAddress } from "@/lib/format";
 import { metaFor, useTokenMetas } from "@/lib/token";
-
-const STEPS = [
-  {
-    title: "The merchant publishes a plan",
-    body: "Price, billing period, and token are written to the plan registry. The plan is public and immutable except for an on/off switch.",
-  },
-  {
-    title: "The subscriber funds a vault and opens a mandate",
-    body: "One signature. The plan's terms are copied into the mandate, so the merchant can never reprice it afterwards.",
-  },
-  {
-    title: "Anyone settles the charge when it comes due",
-    body: "The mandate is the authorization, so charging is permissionless. If our keeper stops, the merchant or the subscriber can still settle.",
-  },
-  {
-    title: "The subscriber can leave at any time",
-    body: "Cancel is unilateral and immediate. Withdrawing from the vault starves the mandate. Funds are never locked.",
-  },
-];
 
 export default function HomePage() {
   const { t: tr, formatAmount, formatDate } = useI18n();
@@ -73,6 +55,8 @@ export default function HomePage() {
           <Link href="/merchant" className="btn-ghost">{tr("I'm a merchant")}</Link>
         </div>
       </section>
+
+      <SubscriberGuide />
 
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Stat
@@ -131,22 +115,6 @@ export default function HomePage() {
           </div>
         </Panel>
       )}
-
-      <Panel title={tr("How it works")}>
-        <ol className="space-y-4">
-          {STEPS.map((step, i) => (
-            <li key={step.title} className="flex gap-4">
-              <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-edge text-xs text-muted">
-                {i + 1}
-              </span>
-              <div>
-                <h3 className="text-sm font-medium">{tr(step.title)}</h3>
-                <p className="mt-1 text-sm text-muted">{tr(step.body)}</p>
-              </div>
-            </li>
-          ))}
-        </ol>
-      </Panel>
 
       <Panel
         title={tr("Deployed contracts")}
