@@ -93,3 +93,97 @@ self.addEventListener("fetch", (event) => {
     }),
   );
 });
+
+// ---------------------------------------------------------------------------
+// Charge reminders (issue #174)
+// ---------------------------------------------------------------------------
+
+/**
+ * The account page computes the reminder schedule from mandate state and sends
+ * it here after an explicit "Remind me" click. Where the browser implements
+ * Notification Triggers, `showTrigger` lets the OS wake the installed app at
+ * the requested time. Otherwise the page keeps the timers while it is open,
+ * and this worker is only the delivery channel — there is no background timer
+ * that could survive the worker being stopped.
+ */
+self.addEventListener("message", (event) => {
+  const data = event.data;
+  if (!data || data.type !== "payflow-reminders-sync") return;
+
+  const reminders = Array.isArray(data.reminders) ? data.reminders : [];
+  const activeTags = new Set(
+    reminders.map((reminder) => reminder && reminder.tag).filter(Boolean),
+  );
+
+  // Drop any Payflow notification whose mandate is no longer in the active
+  // set. This is what makes opt-out and a ended mandate visible immediately,
+  // rather than waiting for the old trigger to fire.
+  const cleanup =
+    typeof self.registration.getNotifications === "function"
+      ? self.registration.getNotifications().then((notifications) => {
+          for (const notification of notifications) {
+            if (
+              notification.tag &&
+              notification.tag.startsWith("payflow-mandate-") &&
+              !activeTags.has(notification.tag)
+            ) {
+              notification.close();
+            }
+          }
+        })
+      : Promise.resolve();
+
+  // Notification Triggers are the only API that survives the page and worker
+  // being suspended. Feature-detect rather than assume: on unsupported
+  // browsers the page's timers are the whole mechanism.
+  if (typeof self.TimestampTrigger !== "function") {
+    event.waitUntil(cleanup);
+    return;
+  }
+
+  const scheduled = [];
+  for (const reminder of reminders) {
+    if (!reminder || typeof reminder.at !== "number" || typeof reminder.tag !== "string") {
+      continue;
+    }
+    if (reminder.at <= Date.now()) {
+      // Already due: the page timer shows it immediately without duplicating.
+      continue;
+    }
+    try {
+      scheduled.push(
+        self.registration
+          .showNotification(reminder.title, {
+            body: reminder.body,
+            tag: reminder.tag,
+            icon: `${self.registration.scope}icon-192.png`,
+            data: { url: `${self.registration.scope}account/` },
+            showTrigger: new self.TimestampTrigger(reminder.at),
+          })
+          .catch(() => {}),
+      );
+    } catch {
+      // The page's fallback timer still covers this reminder.
+    }
+  }
+  event.waitUntil(Promise.all([cleanup, ...scheduled]));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = (event.notification.data && event.notification.data.url) ||
+    `${self.registration.scope}account/`;
+
+  event.waitUntil(
+    self.clients
+      .matchAll({ type: "window", includeUncontrolled: true })
+      .then((clients) => {
+        for (const client of clients) {
+          if (client.url.startsWith(self.registration.scope)) {
+            return client.focus();
+          }
+        }
+        return self.clients.openWindow(target);
+      }),
+  );
+});
