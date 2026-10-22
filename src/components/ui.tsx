@@ -241,8 +241,15 @@ export function Notice({ tone, children }: { tone: "error" | "ok" | "info"; chil
     ok: "border-accent/40 bg-accent/10 text-accent",
     info: "border-edge bg-fg/5 text-muted",
   } as const;
+  const role = tone === "error" ? "alert" : "status";
   return (
-    <div className={`rounded-lg border px-3 py-2 text-sm ${tones[tone]}`}>{typeof children === "string" ? translateMessage(children) : children}</div>
+    <div
+      role={role}
+      aria-live={tone === "error" ? "assertive" : "polite"}
+      className={`rounded-lg border px-3 py-2 text-sm ${tones[tone]}`}
+    >
+      {typeof children === "string" ? translateMessage(children) : children}
+    </div>
   );
 }
 
