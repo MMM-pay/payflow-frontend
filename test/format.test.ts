@@ -364,6 +364,17 @@ describe("formatPeriod", () => {
   it("picks the largest unit that divides evenly", () => {
     // 2 weeks divides by week, not by day.
     expect(formatPeriod(1_209_600)).toBe("every 2 weeks");
+    // A custom quarterly period (3 × 30-day months) reads as quarters of the
+    // same scale the monthly preset uses, on plan cards everywhere.
+    expect(formatPeriod(7_776_000)).toBe("every 3 months");
+  });
+
+  it("names the custom lengths the merchant form now offers", () => {
+    expect(formatPeriod(10 * 86_400)).toBe("every 10 days");
+    // 14 days is a fortnight, and reads as one.
+    expect(formatPeriod(14 * 86_400)).toBe("every 2 weeks");
+    expect(formatPeriod(5 * 604_800)).toBe("every 5 weeks");
+    expect(formatPeriod(6 * 2_592_000)).toBe("every 6 months");
   });
 
   it("falls back to seconds when no unit divides evenly", () => {
