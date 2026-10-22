@@ -1,14 +1,17 @@
 "use client";
 
+import { useI18n } from "@/i18n/provider";
+
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { api, checkWebhookUrl, type ApiMandate, type ApiPlan, type ApiWebhook, type MerchantSummary, type StreamEvent } from "@/lib/api";
+import { api, checkWebhookUrl, type ApiChargeAttempt, type ApiMandate, type ApiPlan, type ApiWebhook, type MerchantSummary, type StreamEvent } from "@/lib/api";
 import { RevenueChart } from "@/components/RevenueChart";
 import { WebhookDeliveryHistory } from "@/components/WebhookDeliveryHistory";
+import { CohortRetentionTable } from "@/components/CohortRetentionTable";
 import { buildCsv, downloadCsv, exportFilename, type ChargeRow } from "@/lib/csv";
 import { fillBuckets, parseRevenue, type BucketSize, type RevenuePoint } from "@/lib/revenue";
 import { parseMerchantChurn, type MerchantChurnMonth } from "@/lib/churn";
-import { chainMandatesFor, chainMerchantSummary, chainPlanSubscriberCount, chainPlansOf, endable, mandateFunding } from "@/lib/chain";
+import { chainMandatesFor, chainMerchantSummary, chainPlanSubscriberCount, chainPlansOf, chainUnpaidMandates, endable, mandateFunding, type UnpaidMandate } from "@/lib/chain";
 import { config, type ConfiguredToken } from "@/lib/config";
 import { VirtualList } from "@/components/VirtualList";
 
@@ -30,45 +33,19 @@ const DEFAULT_TOKENS: readonly ConfiguredToken[] = [
     },
   },
 ];
-import {
-  checkDiscountBps,
-  checkDiscountCharges,
-  discountedAmount,
-  discountBadge,
-  remainingDiscountCharges,
-  supportsDiscounts,
-} from "@/lib/discount";
-import { MAX_NAME_LEN, mandatePauseUntil, mandateRefundableAmount, mandateSupportsRefund, nameByteLength, payflow, server } from "@/lib/payflow";
+import { checkDiscountBps, checkDiscountCharges, discountedAmount, remainingDiscountCharges, supportsDiscounts } from "@/lib/discount";
+import { MAX_NAME_LEN, MAX_PAGE, mandatePauseUntil, mandateRefundableAmount, mandateSupportsRefund, nameByteLength, payflow, server, decodeContractError } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
 import { useStream } from "@/lib/stream";
-import {
-  checkAmount,
-  feeSplit,
-  formatAmount,
-  formatDate,
-  formatFeeBps,
-  formatPeriod,
-  fromStroops,
-  type FeeSplit,
-  type TokenMeta,
-} from "@/lib/format";
+import{ feeSplit, fromStroops, type FeeSplit, type TokenMeta } from "@/lib/format";
 import { metaFor, useTokenMetas } from "@/lib/token";
-import { supportsTrials, trialBadge, TRIAL_OPTIONS } from "@/lib/trial";
-import {
-  CUSTOM_PERIOD,
-  DEFAULT_PERIOD,
-  PERIOD_PRESETS,
-  PERIOD_UNITS,
-  checkCustomPeriod,
-  checkPeriodSeconds,
-  unitLabel,
-  type PeriodCheck,
-} from "@/lib/period";
+import { supportsTrials, TRIAL_OPTIONS } from "@/lib/trial";
+import { CUSTOM_PERIOD, DEFAULT_PERIOD, PERIOD_PRESETS, PERIOD_UNITS, checkCustomPeriod, checkPeriodSeconds, type PeriodCheck } from "@/lib/period";
 import { countOpenMandates } from "@/lib/plans";
 import { formatUsdEstimate, formatUsdcEstimate, useXlmUsdPrice } from "@/lib/price";
 import { AmountInput } from "@/components/AmountInput";
 import { CopyButton } from "@/components/CopyButton";
-import { AddressLink, Badge, Empty, Notice, Panel, SkeletonRows, Stat, TimeAgo, TxLink } from "@/components/ui";
+import { AddressLink, Badge, Dialog, Empty, Notice, Panel, SkeletonRows, Stat, TimeAgo, TxLink } from "@/components/ui";
 
 /** How far back the revenue chart looks, in days. */
 const REVENUE_WINDOW_DAYS = 90;
@@ -91,13 +68,121 @@ function FeePreview({
   meta: TokenMeta;
   usdEstimate?: string | null;
 }) {
+  const { t: tr, formatAmount, formatFeeBps } = useI18n();
   return (
-    <span>
-      Subscriber pays {formatAmount(split.gross, meta)}
-      {usdEstimate ? ` (≈ ${usdEstimate})` : ""} · protocol fee{" "}
-      {formatAmount(split.fee, meta)} ({formatFeeBps(feeBps)}) · you receive{" "}
+    <span>{tr("Subscriber pays")}{" "}{formatAmount(split.gross, meta)}
+      {usdEstimate ? ` (≈ ${usdEstimate})` : ""}{" "}{tr("· protocol fee")}{" "}
+      {formatAmount(split.fee, meta)} ({formatFeeBps(feeBps)}{tr(") · you receive")}{" "}
       {formatAmount(split.net, meta)}.
     </span>
+  );
+}
+
+/**
+ * Charge attempt history for a mandate, proposed by payflow-backend#144.
+ *
+ * Shows every attempt to settle a charge, including failures with decoded error
+ * messages. Hidden entirely when the backend does not serve the endpoint or
+ * when the mandate has no attempts recorded.
+ */
+function ChargeAttemptsHistory({
+  mandateId,
+  apiConfigured,
+}: {
+  mandateId: number;
+  apiConfigured: boolean;
+}) {
+  const { t: tr, formatDate, translateMessage } = useI18n();
+  const [expanded, setExpanded] = useState(false);
+  const [attempts, setAttempts] = useState<ApiChargeAttempt[] | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!apiConfigured || !expanded) {
+      return;
+    }
+    setLoading(true);
+    let live = true;
+    void api.chargeAttempts(mandateId).then((data) => {
+      if (live) {
+        setAttempts(data);
+        setLoading(false);
+      }
+    });
+    return () => {
+      live = false;
+    };
+  }, [apiConfigured, mandateId, expanded]);
+
+  if (!apiConfigured) {
+    return null;
+  }
+
+  // Decode an error code into a plain-language message using the existing
+  // contract error decoder. The backend may already provide a message, but
+  // if it only stored the code, we reconstruct the reason here.
+  function decodeAttemptError(attempt: ApiChargeAttempt): string {
+    if (attempt.error_message) {
+      return attempt.error_message;
+    }
+    if (attempt.error_code !== null) {
+      // Construct an error that matches what decodeContractError expects
+      const err = new Error(`HostError: Error(Contract, #${attempt.error_code})`);
+      return decodeContractError(err, "charge");
+    }
+    return "Charge failed for an unknown reason.";
+  }
+
+  return (
+    <div className="mt-3">
+      <button
+        type="button"
+        className="flex items-center gap-2 text-sm font-medium text-muted hover:text-foreground"
+        onClick={() => setExpanded(!expanded)}
+        aria-expanded={expanded}
+        aria-controls={`attempts-${mandateId}`}
+      >
+        {expanded ? "▼" : "▶"}{" "}{tr("Charge attempt history")}</button>
+      {expanded && (
+        <div id={`attempts-${mandateId}`} className="mt-2 rounded-lg border border-edge p-3">
+          {loading ? (
+            <p className="text-sm text-muted">{tr("Loading charge attempts…")}</p>
+          ) : attempts === null ? (
+            <Notice tone="info">{tr("Charge attempt history is not available. The backend does not serve this endpoint yet, or the feature has not been deployed to this network.")}</Notice>
+          ) : attempts.length === 0 ? (
+            <p className="text-sm text-muted">{tr("No charge attempts recorded for this mandate.")}</p>
+          ) : (
+            <div className="space-y-2">
+              {attempts.map((attempt) => (
+                <div
+                  key={attempt.id}
+                  className="rounded border border-edge p-2 text-sm"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted">
+                        {formatDate(attempt.attempted_at)}
+                      </span>
+                      {attempt.result === "success" ? (
+                        <Badge status="Active" />
+                      ) : (
+                        <span className="rounded-full bg-danger/15 px-2 py-0.5 text-xs font-medium text-danger">{tr("Failed")}</span>
+                      )}
+                    </div>
+                    {attempt.tx_hash && (
+                      <TxLink hash={attempt.tx_hash} />
+                    )}
+                  </div>
+                  {attempt.result === "failed" && (
+                    <p className="mt-1 text-xs text-danger">{translateMessage(decodeAttemptError(attempt))}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -114,6 +199,7 @@ function MerchantChurnPanel({
   merchant: string;
   apiConfigured: boolean;
 }) {
+  const { t: tr, formatNumber } = useI18n();
   const [state, setState] = useState<ChurnPanelState>({ status: "loading" });
 
   useEffect(() => {
@@ -146,72 +232,56 @@ function MerchantChurnPanel({
 
   if (!apiConfigured) {
     return (
-      <Notice tone="info">
-        Historical churn analytics require the payflow backend. Configure NEXT_PUBLIC_API_URL
-        to enable this report; contract-only mode does not retain historical lifecycle events.
-      </Notice>
+      <Notice tone="info">{tr("Historical churn analytics require the payflow backend. Configure NEXT_PUBLIC_API_URL to enable this report; contract-only mode does not retain historical lifecycle events.")}</Notice>
     );
   }
 
   return (
     <Panel
-      title="Monthly subscriber activity"
-      subtitle="Counts are subscriptions (mandates), bucketed by event time. Net change is started minus subscriber cancellations, merchant endings, and completed subscriptions."
+      title={tr("Monthly subscriber activity")}
+      subtitle={tr("Counts are subscriptions (mandates), bucketed by event time. Net change is started minus subscriber cancellations, merchant endings, and completed subscriptions.")}
     >
       {state.status === "loading" ? (
-        <SkeletonRows rows={2} label="Loading monthly subscriber activity" />
+        <SkeletonRows rows={2} label={tr("Loading monthly subscriber activity")} />
       ) : state.status === "unavailable" ? (
-        <Empty title="Historical churn analytics unavailable">
-          The payflow backend is not reachable or does not serve this report yet. Contract state
-          cannot reconstruct historical subscription activity.
-        </Empty>
+        <Empty title={tr("Historical churn analytics unavailable")}>{tr("The payflow backend is not reachable or does not serve this report yet. Contract state cannot reconstruct historical subscription activity.")}</Empty>
       ) : state.status === "error" ? (
-        <Notice tone="error">
-          The backend returned an incomplete or inconsistent churn report, so these metrics are
-          hidden rather than shown as misleading counts.
-        </Notice>
+        <Notice tone="error">{tr("The backend returned an incomplete or inconsistent churn report, so these metrics are hidden rather than shown as misleading counts.")}</Notice>
       ) : state.months.length === 0 ? (
-        <Empty title="No subscription activity in this report">
-          No lifecycle events were returned for the reported monthly buckets.
-        </Empty>
+        <Empty title={tr("No subscription activity in this report")}>{tr("No lifecycle events were returned for the reported monthly buckets.")}</Empty>
       ) : (
         <div
           className="overflow-x-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
           role="region"
-          aria-label="Monthly subscriber activity table"
+          aria-label={tr("Monthly subscriber activity table")}
           tabIndex={0}
         >
           <table className="w-full min-w-[760px] text-left text-sm">
-            <caption className="sr-only">
-              Monthly subscription starts, departures, completions, and net change. Completed
-              subscriptions are included in the net calculation.
-            </caption>
+            <caption className="sr-only">{tr("Monthly subscription starts, departures, completions, and net change. Completed subscriptions are included in the net calculation.")}</caption>
             <thead>
               <tr className="border-b border-edge text-muted">
-                <th scope="col" className="py-2 pr-3 font-medium">Month (UTC)</th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">Started</th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">
-                  Subscriber cancellations
-                </th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">Merchant-ended</th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">Completed</th>
-                <th scope="col" className="py-2 text-right font-medium">Net subscriber change</th>
+                <th scope="col" className="py-2 pr-3 font-medium">{tr("Month (UTC)")}</th>
+                <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Started")}</th>
+                <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Subscriber cancellations")}</th>
+                <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Merchant-ended")}</th>
+                <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Completed")}</th>
+                <th scope="col" className="py-2 text-right font-medium">{tr("Net subscriber change")}</th>
               </tr>
             </thead>
             <tbody>
               {state.months.map((month) => (
                 <tr key={month.bucket} className="border-b border-edge last:border-0">
                   <th scope="row" className="py-2 pr-3 font-medium">{month.bucket}</th>
-                  <td className="py-2 pr-3 text-right tabular-nums">{month.started}</td>
-                  <td className="py-2 pr-3 text-right tabular-nums">{month.cancelled}</td>
-                  <td className="py-2 pr-3 text-right tabular-nums">{month.ended}</td>
-                  <td className="py-2 pr-3 text-right tabular-nums">{month.completed}</td>
+                  <td className="py-2 pr-3 text-right tabular-nums">{formatNumber(month.started)}</td>
+                  <td className="py-2 pr-3 text-right tabular-nums">{formatNumber(month.cancelled)}</td>
+                  <td className="py-2 pr-3 text-right tabular-nums">{formatNumber(month.ended)}</td>
+                  <td className="py-2 pr-3 text-right tabular-nums">{formatNumber(month.completed)}</td>
                   <td className="py-2 text-right tabular-nums">
                     {month.net > 0
-                      ? `+${month.net} (increase)`
+                      ?tr("+{0} (increase)", { "0": month.net })
                       : month.net < 0
-                        ? `${month.net} (decrease)`
-                        : "0 (no change)"}
+                        ?tr("{0} (decrease)", { "0": month.net })
+                        :tr("0 (no change)")}
                   </td>
                 </tr>
               ))}
@@ -247,6 +317,7 @@ function WebhooksPanel({
   merchant: string;
   apiConfigured: boolean;
 }) {
+  const { t: tr, formatDate, translateMessage } = useI18n();
   const [webhooks, setWebhooks] = useState<ApiWebhook[] | null>(null);
   const [url, setUrl] = useState("");
   const [events, setEvents] = useState<string[]>([]);
@@ -272,7 +343,15 @@ function WebhooksPanel({
     };
   }, [apiConfigured, merchant]);
 
-  if (!apiConfigured) return null;
+  if (!apiConfigured) {
+  return (
+    <Panel title={tr("Webhook settings")} subtitle={tr("Endpoints the backend POSTs charge events to.")}>
+      <Notice tone="info">
+        {tr("Webhook management requires the payflow backend. Set NEXT_PUBLIC_API_URL to enable.")}
+      </Notice>
+    </Panel>
+  );
+}
 
   const urlCheck = checkWebhookUrl(url);
   const usable = urlCheck.ok && events.length > 0;
@@ -285,7 +364,7 @@ function WebhooksPanel({
     try {
       const created = await api.addWebhook(merchant, { url: urlCheck.url, events });
       if (!created) {
-        setError("The backend could not create the webhook.");
+        setError(tr("The backend could not create the webhook."));
         return;
       }
       setShowSecret({ id: created.id, secret: created.secret ?? "" });
@@ -305,7 +384,7 @@ function WebhooksPanel({
     try {
       const ok = await api.deleteWebhook(merchant, id);
       if (!ok) {
-        setError("The backend could not delete the webhook.");
+        setError(tr("The backend could not delete the webhook."));
         return;
       }
       setWebhooks((prev) => (prev ? prev.filter((w) => w.id !== id) : prev));
@@ -323,7 +402,7 @@ function WebhooksPanel({
     try {
       const ok = await api.testWebhook(merchant, id);
       if (!ok) {
-        setError("The test event could not be sent.");
+        setError(tr("The test event could not be sent."));
         return;
       }
       setDone("Test event sent.");
@@ -339,7 +418,7 @@ function WebhooksPanel({
     try {
       const result = await api.rotateWebhookSecret(merchant, id);
       if (!result) {
-        setError("The backend could not rotate the secret.");
+        setError(tr("The backend could not rotate the secret."));
         return;
       }
       setShowSecret({ id, secret: result.secret, rotated: true });
@@ -358,22 +437,20 @@ function WebhooksPanel({
 
   return (
     <Panel
-      title="Webhook settings"
-      subtitle="Endpoints the backend POSTs charge events to. Each request is signed with a secret shown once when the webhook is created."
+      title={tr("Webhook settings")}
+      subtitle={tr("Endpoints the backend POSTs charge events to. Each request is signed with a secret shown once when the webhook is created.")}
     >
-      {error && <Notice tone="error">{error}</Notice>}
+      {error && <Notice tone="error">{translateMessage(error)}</Notice>}
       {done && <Notice tone="ok">{done}</Notice>}
       {webhooks === null ? (
-        <SkeletonRows rows={2} label="Loading webhooks" />
+        <SkeletonRows rows={2} label={tr("Loading webhooks")} />
       ) : (
         <>
           <div className="mt-3 rounded-lg border border-edge p-3">
-            <p className="text-sm font-medium">Add a webhook</p>
+            <p className="text-sm font-medium">{tr("Add a webhook")}</p>
             <div className="mt-2 flex flex-wrap items-end gap-3">
               <div className="min-w-[16rem] flex-1">
-                <label className="label" htmlFor="webhook-url">
-                  URL
-                </label>
+                <label className="label" htmlFor="webhook-url">{tr("URL")}</label>
                 <input
                   id="webhook-url"
                   className="input"
@@ -388,12 +465,12 @@ function WebhooksPanel({
                 />
                 {url.length > 0 && !urlCheck.ok && (
                   <p id="webhook-url-error" className="mt-1 text-sm text-danger">
-                    {urlCheck.message}
+                    {translateMessage(urlCheck.message)}
                   </p>
                 )}
               </div>
               <div className="min-w-[14rem] flex-1">
-                <p className="text-sm font-medium mb-2">Events</p>
+                <p className="text-sm font-medium mb-2">{tr("Events")}</p>
                 <div className="space-y-1">
                   {WEBHOOK_EVENTS.map((option) => (
                     <label key={option.value} className="flex items-start gap-2">
@@ -403,7 +480,7 @@ function WebhooksPanel({
                         onChange={() => toggleEvent(option.value)}
                         disabled={busy === "webhook-add"}
                       />
-                      {option.label}
+                      {tr(option.label)}
                     </label>
                   ))}
                 </div>
@@ -414,7 +491,7 @@ function WebhooksPanel({
                 disabled={busy === "webhook-add" || !usable}
                 onClick={addWebhook}
               >
-                {busy === "webhook-add" ? "Adding…" : "Add webhook"}
+                {busy === "webhook-add" ?tr("Adding…") :tr("Add webhook")}
               </button>
             </div>
           </div>
@@ -422,7 +499,7 @@ function WebhooksPanel({
           {showSecret && (
             <div className="mt-3 rounded-lg border border-accent/40 bg-accent/10 p-3">
               <p className="text-sm font-medium">
-                {showSecret.rotated ? "New signing secret (shown once)" : "Signing secret (shown once)"}
+                {showSecret.rotated ?tr("New signing secret (shown once)") :tr("Signing secret (shown once)")}
               </p>
               <div className="mt-2 flex items-end gap-2">
                 <input
@@ -430,14 +507,14 @@ function WebhooksPanel({
                   className="input mono flex-1"
                   readOnly
                   value={showSecret.secret}
-                  aria-label="Copy the signing secret"
+                  aria-label={tr("Copy the signing secret")}
                 />
-                <CopyButton value={showSecret.secret} label="signing secret" />
+                <CopyButton value={showSecret.secret} label={tr("signing secret")} />
               </div>
               <p className="mt-1 text-xs text-muted">
                 {showSecret.rotated
-                  ? "Copy it now — the backend never returns this secret again. The old secret remains valid for a brief overlap period so you can update your system without missing events."
-                  : "Copy it now — the backend never returns this secret again."}
+                  ?tr("Copy it now — the backend never returns this secret again. The old secret remains valid for a brief overlap period so you can update your system without missing events.")
+                  :tr("Copy it now — the backend never returns this secret again.")}
               </p>
             </div>
           )}
@@ -445,12 +522,8 @@ function WebhooksPanel({
           <div className="mt-4 space-y-3">
             {webhooks.length === 0 ? (
               <Empty
-                title="No webhooks yet"
-              >
-                Register an endpoint above so the backend can POST charge
-                events to your own systems. Events are delivered over https
-                and signed with the webhook{"'s"} secret.
-              </Empty>
+                title={tr("No webhooks yet")}
+              >{tr("Register an endpoint above so the backend can POST charge events to your own systems. Events are delivered over https and signed with the webhook")}{tr("'s")}{" "}{tr("secret.")}</Empty>
             ) : (
               webhooks.map((w) => (
                 <div key={w.id} className="min-w-0 rounded-lg border border-edge p-4">
@@ -471,16 +544,14 @@ function WebhooksPanel({
                             className="btn-ghost"
                             disabled={busy !== null}
                             onClick={() => setConfirmDelete(null)}
-                          >
-                            Keep
-                          </button>
+                          >{tr("Keep")}</button>
                           <button
                             type="button"
                             className="btn-danger"
                             disabled={busy !== null}
                             onClick={() => void deleteWebhook(w.id)}
                           >
-                            {busy === `webhook-delete-${w.id}` ? "Deleting…" : "Delete"}
+                            {busy === `webhook-delete-${w.id}` ?tr("Deleting…") :tr("Delete")}
                           </button>
                         </>
                       ) : (
@@ -489,10 +560,8 @@ function WebhooksPanel({
                           className="btn-ghost text-danger"
                           disabled={busy !== null}
                           onClick={() => setConfirmDelete(w.id)}
-                          aria-label={`Delete webhook ${w.url}`}
-                        >
-                          Delete
-                        </button>
+                          aria-label={tr("Delete webhook {0}", { "0": w.url })}
+                        >{tr("Delete")}</button>
                       )}
                       {confirmRotate === w.id ? (
                         <>
@@ -501,16 +570,14 @@ function WebhooksPanel({
                             className="btn-ghost"
                             disabled={busy !== null}
                             onClick={() => setConfirmRotate(null)}
-                          >
-                            Keep current
-                          </button>
+                          >{tr("Keep current")}</button>
                           <button
                             type="button"
                             className="btn-primary"
                             disabled={busy !== null}
                             onClick={() => void rotateSecret(w.id)}
                           >
-                            {busy === `webhook-rotate-${w.id}` ? "Rotating…" : "Confirm: rotate"}
+                            {busy === `webhook-rotate-${w.id}` ?tr("Rotating…") :tr("Confirm: rotate")}
                           </button>
                         </>
                       ) : (
@@ -519,10 +586,8 @@ function WebhooksPanel({
                           className="btn-ghost"
                           disabled={busy !== null}
                           onClick={() => setConfirmRotate(w.id)}
-                          aria-label={`Rotate secret for webhook ${w.url}`}
-                        >
-                          Rotate secret
-                        </button>
+                          aria-label={tr("Rotate secret for webhook {0}", { "0": w.url })}
+                        >{tr("Rotate secret")}</button>
                       )}
                       <button
                         type="button"
@@ -530,7 +595,7 @@ function WebhooksPanel({
                         disabled={busy !== null}
                         onClick={() => void testWebhook(w.id)}
                       >
-                        {busy === `webhook-test-${w.id}` ? "Testing…" : "Send test"}
+                        {busy === `webhook-test-${w.id}` ?tr("Testing…") :tr("Send test")}
                       </button>
                     </div>
                   </div>
@@ -566,6 +631,7 @@ function DiscountForm({
   onCancel: () => void;
   onApply: (bps: number, charges: number) => void;
 }) {
+  const { t: tr, formatAmount, translateMessage } = useI18n();
   const [percent, setPercent] = useState("10");
   const [charges, setCharges] = useState("3");
   const bpsCheck = checkDiscountBps(percent);
@@ -574,12 +640,10 @@ function DiscountForm({
 
   return (
     <div className="mt-3 rounded-lg border border-edge p-3">
-      <p className="text-sm font-medium">Discount this mandate</p>
+      <p className="text-sm font-medium">{tr("Discount this mandate")}</p>
       <div className="mt-2 flex flex-wrap items-end gap-3">
         <div className="min-w-[7rem] flex-1">
-          <label className="label" htmlFor="discount-percent">
-            Discount (%)
-          </label>
+          <label className="label" htmlFor="discount-percent">{tr("Discount (%)")}</label>
           <input
             id="discount-percent"
             className="input"
@@ -593,9 +657,7 @@ function DiscountForm({
           />
         </div>
         <div className="min-w-[9rem] flex-1">
-          <label className="label" htmlFor="discount-charges">
-            Charges to cover
-          </label>
+          <label className="label" htmlFor="discount-charges">{tr("Charges to cover")}</label>
           <input
             id="discount-charges"
             className="input"
@@ -617,31 +679,26 @@ function DiscountForm({
             onApply(bpsCheck.bps, chargesCheck.charges);
           }}
         >
-          {busy ? "Applying…" : "Apply discount"}
+          {busy ?tr("Applying…") :tr("Apply discount")}
         </button>
-        <button type="button" className="btn-ghost" disabled={busy} onClick={onCancel}>
-          Cancel
-        </button>
+        <button type="button" className="btn-ghost" disabled={busy} onClick={onCancel}>{tr("Cancel")}</button>
       </div>
 
       {!bpsCheck.ok && (
         <p id="discount-percent-error" className="mt-2 text-sm text-danger">
-          {bpsCheck.message}
+          {translateMessage(bpsCheck.message)}
         </p>
       )}
       {!chargesCheck.ok && (
         <p id="discount-charges-error" className="mt-2 text-sm text-danger">
-          {chargesCheck.message}
+          {translateMessage(chargesCheck.message)}
         </p>
       )}
 
       {bpsCheck.ok && chargesCheck.ok && (
-        <p className="mt-2 text-sm text-muted">
-          Subscriber pays {formatAmount(discountedAmount(amount, bpsCheck.bps), meta)}{" "}
-          for the next {chargesCheck.charges === 1 ? "charge" : `${chargesCheck.charges} charges`},{" "}
-          then {formatAmount(amount, meta)}.
+        <p className="mt-2 text-sm text-muted">{tr("Subscriber pays")}{" "}{formatAmount(discountedAmount(amount, bpsCheck.bps), meta)}{" "}{tr("for the next")}{" "}{chargesCheck.charges === 1 ?tr("charge") :tr("{0} charges", { "0": chargesCheck.charges })},{" "}{tr("then")}{" "}{formatAmount(amount, meta)}.
           {discountedAmount(amount, bpsCheck.bps) === 0n && (
-            <> This discount rounds the charge down to zero, which the vault cannot debit.</>
+            <>{" "}{tr("This discount rounds the charge down to zero, which the vault cannot debit.")}</>
           )}
         </p>
       )}
@@ -673,20 +730,18 @@ function RefundForm({
   onCancel: () => void;
   onConfirm: (amount: bigint) => void;
 }) {
+  const { checkAmount, t: tr, formatAmount, translateMessage } = useI18n();
   const amountCheck = checkAmount(amount, meta.decimals);
   const maxRefundStroops = maxRefund;
   const usable = amountCheck.ok && amountCheck.stroops <= maxRefundStroops && amountCheck.stroops > 0n;
 
   return (
     <div className="mt-3 rounded-lg border border-edge p-3">
-      <p className="text-sm font-medium">Issue a refund</p>
-      <p className="mt-1 text-xs text-muted">
-        Refund up to {formatAmount(maxRefundStroops, meta)} (what you received net of fees).
-      </p>
+      <p className="text-sm font-medium">{tr("Issue a refund")}</p>
+      <p className="mt-1 text-xs text-muted">{tr("Refund up to")}{" "}{formatAmount(maxRefundStroops, meta)}{" "}{tr("(what you received net of fees).")}</p>
       <div className="mt-2 flex flex-wrap items-end gap-3">
         <div className="min-w-[12rem] flex-1">
-          <label className="label" htmlFor="refund-amount">
-            Amount ({meta.symbol})
+          <label className="label" htmlFor="refund-amount">{tr("Amount (")}{meta.symbol})
           </label>
           <input
             id="refund-amount"
@@ -709,21 +764,18 @@ function RefundForm({
             onConfirm(amountCheck.stroops);
           }}
         >
-          {busy ? "Refunding…" : "Confirm refund"}
+          {busy ?tr("Refunding…") :tr("Confirm refund")}
         </button>
-        <button type="button" className="btn-ghost" disabled={busy} onClick={onCancel}>
-          Cancel
-        </button>
+        <button type="button" className="btn-ghost" disabled={busy} onClick={onCancel}>{tr("Cancel")}</button>
       </div>
 
       {!amountCheck.ok && (
         <p id="refund-amount-error" className="mt-2 text-sm text-danger">
-          {amountCheck.message}
+          {translateMessage(amountCheck.message)}
         </p>
       )}
       {amountCheck.ok && amountCheck.stroops > maxRefundStroops && (
-        <p id="refund-amount-error" className="mt-2 text-sm text-danger">
-          Refund cannot exceed {formatAmount(maxRefundStroops, meta)}.
+        <p id="refund-amount-error" className="mt-2 text-sm text-danger">{tr("Refund cannot exceed")}{" "}{formatAmount(maxRefundStroops, meta)}.
         </p>
       )}
     </div>
@@ -731,9 +783,12 @@ function RefundForm({
 }
 
 export default function MerchantPage() {
+  const { checkAmount, t: tr, formatPeriod, translateMessage, unitLabel, trialBadge, formatTokenValue, discountBadge, formatUsdString, formatNumber } = useI18n();
   const { address, networkMismatch, signXdr, connect, connecting } = useWallet();
   const [plans, setPlans] = useState<ApiPlan[] | null>(null);
   const [mandates, setMandates] = useState<ApiMandate[] | null>(null);
+  const [unpaidMandates, setUnpaidMandates] = useState<import("@/lib/chain").UnpaidMandate[] | null>(null);
+  const [subscribersTab, setSubscribersTab] = useState<"all" | "unpaid">("all");
   const [summary, setSummary] = useState<MerchantSummary | null>(null);
   /**
    * Per-plan performance stats keyed by plan id.
@@ -781,6 +836,11 @@ export default function MerchantPage() {
   const [confirmPause, setConfirmPause] = useState<number | null>(null);
   // Deactivating a plan asks for confirmation and displays open mandate impact.
   const [confirmDeactivate, setConfirmDeactivate] = useState<number | null>(null);
+  // Bulk deactivation of all active plans: confirmation dialog with progress.
+  const [confirmDeactivateAll, setConfirmDeactivateAll] = useState(false);
+  const [deactivateAllProgress, setDeactivateAllProgress] = useState<{ current: number; total: number } | null>(null);
+  // Set once the bulk run finishes; cleared when the merchant starts another.
+  const [deactivateAllDone, setDeactivateAllDone] = useState(false);
   // Embed snippet code view for plan.
   const [embedFor, setEmbedFor] = useState<number | null>(null);
   const { priceData: xlmPrice } = useXlmUsdPrice();
@@ -898,6 +958,53 @@ export default function MerchantPage() {
       }
     }
     setMandates(rows);
+
+    // Load unpaid mandates
+    try {
+      const unpaidResponse = await api.unpaidMandates(address);
+      if (unpaidResponse && unpaidResponse.unpaid) {
+        // Backend provided unpaid list, convert to UnpaidMandate format
+        const now = Math.floor(Date.now() / 1000);
+        const unpaidList: UnpaidMandate[] = await Promise.all(
+          unpaidResponse.unpaid.map(async (mandate) => {
+            try {
+              const amount = BigInt(mandate.amount);
+              const balance = await payflow.vaultBalance(address, mandate.subscriber, mandate.token ?? config.contracts.token);
+              const shortfall = balance !== null && amount > balance ? amount - balance : 0n;
+              return {
+                mandate,
+                shortfall,
+                overdueDuration: now - mandate.next_charge,
+              };
+            } catch {
+              // If vault balance read fails, estimate from mandate being in unpaid list
+              return {
+                mandate,
+                shortfall: BigInt(mandate.amount),
+                overdueDuration: now - mandate.next_charge,
+              };
+            }
+          })
+        );
+        setUnpaidMandates(unpaidList.filter(u => u.shortfall > 0n));
+      } else {
+        // Fallback to contract-only mode
+        try {
+          const unpaidList = await chainUnpaidMandates(address, address);
+          setUnpaidMandates(unpaidList);
+        } catch {
+          setUnpaidMandates([]);
+        }
+      }
+    } catch {
+      // API method doesn't exist or failed - fallback to contract-only mode
+      try {
+        const unpaidList = await chainUnpaidMandates(address, address);
+        setUnpaidMandates(unpaidList);
+      } catch {
+        setUnpaidMandates([]);
+      }
+    }
 
     // Revenue totals come from charge history, which only the indexer has.
     setSummary(s ?? chainMerchantSummary(address, rows));
@@ -1201,11 +1308,68 @@ export default function MerchantPage() {
     }
   }
 
+  /** Count active plans and their open mandates for the bulk deactivation confirmation. */
+  function getDeactivationImpact(): { activePlans: number; openMandates: number } {
+    if (!plans) return { activePlans: 0, openMandates: 0 };
+    let activePlans = 0;
+    let openMandates = 0;
+    for (const p of plans) {
+      if (p.active) {
+        activePlans += 1;
+        const stats = planStats[p.id];
+        openMandates += countOpenMandates(p.id, mandates, stats?.subscriber_count);
+      }
+    }
+    return { activePlans, openMandates };
+  }
+
+  /** Deactivate all active plans by paging through with deactivate_page. */
+  async function deactivateAllPlans() {
+    if (!address || !signXdr) return;
+    const { activePlans } = getDeactivationImpact();
+    if (activePlans === 0) return;
+
+    // Get total plan count to determine how many pages to process.
+    // The contract's deactivate_page works on the full plan index (active + inactive),
+    // so we page through all plans. The contract handles idempotency for already-inactive plans.
+    let totalPlanCount: number;
+    try {
+      totalPlanCount = await payflow.merchantPlanCount(address, address);
+    } catch {
+      // If we can't read the count, fall back to the plans we have loaded.
+      totalPlanCount = plans?.length ?? 0;
+    }
+    const totalPages = Math.max(1, Math.ceil(totalPlanCount / MAX_PAGE));
+    let completedPages = 0;
+
+    setDeactivateAllProgress({ current: 0, total: totalPages });
+    setDeactivateAllDone(false);
+    setError(null);
+
+    try {
+      // Page through from the oldest (start=0) to newest, MAX_PAGE at a time.
+      // The contract's deactivate_page deactivates plans in the given page.
+      for (let start = 0; start < totalPlanCount; start += MAX_PAGE) {
+        const limit = Math.min(MAX_PAGE, totalPlanCount - start);
+        await payflow.deactivatePage(address, signXdr, start, limit);
+        completedPages += 1;
+        setDeactivateAllProgress({ current: completedPages, total: totalPages });
+      }
+      setDeactivateAllDone(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDeactivateAllProgress(null);
+      setConfirmDeactivateAll(false);
+      await load();
+    }
+  }
+
   if (!address) {
     return (
-      <Panel title="Merchant dashboard">
+      <Panel title={tr("Merchant dashboard")}>
         <Empty
-          title="No wallet connected"
+          title={tr("No wallet connected")}
           action={
             <button
               type="button"
@@ -1213,14 +1377,10 @@ export default function MerchantPage() {
               disabled={connecting}
               onClick={() => void connect()}
             >
-              {connecting ? "Connecting…" : "Connect wallet"}
+              {connecting ?tr("Connecting…") :tr("Connect wallet")}
             </button>
           }
-        >
-          Connect the wallet that will publish plans. Plans, subscribers and
-          revenue are all read for that address — on testnet, fund it with
-          Friendbot before publishing.
-        </Empty>
+        >{tr("Connect the wallet that will publish plans. Plans, subscribers and revenue are all read for that address — on testnet, fund it with Friendbot before publishing.")}</Empty>
       </Panel>
     );
   }
@@ -1233,46 +1393,41 @@ export default function MerchantPage() {
         apiConfigured={api.isConfigured()}
       />
 
+      <CohortRetentionTable
+        merchant={address}
+        apiConfigured={api.isConfigured()}
+      />
+
       <Panel
-        title="Revenue over time"
-        subtitle={`Net of the protocol fee, over the last ${REVENUE_WINDOW_DAYS} days.`}
+        title={tr("Revenue over time")}
+        subtitle={tr("Net of the protocol fee, over the last {0} days.", { "0": REVENUE_WINDOW_DAYS })}
         actions={
           revenue !== null ? (
             <label className="flex items-center gap-2 text-sm text-muted">
-              <span className="sr-only sm:not-sr-only">Group by</span>
+              <span className="sr-only sm:not-sr-only">{tr("Group by")}</span>
               <select
                 className="input w-auto py-1"
                 value={bucketSize}
                 onChange={(e) => setBucketSize(e.target.value as BucketSize)}
               >
-                <option value="day">Day</option>
-                <option value="week">Week</option>
+                <option value="day">{tr("Day")}</option>
+                <option value="week">{tr("Week")}</option>
               </select>
             </label>
           ) : undefined
         }
       >
         {revenueUnavailable ? (
-          <Empty>
-            Revenue history comes from the payflow indexer, which is not reachable
-            here — so there is nothing to plot. The totals above still come from
-            contract state; only the time series needs the backend.
-          </Empty>
+          <Empty>{tr("Revenue history comes from the payflow indexer, which is not reachable here — so there is nothing to plot. The totals above still come from contract state; only the time series needs the backend.")}</Empty>
         ) : revenue === null ? (
-          <SkeletonRows rows={2} label="Loading revenue" />
+          <SkeletonRows rows={2} label={tr("Loading revenue")} />
         ) : revenue.length === 0 ? (
           <Empty
-            title="Nothing settled in this period"
+            title={tr("Nothing settled in this period")}
             action={
-              <a href="#publish-plan" className="btn-ghost">
-                Publish a plan
-              </a>
+              <a href="#publish-plan" className="btn-ghost">{tr("Publish a plan")}</a>
             }
-          >
-            A charge settles when a mandate falls due and the keeper — or you,
-            with Charge now — collects it. Publish a plan and share your public
-            page to get your first subscriber.
-          </Empty>
+          >{tr("A charge settles when a mandate falls due and the keeper — or you, with Charge now — collects it. Publish a plan and share your public page to get your first subscriber.")}</Empty>
         ) : (
           <RevenueChart points={revenue} size={bucketSize} meta={tokenMeta} />
         )}
@@ -1280,45 +1435,45 @@ export default function MerchantPage() {
 
       <div className="grid gap-4 sm:grid-cols-3">
         <Stat
-          label="Collected"
+          label={tr("Collected")}
           loading={summary === null}
           value={
             summary?.totalCollected
-              ? fromStroops(summary.totalCollected, 4, tokenMeta.decimals)
+              ? formatTokenValue(summary.totalCollected, 4, tokenMeta.decimals)
               : "—"
           }
-          hint={`${tokenMeta.symbol}, net of protocol fee`}
+          hint={tr("{0}, net of protocol fee", { "0": tokenMeta.symbol })}
         />
         <Stat
-          label="Active mandates"
+          label={tr("Active mandates")}
           loading={summary === null}
           value={summary?.activeMandates ?? "—"}
         />
         <Stat
-          label="Charges settled"
+          label={tr("Charges settled")}
           loading={summary === null}
           value={summary?.chargeCount ?? "—"}
         />
       </div>
 
-      {error && <Notice tone="error">{error}</Notice>}
+      {error && <Notice tone="error">{translateMessage(error)}</Notice>}
+      {deactivateAllDone && (
+        <Notice tone="ok">{tr("All active plans deactivated.")}</Notice>
+      )}
       {done && (
-        <Notice tone="ok">
-          Done. Transaction <TxLink hash={done} />
+        <Notice tone="ok">{tr("Done. Transaction")}{" "}<TxLink hash={done} />
         </Notice>
       )}
 
       {/* id is the anchor target for the empty states below. */}
       <Panel
         id="publish-plan"
-        title="Publish a plan"
-        subtitle="Price and period are frozen into every mandate opened against this plan. To change them, publish a new plan."
+        title={tr("Publish a plan")}
+        subtitle={tr("Price and period are frozen into every mandate opened against this plan. To change them, publish a new plan.")}
       >
         <div className="flex flex-wrap items-end gap-3">
           <div className="min-w-[8rem] flex-1">
-            <label className="label" htmlFor="plan-token">
-              Token
-            </label>
+            <label className="label" htmlFor="plan-token">{tr("Token")}</label>
             <select
               id="plan-token"
               className="input"
@@ -1336,7 +1491,7 @@ export default function MerchantPage() {
           <div className="min-w-[10rem] flex-1">
             <AmountInput
               id="price"
-              label={`Price (${tokenMeta.symbol})`}
+              label={tr("Price ({0})", { "0": tokenMeta.symbol })}
               value={price}
               onChange={(next) => {
                 setPrice(next);
@@ -1353,28 +1508,22 @@ export default function MerchantPage() {
             />
           </div>
           <div className="min-w-[12rem] flex-1">
-            <label className="label" htmlFor="plan-name">
-              Plan name
-            </label>
+            <label className="label" htmlFor="plan-name">{tr("Plan name")}</label>
             <input
               id="plan-name"
               className="input"
-              placeholder="Pro Monthly"
+              placeholder={tr("Pro Monthly")}
               value={name}
               onChange={(e) => setName(e.target.value)}
               aria-invalid={nameTooLong}
               aria-describedby={nameTooLong ? "plan-name-error" : undefined}
             />
             {nameTooLong && (
-              <p id="plan-name-error" className="mt-1 text-sm text-danger">
-                Too long — {MAX_NAME_LEN} bytes maximum.
-              </p>
+              <p id="plan-name-error" className="mt-1 text-sm text-danger">{tr("Too long —")}{" "}{MAX_NAME_LEN}{" "}{tr("bytes maximum.")}</p>
             )}
           </div>
           <div className="min-w-[10rem] flex-1">
-            <label className="label" htmlFor="period">
-              Billing period
-            </label>
+            <label className="label" htmlFor="period">{tr("Billing period")}</label>
             <select
               id="period"
               className="input"
@@ -1383,10 +1532,10 @@ export default function MerchantPage() {
             >
               {PERIOD_PRESETS.map((o) => (
                 <option key={o.value} value={o.value}>
-                  {o.label}
+                  {tr(o.label)}
                 </option>
               ))}
-              <option value={CUSTOM_PERIOD}>Custom…</option>
+              <option value={CUSTOM_PERIOD}>{tr("Custom…")}</option>
             </select>
           </div>
           {customPeriod && (
@@ -1399,9 +1548,7 @@ export default function MerchantPage() {
             <div className="min-w-[16rem] flex-1">
               <div className="flex flex-wrap items-end gap-3">
                 <div className="w-28">
-                  <label className="label" htmlFor="period-count">
-                    Custom period
-                  </label>
+                  <label className="label" htmlFor="period-count">{tr("Custom period")}</label>
                   <input
                     id="period-count"
                     className="input"
@@ -1417,9 +1564,7 @@ export default function MerchantPage() {
                   />
                 </div>
                 <div className="w-28">
-                  <label className="label" htmlFor="period-unit">
-                    Unit
-                  </label>
+                  <label className="label" htmlFor="period-unit">{tr("Unit")}</label>
                   <select
                     id="period-unit"
                     className="input"
@@ -1436,26 +1581,24 @@ export default function MerchantPage() {
               </div>
               {periodError && (
                 <p id="period-error" className="mt-2 text-sm text-rose-200">
-                  {periodError}
+                  {translateMessage(periodError)}
                 </p>
               )}
             </div>
           )}
           {trialSupported && (
             <div className="min-w-[10rem] flex-1">
-              <label className="label" htmlFor="trial">
-                Free trial
-              </label>
+              <label className="label" htmlFor="trial">{tr("Free trial")}</label>
               <select
                 id="trial"
                 className="input"
                 value={trial}
                 onChange={(e) => setTrial(Number(e.target.value))}
               >
-                <option value={0}>None</option>
+                <option value={0}>{tr("None")}</option>
                 {TRIAL_OPTIONS.map((o) => (
                   <option key={o.seconds} value={o.seconds}>
-                    {o.label}
+                    {tr(o.label)}
                   </option>
                 ))}
               </select>
@@ -1489,7 +1632,7 @@ export default function MerchantPage() {
               );
             }}
           >
-            {busy === "create" ? "Publishing…" : "Publish plan"}
+            {busy === "create" ?tr("Publishing…") :tr("Publish plan")}
           </button>
         </div>
 
@@ -1499,7 +1642,7 @@ export default function MerchantPage() {
           className={showPriceError ? "mt-3 text-sm text-danger" : "mt-3 text-sm text-muted"}
         >
           {showPriceError
-            ? priceError
+            ? translateMessage(priceError ?? "")
             : (split ? (
                 <FeePreview
                   split={split}
@@ -1507,9 +1650,9 @@ export default function MerchantPage() {
                   meta={tokenMeta}
                   usdEstimate={
                     tokenMeta.symbol === "XLM" && xlmPrice
-                      ? formatUsdEstimate(split.gross, xlmPrice.price, xlmPrice.decimals, tokenMeta.decimals)
+                      ? formatUsdString(formatUsdEstimate(split.gross, xlmPrice.price, xlmPrice.decimals, tokenMeta.decimals))
                       : tokenMeta.symbol === "USDC"
-                        ? formatUsdcEstimate(split.gross, tokenMeta.decimals)
+                        ? formatUsdString(formatUsdcEstimate(split.gross, tokenMeta.decimals))
                         : null
                   }
                 />
@@ -1518,34 +1661,35 @@ export default function MerchantPage() {
       </Panel>
 
       <Panel
-        title="My plans"
+        title={tr("My plans")}
         actions={
-          <div className="flex items-center gap-2">
-            <Link
-              href={`/m/?address=${address}`}
-              className="btn-ghost whitespace-nowrap"
-            >
-              Public page
-            </Link>
-            <CopyButton value={publicUrl} label="public page link" />
-          </div>
+          <>
+            <div className="flex items-center gap-2">
+              <Link
+                href={`/m/?address=${address}`}
+                className="btn-ghost whitespace-nowrap"
+              >{tr("Public page")}</Link>
+              <CopyButton value={publicUrl} label={tr("public page link")} />
+            </div>
+            {(plans ?? []).some((p) => p.active) && !busy && !networkMismatch && deactivateAllProgress === null && (
+              <button
+                type="button"
+                className="btn-ghost text-danger whitespace-nowrap"
+                onClick={() => setConfirmDeactivateAll(true)}
+              >{tr("Deactivate all plans")}</button>
+            )}
+          </>
         }
       >
         {plans === null ? (
-          <SkeletonRows rows={2} label="Loading plans" />
+          <SkeletonRows rows={2} label={tr("Loading plans")} />
         ) : plans.length === 0 ? (
           <Empty
-            title="No plans yet"
+            title={tr("No plans yet")}
             action={
-              <a href="#publish-plan" className="btn-primary">
-                Publish a plan
-              </a>
+              <a href="#publish-plan" className="btn-primary">{tr("Publish a plan")}</a>
             }
-          >
-            Use the form above to publish your first plan — it is written
-            straight to the contract, so it works with or without the indexer.
-            Subscribers can open a mandate against it as soon as it confirms.
-          </Empty>
+          >{tr("Use the form above to publish your first plan — it is written straight to the contract, so it works with or without the indexer. Subscribers can open a mandate against it as soon as it confirms.")}</Empty>
         ) : (
           <VirtualList
             items={plans}
@@ -1568,9 +1712,9 @@ export default function MerchantPage() {
               const openCount = countOpenMandates(p.id, mandates, stats?.subscriber_count);
               const usdEstimate =
                 meta.symbol === "XLM" && xlmPrice
-                  ? formatUsdEstimate(p.amount, xlmPrice.price, xlmPrice.decimals, meta.decimals)
+                  ? formatUsdString(formatUsdEstimate(p.amount, xlmPrice.price, xlmPrice.decimals, meta.decimals))
                   : meta.symbol === "USDC"
-                    ? formatUsdcEstimate(p.amount, meta.decimals)
+                    ? formatUsdString(formatUsdcEstimate(p.amount, meta.decimals))
                     : null;
               return (
                 <div
@@ -1579,7 +1723,7 @@ export default function MerchantPage() {
                 >
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="font-medium">{p.name || `Plan #${p.id}`}</span>
+                      <span className="font-medium">{p.name ||tr("Plan #{0}", { "0": p.id })}</span>
                       <Badge status={p.active ? "Active" : "Paused"} />
                       {trialBadge(p) && (
                         <span className="rounded-full bg-accent/15 px-2 py-0.5 text-xs font-medium text-accent">
@@ -1588,12 +1732,12 @@ export default function MerchantPage() {
                       )}
                     </div>
                     <div className="mt-1 text-sm text-muted">
-                      {fromStroops(p.amount, 4, meta.decimals)} {meta.symbol}{" "}
+                      {formatTokenValue(p.amount, 4, meta.decimals)} {meta.symbol}{" "}
                       {usdEstimate && (
                         <span
                           className="tabular-nums"
-                          title="Estimated USD value via Reflector oracle"
-                          aria-label={`Approximately ${usdEstimate} US Dollars`}
+                          title={tr("Estimated USD value via Reflector oracle")}
+                          aria-label={tr("Approximately {0} US Dollars", { "0": usdEstimate })}
                         >
                           (≈ {usdEstimate}){" "}
                         </span>
@@ -1611,7 +1755,7 @@ export default function MerchantPage() {
                         aria-busy="true"
                         role="status"
                       >
-                        <span className="sr-only">Loading plan stats…</span>
+                        <span className="sr-only">{tr("Loading plan stats…")}</span>
                         <span className="h-4 w-20 rounded bg-white/10 motion-safe:animate-pulse" aria-hidden="true" />
                         <span className="h-4 w-24 rounded bg-white/10 motion-safe:animate-pulse" aria-hidden="true" />
                         <span className="h-4 w-20 rounded bg-white/10 motion-safe:animate-pulse" aria-hidden="true" />
@@ -1619,22 +1763,22 @@ export default function MerchantPage() {
                     ) : stats ? (
                       <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
                         <div className="flex gap-1">
-                          <dt>Subscribers</dt>
+                          <dt>{tr("Subscribers")}</dt>
                           <dd className="font-medium text-foreground tabular-nums">
-                            {stats.subscriber_count}
+                            {formatNumber(stats.subscriber_count)}
                           </dd>
                         </div>
                         {hasRevenue && (
                           <>
                             <div className="flex gap-1">
-                              <dt>Collected</dt>
+                              <dt>{tr("Collected")}</dt>
                               <dd className="font-medium text-foreground tabular-nums">
-                                {fromStroops(stats.total_collected!, 4, meta.decimals)}{" "}
+                                {formatTokenValue(stats.total_collected!, 4, meta.decimals)}{" "}
                                 {meta.symbol}
                               </dd>
                             </div>
                             <div className="flex gap-1">
-                              <dt>Cancellations</dt>
+                              <dt>{tr("Cancellations")}</dt>
                               <dd className="font-medium text-foreground tabular-nums">
                                 {stats.cancellations!}
                               </dd>
@@ -1650,25 +1794,18 @@ export default function MerchantPage() {
                       role="alert"
                       aria-live="polite"
                     >
-                      <div className="font-medium text-amber-200">
-                        Confirm plan deactivation
-                      </div>
-                      <p className="mt-1 text-xs text-muted">
-                        This plan has{" "}
+                      <div className="font-medium text-amber-200">{tr("Confirm plan deactivation")}</div>
+                      <p className="mt-1 text-xs text-muted">{tr("This plan has")}{" "}
                         <strong className="text-foreground font-semibold">
-                          {openCount === 1 ? "1 open subscription" : `${openCount} open subscriptions`}
-                        </strong>
-                        . Existing subscribers will continue to be billed on schedule until their subscriptions are individually ended or cancelled. New subscribers will no longer be able to subscribe to this plan.
-                      </p>
+                          {openCount === 1 ?tr("1 open subscription") :tr("{0} open subscriptions", { "0": openCount })}
+                        </strong>{tr(". Existing subscribers will continue to be billed on schedule until their subscriptions are individually ended or cancelled. New subscribers will no longer be able to subscribe to this plan.")}</p>
                       <div className="mt-3 flex items-center gap-2">
                         <button
                           type="button"
                           className="btn-ghost text-xs"
                           disabled={busy !== null}
                           onClick={() => setConfirmDeactivate(null)}
-                        >
-                          Keep active
-                        </button>
+                        >{tr("Keep active")}</button>
                         <button
                           type="button"
                           className="btn-primary text-xs"
@@ -1679,7 +1816,7 @@ export default function MerchantPage() {
                             ).then(() => setConfirmDeactivate(null))
                           }
                         >
-                          {busy === `toggle-${p.id}` ? "Deactivating…" : "Confirm: deactivate"}
+                          {busy === `toggle-${p.id}` ?tr("Deactivating…") :tr("Confirm: deactivate")}
                         </button>
                       </div>
                     </div>
@@ -1690,9 +1827,9 @@ export default function MerchantPage() {
                         className="btn-ghost text-xs"
                         onClick={() => setEmbedFor(embedFor === p.id ? null : p.id)}
                         aria-expanded={embedFor === p.id}
-                        aria-label={`Embed snippet for plan ${p.name || `#${p.id}`}`}
+                        aria-label={tr("Embed snippet for plan {0}", { "0": p.name || `#${p.id}` })}
                       >
-                        {embedFor === p.id ? "Close embed" : "Embed"}
+                        {embedFor === p.id ?tr("Close embed") :tr("Embed")}
                       </button>
                       <button
                         type="button"
@@ -1708,31 +1845,27 @@ export default function MerchantPage() {
                           }
                         }}
                       >
-                        {p.active ? "Deactivate" : "Activate"}
+                        {p.active ?tr("Deactivate") :tr("Activate")}
                       </button>
                     </div>
                   )}
                   {embedFor === p.id && (
                     <div className="w-full mt-3 rounded-lg border border-edge bg-surface/50 p-3 text-xs space-y-2">
                       <div className="flex items-center justify-between">
-                        <span className="font-semibold text-foreground">Embed on your website</span>
+                        <span className="font-semibold text-foreground">{tr("Embed on your website")}</span>
                         <button
                           type="button"
                           className="btn-ghost text-xs py-0.5 px-2"
                           onClick={() => setEmbedFor(null)}
-                        >
-                          Close
-                        </button>
+                        >{tr("Close")}</button>
                       </div>
-                      <p className="text-muted">
-                        Add this snippet to any HTML website. Subscribers can click it to subscribe in a secure popup window.
-                      </p>
+                      <p className="text-muted">{tr("Add this snippet to any HTML website. Subscribers can click it to subscribe in a secure popup window.")}</p>
                       <pre className="overflow-x-auto rounded border border-edge bg-background p-2 font-mono text-[11px] text-muted">
                         <code>{`<script src="${typeof window !== "undefined" ? window.location.origin : ""}/payflow-frontend/embed/payflow-embed.js" defer></script>\n<payflow-button\n  plan-id="${p.id}"\n  merchant="${address}"\n  name="${p.name || `Plan #${p.id}`}"\n  amount="${fromStroops(p.amount, 4, meta.decimals)} ${meta.symbol}"\n  period="${formatPeriod(p.period)}">\n</payflow-button>`}</code>
                       </pre>
                       <CopyButton
                         value={`<script src="${typeof window !== "undefined" ? window.location.origin : ""}/payflow-frontend/embed/payflow-embed.js" defer></script>\n<payflow-button plan-id="${p.id}" merchant="${address}" name="${p.name || `Plan #${p.id}`}" amount="${fromStroops(p.amount, 4, meta.decimals)} ${meta.symbol}" period="${formatPeriod(p.period)}"></payflow-button>`}
-                        label="embed snippet"
+                        label={tr("embed snippet")}
                       />
                     </div>
                   )}
@@ -1744,25 +1877,74 @@ export default function MerchantPage() {
       </Panel>
 
       <Panel
-        title="Subscribers"
-        subtitle="Charging is permissionless — you can settle a due mandate yourself instead of waiting for the keeper."
+        title={tr("Subscribers")}
+        subtitle={
+          subscribersTab === "all"
+            ?tr("Charging is permissionless — you can settle a due mandate yourself instead of waiting for the keeper.")
+            :tr("Active mandates where the subscriber's vault cannot cover the next charge.")
+        }
         actions={
-          <button
-            type="button"
-            className="btn-ghost mono text-sm"
-            disabled={exporting || mandates?.length === 0 || networkMismatch}
-            onClick={() => void exportCsv()}
-            aria-label="Export charges to CSV"
-          >
-            {exporting ? "Exporting…" : "Export CSV"}
-          </button>
+          <div className="flex items-center gap-3">
+            {/* Tab navigation */}
+            <div className="flex rounded-lg border border-edge bg-surface/30" role="tablist" aria-label={tr("Subscriber views")}>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={subscribersTab === "all"}
+                aria-controls="subscribers-all-panel"
+                id="subscribers-all-tab"
+                className={`px-3 py-1.5 text-sm font-medium transition-colors rounded-l-lg ${
+                  subscribersTab === "all"
+                    ? "bg-accent text-white"
+                    : "text-muted hover:text-fg"
+                }`}
+                onClick={() => setSubscribersTab("all")}
+              >{tr("All")}</button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={subscribersTab === "unpaid"}
+                aria-controls="subscribers-unpaid-panel"
+                id="subscribers-unpaid-tab"
+                className={`px-3 py-1.5 text-sm font-medium transition-colors rounded-r-lg ${
+                  subscribersTab === "unpaid"
+                    ? "bg-accent text-white"
+                    : "text-muted hover:text-fg"
+                }`}
+                onClick={() => setSubscribersTab("unpaid")}
+              >{tr("Unpaid")}{unpaidMandates && unpaidMandates.length > 0 && (
+                  <span className="ml-1.5 rounded-full bg-danger px-1.5 py-0.5 text-xs font-semibold text-white">
+                    {formatNumber(unpaidMandates.length)}
+                  </span>
+                )}
+              </button>
+            </div>
+            {subscribersTab === "all" && (
+              <button
+                type="button"
+                className="btn-ghost mono text-sm"
+                disabled={exporting || mandates?.length === 0 || networkMismatch}
+                onClick={() => void exportCsv()}
+                aria-label={tr("Export charges to CSV")}
+              >
+                {exporting ?tr("Exporting…") :tr("Export CSV")}
+              </button>
+            )}
+          </div>
         }
       >
+        {/* All Subscribers Tab */}
+        <div
+          role="tabpanel"
+          id="subscribers-all-panel"
+          aria-labelledby="subscribers-all-tab"
+          hidden={subscribersTab !== "all"}
+        >
         {mandates === null ? (
-          <SkeletonRows rows={3} label="Loading subscribers" />
+          <SkeletonRows rows={3} label={tr("Loading subscribers")} />
         ) : mandates.length === 0 ? (
           <Empty
-            title="No subscribers yet"
+            title={tr("No subscribers yet")}
             action={
               publicUrl ? (
                 <a
@@ -1770,16 +1952,10 @@ export default function MerchantPage() {
                   target="_blank"
                   rel="noreferrer"
                   className="btn-primary"
-                >
-                  Open your public page
-                </a>
+                >{tr("Open your public page")}</a>
               ) : undefined
             }
-          >
-            Share your public page link so anyone can open a mandate against
-            your plans. New subscribers appear here with their vault funding at
-            a glance.
-          </Empty>
+          >{tr("Share your public page link so anyone can open a mandate against your plans. New subscribers appear here with their vault funding at a glance.")}</Empty>
         ) : (
           <VirtualList
             items={mandates}
@@ -1820,52 +1996,49 @@ export default function MerchantPage() {
                         {pauseSupport && m.status === "Paused" && (
                           <>
                             {pausedBy.get(m.id) === "merchant" && (
-                              <span className="text-xs text-muted">paused by you</span>
+                              <span className="text-xs text-muted">{tr("paused by you")}</span>
                             )}
                             {pausedBy.get(m.id) === "subscriber" && (
-                              <span className="text-xs text-muted">paused by subscriber</span>
+                              <span className="text-xs text-muted">{tr("paused by subscriber")}</span>
                             )}
                             {/* Fallback when SSE hasn't told us yet: show generic pause indicator */}
                             {pausedBy.get(m.id) === undefined && m.pause_until !== undefined && (
-                              <span className="text-xs text-muted">paused</span>
+                              <span className="text-xs text-muted">{tr("paused")}</span>
                             )}
                           </>
                         )}
                         {m.ended_by === "merchant" && (
-                          <span className="text-xs text-muted">ended by you</span>
+                          <span className="text-xs text-muted">{tr("ended by you")}</span>
                         )}
                       </div>
                       <div className="mt-1 text-xs text-muted">
-                        {fromStroops(m.amount, 4, meta.decimals)} {meta.symbol}{" "}
-                        {formatPeriod(m.period)} · {m.charges_made} settled · next{" "}
+                        {formatTokenValue(m.amount, 4, meta.decimals)} {meta.symbol}{" "}
+                        {formatPeriod(m.period)} · {formatNumber(m.charges_made)}{" "}{tr("settled · next")}{" "}
                         {m.status === "Active" ? <TimeAgo value={m.next_charge} /> : "—"}
                       </div>
                       {badge && (
-                        <div className="mt-1 text-xs text-accent">
-                          Subscriber pays{" "}
-                          {fromStroops(
+                        <div className="mt-1 text-xs text-accent">{tr("Subscriber pays")}{" "}
+                          {formatTokenValue(
                             discountedAmount(BigInt(m.amount), Number(m.discount_bps)),
                             4,
                             meta.decimals,
                           )}{" "}
-                          {meta.symbol} while the discount runs
-                          {remaining === null
+                          {meta.symbol}{" "}{tr("while the discount runs")}{remaining === null
                             ? ""
                             : remaining === 0
-                              ? " — the discount has run out"
-                              : ` — ${remaining} discounted charge${remaining === 1 ? "" : "s"} left`}
+                              ?tr(" — the discount has run out")
+                              :tr(" — {0} discounted charge{1} left", { "0": remaining, "1": remaining === 1 ? "" :tr("s") })}
                           .
                         </div>
                       )}
                       <div className="mt-1 text-xs font-medium">
                         {balance === null ? (
-                          <span className="text-muted">Vault balance —</span>
+                          <span className="text-muted">{tr("Vault balance —")}</span>
                         ) : short ? (
-                          <span className="text-danger">
-                            Short by {fromStroops(funding.shortfall)} {meta.symbol}
+                          <span className="text-danger">{tr("Short by")}{" "}{formatTokenValue(funding.shortfall)} {meta.symbol}
                           </span>
                         ) : (
-                          <span className="text-accent">Funded</span>
+                          <span className="text-accent">{tr("Funded")}</span>
                         )}
                       </div>
                     </div>
@@ -1882,11 +2055,10 @@ export default function MerchantPage() {
                               )
                             }
                           >
-                            {busy === `charge-${m.id}` ? "Charging…" : short ? "Short on funds" : "Charge now"}
+                            {busy === `charge-${m.id}` ?tr("Charging…") : short ?tr("Short on funds") :tr("Charge now")}
                           </button>
                           {short && (
-                            <span className="text-xs text-danger">
-                              Subscriber vault short by {fromStroops(funding.shortfall)} {meta.symbol}
+                            <span className="text-xs text-danger">{tr("Subscriber vault short by")}{" "}{formatTokenValue(funding.shortfall)} {meta.symbol}
                             </span>
                           )}
                         </>
@@ -1901,7 +2073,7 @@ export default function MerchantPage() {
                               setDiscountFor(discountFor === m.id ? null : m.id)
                             }
                           >
-                            {discountFor === m.id ? "Close" : "Discount"}
+                            {discountFor === m.id ?tr("Close") :tr("Discount")}
                           </button>
                         )}
                         {pauseSupport && endable(m) && (
@@ -1913,9 +2085,7 @@ export default function MerchantPage() {
                                   className="btn-ghost"
                                   disabled={busy !== null}
                                   onClick={() => setConfirmPause(null)}
-                                >
-                                  Keep
-                                </button>
+                                >{tr("Keep")}</button>
                                 <button
                                   type="button"
                                   className={m.status === "Active" ? "btn-primary" : "btn-ghost"}
@@ -1928,11 +2098,11 @@ export default function MerchantPage() {
                                 >
                                   {busy === `pause-${m.id}`
                                     ? m.status === "Active"
-                                      ? "Pausing…"
-                                      : "Resuming…"
+                                      ?tr("Pausing…")
+                                      :tr("Resuming…")
                                     : m.status === "Active"
-                                      ? "Confirm: pause"
-                                      : "Confirm: resume"}
+                                      ?tr("Confirm: pause")
+                                      :tr("Confirm: resume")}
                                 </button>
                               </>
                             ) : (
@@ -1941,9 +2111,9 @@ export default function MerchantPage() {
                                 className={m.status === "Active" ? "btn-primary" : "btn-ghost"}
                                 disabled={busy !== null || networkMismatch}
                                 onClick={() => setConfirmPause(m.id)}
-                                aria-label={m.status === "Active" ? `Pause subscription #${m.id}` : `Resume subscription #${m.id}`}
+                                aria-label={m.status === "Active" ?tr("Pause subscription #{0}", { "0": m.id }) :tr("Resume subscription #{0}", { "0": m.id })}
                               >
-                                {m.status === "Active" ? "Pause" : "Resume"}
+                                {m.status === "Active" ?tr("Pause") :tr("Resume")}
                               </button>
                             )}
                           </>
@@ -1967,7 +2137,7 @@ export default function MerchantPage() {
                               }
                             }}
                           >
-                            {refundFor === m.id ? "Close" : "Refund"}
+                            {refundFor === m.id ?tr("Close") :tr("Refund")}
                           </button>
                         )}
                         {endable(m) &&
@@ -1978,9 +2148,7 @@ export default function MerchantPage() {
                             className="btn-ghost"
                             disabled={busy !== null}
                             onClick={() => setConfirmEnd(null)}
-                          >
-                            Keep
-                          </button>
+                          >{tr("Keep")}</button>
                           <button
                             type="button"
                             className="btn-danger"
@@ -1991,7 +2159,7 @@ export default function MerchantPage() {
                               ).then(() => setConfirmEnd(null))
                             }
                           >
-                            {busy === `end-${m.id}` ? "Ending…" : "Confirm: end for good"}
+                            {busy === `end-${m.id}` ?tr("Ending…") :tr("Confirm: end for good")}
                           </button>
                         </>
                       ) : (
@@ -2000,10 +2168,8 @@ export default function MerchantPage() {
                           className="btn-ghost"
                           disabled={busy !== null || networkMismatch}
                           onClick={() => setConfirmEnd(m.id)}
-                          aria-label={`End subscription #${m.id}`}
-                        >
-                          End
-                        </button>
+                          aria-label={tr("End subscription #{0}", { "0": m.id })}
+                        >{tr("End")}</button>
                       ))}
                     </div>
                   </div>
@@ -2042,14 +2208,142 @@ export default function MerchantPage() {
                       }
                     />
                   )}
+                  <ChargeAttemptsHistory
+                    mandateId={m.id}
+                    apiConfigured={api.isConfigured()}
+                  />
                 </div>
               );
             }}
           />
         )}
+        </div>
+
+        {/* Unpaid Subscribers Tab */}
+        <div
+          role="tabpanel"
+          id="subscribers-unpaid-panel"
+          aria-labelledby="subscribers-unpaid-tab"
+          hidden={subscribersTab !== "unpaid"}
+        >
+          {unpaidMandates === null ? (
+            <SkeletonRows rows={2} label={tr("Loading unpaid subscribers")} />
+          ) : unpaidMandates.length === 0 ? (
+            <Empty title={tr("All subscribers are funded")}>{tr("Every active mandate due for charging has sufficient vault balance. Subscribers with insufficient funds will appear here.")}</Empty>
+          ) : (
+            <div className="space-y-3">
+              {unpaidMandates.map((unpaid) => {
+                const m = unpaid.mandate;
+                const meta = metaFor(metas, m.token ?? config.contracts.token);
+                const badge = discountBadge(m);
+                const overdueHours = Math.floor(unpaid.overdueDuration / 3600);
+                const overdueDays = Math.floor(unpaid.overdueDuration / 86400);
+                const overdueText =
+                  overdueDays > 0
+                    ?tr("{0} day{1}", { "0": overdueDays, "1": overdueDays === 1 ? "" :tr("s") })
+                    : overdueHours > 0
+                      ?tr("{0} hour{1}", { "0": overdueHours, "1": overdueHours === 1 ? "" :tr("s") })
+                      :tr("less than 1 hour");
+                return (
+                  <div
+                    key={m.id}
+                    className="rounded-lg border border-danger/40 bg-danger/5 p-4"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Link
+                            href={`/mandates/?id=${m.id}`}
+                            className="font-medium hover:underline text-soft focus:outline-none focus:ring-1 focus:ring-accent rounded"
+                          >
+                            #{m.id}
+                          </Link>
+                          <AddressLink value={m.subscriber} />
+                          <Badge status={m.status} />
+                          {badge && (
+                            <span className="rounded-full bg-accent/15 px-2 py-0.5 text-xs font-medium text-accent">
+                              {badge}
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-1 text-sm text-muted">
+                          {formatTokenValue(m.amount, 4, meta.decimals)} {meta.symbol}{" "}
+                          {formatPeriod(m.period)} · {formatNumber(m.charges_made)}{" "}{tr("settled")}</div>
+                        <div className="mt-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2">
+                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                            <div className="text-sm">
+                              <span className="font-medium text-danger">{tr("Short by")}{" "}{formatTokenValue(unpaid.shortfall, 4, meta.decimals)} {meta.symbol}
+                              </span>
+                            </div>
+                            <div className="text-xs text-muted">{tr("Overdue for")}{" "}{overdueText}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <CopyButton value={m.subscriber} label={tr("subscriber address")} />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </Panel>
 
       <WebhooksPanel key={`webhooks:${address}`} merchant={address} apiConfigured={api.isConfigured()} />
+
+      {confirmDeactivateAll && (
+        <Dialog
+          open={confirmDeactivateAll}
+          onClose={() => setConfirmDeactivateAll(false)}
+          title={tr("Deactivate all active plans")}
+          actions={
+            <>
+              <button
+                type="button"
+                className="btn-ghost"
+                disabled={busy !== null || deactivateAllProgress !== null}
+                onClick={() => setConfirmDeactivateAll(false)}
+              >{tr("Keep active")}</button>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={busy !== null || networkMismatch || deactivateAllProgress !== null}
+                onClick={() => void deactivateAllPlans()}
+              >
+                {deactivateAllProgress
+                  ?tr("Deactivating… ({0}/{1} pages)", { "0": deactivateAllProgress.current, "1": deactivateAllProgress.total })
+                  :tr("Confirm: deactivate all")}
+              </button>
+            </>
+          }
+        >
+          <div className="space-y-2 text-sm">
+            {(() => {
+              const { activePlans, openMandates } = getDeactivationImpact();
+              if (activePlans === 0) {
+                return <p className="text-muted">{tr("No active plans to deactivate.")}</p>;
+              }
+              // Total pages will be determined at runtime from the contract's plan count.
+              // We show the active plan count and open mandates; the progress dialog
+              // will display the actual page count as it runs.
+              return (
+                <>
+                  <p>{tr("This will deactivate")}{" "}<strong>{formatNumber(activePlans)}</strong>{" "}{tr("active plan")}{activePlans === 1 ? "" :tr("s")}.
+                  </p>
+                  <p className="text-muted">{tr("Affected open subscriptions:")}{" "}<strong>{openMandates}</strong>{" "}
+                    {openMandates === 1 ?tr("mandate") :tr("mandates")}.
+                  </p>
+                  <p className="text-muted">{tr("Existing subscribers will continue to be billed on schedule until their subscriptions are individually ended or cancelled. New subscribers will no longer be able to subscribe to these plans.")}</p>
+                  <p className="text-xs text-muted">{tr("The operation pages through all plans in batches of")}{" "}{MAX_PAGE}{tr("; progress will be shown once confirmed.")}</p>
+                </>
+              );
+            })()}
+          </div>
+        </Dialog>
+      )}
     </div>
   );
 }

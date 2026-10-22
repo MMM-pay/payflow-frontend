@@ -277,6 +277,12 @@ export function selectNetwork(id: string): void {
 }
 
 export const config = {
+  /**
+   * WalletConnect Cloud project id for the optional WalletConnect pairing.
+   * Network-agnostic — the kit is constructed once per page load — so it
+   * lives on `config` directly rather than on a `NetworkConfig`.
+   */
+  walletConnectProjectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? "",
   get rpcUrl() {
     return currentNetwork.rpcUrl;
   },

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import SubscribePage from "@/app/subscribe/page";
 import MerchantPage from "@/app/merchant/page";
 import type { ApiPlan } from "@/lib/api";
@@ -31,6 +31,7 @@ const apiMock = vi.hoisted(() => ({
   merchantSummary: vi.fn(),
   merchantRevenue: vi.fn(),
   merchantChurn: vi.fn(),
+  merchantCohortRetention: vi.fn(),
   planStats: vi.fn(),
   stream: vi.fn(),
   webhooks: vi.fn(),
@@ -94,6 +95,7 @@ beforeEach(() => {
   apiMock.merchantSummary.mockResolvedValue(null);
   apiMock.merchantRevenue.mockResolvedValue(null);
   apiMock.merchantChurn.mockResolvedValue(null);
+  apiMock.merchantCohortRetention.mockResolvedValue(null);
   apiMock.mandatesFor.mockResolvedValue({ mandates: [] });
   apiMock.planStats.mockResolvedValue(null);
   apiMock.webhooks.mockResolvedValue([]);
@@ -155,7 +157,9 @@ describe("SubscribePage free-trial badges", () => {
 
     render(<SubscribePage />);
     const button = await screen.findByRole("button", { name: "Subscribe" });
-    button.click();
+    // Issue #139: the signature request now sits behind a confirmation dialog.
+    fireEvent.click(button);
+    fireEvent.click(screen.getByRole("button", { name: "Confirm and sign" }));
 
     await vi.waitFor(() => expect(payflowMock.subscribe).toHaveBeenCalled());
     const notice = await screen.findByText(/Subscribed\./);
@@ -168,7 +172,8 @@ describe("SubscribePage free-trial badges", () => {
     payflowMock.subscribe.mockResolvedValue("a".repeat(64));
 
     render(<SubscribePage />);
-    (await screen.findByRole("button", { name: "Subscribe" })).click();
+    fireEvent.click(await screen.findByRole("button", { name: "Subscribe" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm and sign" }));
 
     const notice = await screen.findByText(/Subscribed\./);
     expect(notice.parentElement?.textContent).not.toMatch(/free trial/i);
