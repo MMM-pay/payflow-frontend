@@ -12,6 +12,7 @@ import {
 } from "react";
 import type { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit";
 import { config } from "./config";
+import { createWalletModules } from "./wallet-modules";
 import type { SignXdr } from "./payflow";
 import { translateSignatureError } from "./signature-error";
 
@@ -90,10 +91,13 @@ export async function getKit(): Promise<StellarWalletsKit> {
   if (!kitPromise) {
     kitPromise = (async () => {
       const mod = await import("@creit.tech/stellar-wallets-kit");
-      return new mod.StellarWalletsKit({
-        network: config.networkPassphrase as unknown as (typeof mod.WalletNetwork)[keyof typeof mod.WalletNetwork],
-        modules: mod.allowAllModules(),
+      const network = config.networkPassphrase as (typeof mod.WalletNetwork)[keyof typeof mod.WalletNetwork];
+      const modules = await createWalletModules(mod.allowAllModules, {
+        projectId: config.walletConnectProjectId,
+        network,
+        appUrl: `${window.location.origin}${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/`,
       });
+      return new mod.StellarWalletsKit({ network, modules });
     })();
   }
   return kitPromise;
@@ -113,9 +117,13 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [walletNetwork, setWalletNetwork] = useState<string | null>(null);
 
   // Keep a ref of the current address to avoid stale closures in event listeners
-  // and async callbacks.
+  // and async callbacks. Every setter below already writes the ref alongside the
+  // state, so this effect only keeps them in step for addresses that reach the
+  // state some other way. Refs are not written during render (react-hooks/refs).
   const addressRef = useRef<string | null>(address);
-  addressRef.current = address;
+  useEffect(() => {
+    addressRef.current = address;
+  }, [address]);
 
   // Track in-flight checks to prevent duplicate concurrent queries.
   const syncingRef = useRef(false);
