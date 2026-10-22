@@ -138,11 +138,24 @@ export function Badge({ status }: { status: string }) {
   );
 }
 
-export function AddressLink({ value, kind = "account" }: { value: string; kind?: "account" | "contract" }) {
+export function AddressLink({
+  value,
+  kind = "account",
+  base = explorerBase,
+}: {
+  value: string;
+  kind?: "account" | "contract";
+  /**
+   * Explorer base to build the link from. Defaults to the network in force;
+   * callers rendering network-dependent markup before hydration pass their
+   * own so the first render matches the prerendered HTML.
+   */
+  base?: string;
+}) {
   return (
     <span className="inline-flex max-w-full items-center gap-1 align-middle">
       <a
-        href={`${explorerBase}/${kind}/${value}`}
+        href={`${base}/${kind}/${value}`}
         target="_blank"
         rel="noreferrer"
         className="mono truncate text-muted underline-offset-2 hover:text-accent hover:underline"

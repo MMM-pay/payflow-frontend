@@ -72,6 +72,7 @@ import {
 } from "@/lib/reminders";
 import {
   checkAmount,
+  checkWithdraw,
   formatAmount,
   formatDate,
   formatPeriod,
@@ -180,6 +181,13 @@ function AccountInner() {
     : null;
   const fundAmountCheck = checkAmount(fundAmount, vaultMeta.decimals);
   const fundStroops = fundAmountCheck.ok ? fundAmountCheck.stroops : 0n;
+
+  /** Whether the amount can be withdrawn right now: parses and fits the vault. */
+  const withdrawCheck = checkWithdraw(amount, balance, vaultMeta.decimals);
+  // The amount field shows its own message for a malformed entry; anything
+  // else (too large for the balance, balance still loading) is the
+  // withdrawal's to explain, so only one message is on screen at a time.
+  const withdrawError = amount.trim() !== "" && !withdrawCheck.ok ? withdrawCheck.message : null;
 
   // Source account for simulation
   const source = address ?? config.readSource;
@@ -919,7 +927,7 @@ function AccountInner() {
       {!isReadOnly && (
         <Panel
           title="Fund your vault"
-          subtitle="Charges are debited from this balance. Withdraw at any time — nothing is locked."
+          subtitle="Charges are debited from this balance. Withdraw at any time — nothing is locked, but a withdrawal can stop upcoming charges: the next one fails if it finds the vault short."
         >
           <div className="flex flex-wrap items-end gap-3">
             <div className="min-w-[12rem] flex-1">
@@ -932,8 +940,27 @@ function AccountInner() {
                 placeholder="5.0"
                 disabled={busy !== null}
                 hint="Accepts 5, 5.0 — and 5,0 where commas are decimals."
+                hideError={withdrawError !== null}
+                describedBy={withdrawError ? "withdraw-amount-error" : undefined}
               />
+              {withdrawError && (
+                <p id="withdraw-amount-error" role="alert" className="mt-1 text-sm text-danger">
+                  {withdrawError}
+                </p>
+              )}
             </div>
+            <button
+              type="button"
+              className="btn-ghost"
+              disabled={busy !== null || balance === null || balance === 0n}
+              onClick={() =>
+                setAmount(fromStroops(balance ?? 0n, vaultMeta.decimals, vaultMeta.decimals))
+              }
+              aria-label="Fill the amount with the full vault balance"
+              title={`Withdraw the full balance (${formatAmount(balance ?? 0n, vaultMeta)})`}
+            >
+              Max
+            </button>
             <button
               type="button"
               className="btn-primary"
@@ -954,7 +981,7 @@ function AccountInner() {
             <button
               type="button"
               className="btn-ghost"
-              disabled={busy !== null || networkMismatch}
+              disabled={busy !== null || networkMismatch || !withdrawCheck.ok}
               onClick={() =>
                 void run("withdraw", () =>
                   payflow.withdraw(
