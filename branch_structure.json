@@ -1,0 +1,18 @@
+{
+  "default_branch": "main",
+  "branches": [
+    "feat/issue-41-feat-local-labels-for-addresses",
+    "main",
+    "origin"
+  ],
+  "parent": {
+    "feat/issue-41-feat-local-labels-for-addresses": "main",
+    "main": null,
+    "origin": "main"
+  },
+  "order": [
+    "main",
+    "feat/issue-41-feat-local-labels-for-addresses",
+    "origin"
+  ]
+}
