@@ -1,0 +1,18 @@
+{
+  "default_branch": "main",
+  "branches": [
+    "feat/issue-27-feat-merchant-page-through-all-subscribers",
+    "main",
+    "origin"
+  ],
+  "parent": {
+    "feat/issue-27-feat-merchant-page-through-all-subscribers": "main",
+    "main": null,
+    "origin": "main"
+  },
+  "order": [
+    "main",
+    "feat/issue-27-feat-merchant-page-through-all-subscribers",
+    "origin"
+  ]
+}
