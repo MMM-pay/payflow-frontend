@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   CALLEE_ERRORS,
-  CONTRACT_ERRORS,
+  CONTRACT_ERROR_CODES,
+  contractErrorMessage,
   SIGNATURE_CANCELLED_MESSAGE,
   decodeContractError,
   isSignatureRejection,
@@ -190,9 +191,11 @@ describe("every known contract error code", () => {
   const genericMessage = /Error\(Contract, #\d+\)/i;
 
   it("gives every contract error a non-generic sentence", () => {
-    for (const [contract, codes] of Object.entries(CONTRACT_ERRORS)) {
-      for (const [code, message] of Object.entries(codes)) {
-        expect(message.trim().length, `${contract} #${code} is empty`).toBeGreater(0);
+    for (const [contract, codes] of Object.entries(CONTRACT_ERROR_CODES)) {
+      for (const code of codes) {
+        const message = contractErrorMessage(contract, code);
+        expect(message, `${contract} #${code} has no sentence`).toBeTypeOf("string");
+        expect(message!.trim().length, `${contract} #${code} is empty`).toBeGreaterThan(0);
         expect(message, `${contract} #${code} is generic`).not.toMatch(genericMessage);
       }
     }
@@ -217,7 +220,7 @@ describe("nameByteLength", () => {
     // The contract's limit is in bytes, so a 20-character name can exceed a
     // 64-byte cap. Measuring with String.length would wrongly let it through.
     expect(nameByteLength("日本語プラン")).toBe(18);
-    expect("日本語プラン".length).toBe(null);
+    expect("日本語プラン".length).toBe(6);
   });
 
   it("treats an emoji as more than one byte", () => {
