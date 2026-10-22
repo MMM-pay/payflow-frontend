@@ -781,6 +781,12 @@ export const payflow = {
   },
 
   // --- vault ---
+  /** Whether the vault has enough balance to cover the first plan charge (#33). */
+  hasSufficientVaultBalance: (vaultBalance: bigint | null, planPrice: bigint): boolean => {
+    if (vaultBalance === null) return true;
+    return vaultBalance >= planPrice;
+  },
+
   vaultBalance: (source: string, user: string, token: string) =>
     readContract<bigint>(config.contracts.vault, "balance", source, [
       arg.address(user),
