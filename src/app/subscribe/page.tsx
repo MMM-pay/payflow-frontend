@@ -23,6 +23,7 @@ import { metaFor, useTokenMetas } from "@/lib/token";
 import { filterAndSortPlans, type PlanPeriodOption, type PlanSortOption } from "@/lib/plans";
 import { formatUsdEstimate, formatUsdcEstimate, useXlmUsdPrice } from "@/lib/price";
 import { checkChargeLimit, confirmationFor } from "@/lib/subscribe-confirmation";
+import { loadPayflow } from "@/lib/lazy-payflow";
 import { Dialog, Empty, MerchantAccount, Notice, Panel, SkeletonPlanCards, TxLink } from "@/components/ui";
 
 /** Remaining seats in words, without inventing a count the source cannot provide. */
@@ -260,8 +261,8 @@ function SubscribeInner() {
     if (feeReading.current || feeBps !== null) return;
     feeReading.current = true;
     setFeeLoading(true);
-    void payflow
-      .feeBps(address ?? config.readSource)
+    void loadPayflow()
+      .then(({ payflow }) => payflow.feeBps(address ?? config.readSource))
       .then((rate) => setFeeBps(rate))
       .catch(() => undefined)
       .finally(() => {

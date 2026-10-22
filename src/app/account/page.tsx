@@ -47,6 +47,7 @@ import {
   mandatePastDueUntil,
   mandatePauseUntil,
   mandateStatus,
+  mandateSupportsSpendLimit,
   validateRecipient,
 } from "@/lib/payflow-core";
 import { createdAtDate, paymentDateRange, paymentRow, sortPaymentsNewestFirst } from "@/lib/payments";

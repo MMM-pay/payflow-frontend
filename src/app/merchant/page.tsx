@@ -34,7 +34,8 @@ const DEFAULT_TOKENS: readonly ConfiguredToken[] = [
   },
 ];
 import { checkDiscountBps, checkDiscountCharges, discountedAmount, remainingDiscountCharges, supportsDiscounts } from "@/lib/discount";
-import { MAX_NAME_LEN, MAX_PAGE, mandatePauseUntil, mandateRefundableAmount, mandateSupportsRefund, nameByteLength, payflow, server, decodeContractError } from "@/lib/payflow";
+import { MAX_NAME_LEN, MAX_PAGE, decodeContractError, mandatePauseUntil, mandateRefundableAmount, mandateSupportsRefund, nameByteLength } from "@/lib/payflow-core";
+import { loadPayflow } from "@/lib/lazy-payflow";
 import { useWallet } from "@/lib/wallet";
 import { useStream } from "@/lib/stream";
 import{ feeSplit, fromStroops, type FeeSplit, type TokenMeta } from "@/lib/format";
@@ -971,6 +972,7 @@ export default function MerchantPage() {
       if (unpaidResponse && unpaidResponse.unpaid) {
         // Backend provided unpaid list, convert to UnpaidMandate format
         const now = Math.floor(Date.now() / 1000);
+        const { payflow } = await loadPayflow();
         const unpaidList: UnpaidMandate[] = await Promise.all(
           unpaidResponse.unpaid.map(async (mandate) => {
             try {
@@ -1337,6 +1339,7 @@ export default function MerchantPage() {
     const { activePlans } = getDeactivationImpact();
     if (activePlans === 0) return;
 
+    const { payflow } = await loadPayflow();
     // Get total plan count to determine how many pages to process.
     // The contract's deactivate_page works on the full plan index (active + inactive),
     // so we page through all plans. The contract handles idempotency for already-inactive plans.

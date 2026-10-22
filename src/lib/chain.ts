@@ -396,6 +396,7 @@ export async function chainUnpaidMandates(
   const mandates = await chainMandatesFor(source, merchant);
   const active = mandates.filter((m) => m.status === "Active" && m.next_charge <= now);
 
+  const { payflow } = await loadPayflow();
   const results = await Promise.allSettled(
     active.map(async (mandate): Promise<UnpaidMandate | null> => {
       try {

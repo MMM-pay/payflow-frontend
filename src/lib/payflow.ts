@@ -12,7 +12,7 @@ import {
 } from "@stellar/stellar-sdk";
 import { config } from "./config";
 import type { Mandate, Plan, SignXdr } from "./payflow-core";
-import { MIN_PERIOD_MESSAGE } from "./period";
+import { decodeContractError } from "./payflow-core";
 import {
   SIGNATURE_CANCELLED_MESSAGE,
   isSignatureRejection,
@@ -30,12 +30,14 @@ export { SIGNATURE_CANCELLED_MESSAGE, isSignatureRejection, translateSignatureEr
 export {
   MAX_NAME_LEN,
   MAX_PAGE,
+  decodeContractError,
   mandateIsPastDue,
   mandatePauseUntil,
   mandatePastDueUntil,
   mandateRefundableAmount,
   mandateStatus,
   mandateSupportsRefund,
+  mandateSupportsSpendLimit,
   nameByteLength,
   validateRecipient,
 } from "./payflow-core";
@@ -254,88 +256,6 @@ async function pollTransaction(
     result = await server.getTransaction(hash);
   }
   return result;
-}
-
-/** Maps the contracterror codes from payflow-contract onto readable text. */
-const ERRORS: Record<string, Record<number, string>> = {
-  plan_registry: {
-    3: "That plan does not exist.",
-    4: "You do not own that plan.",
-    5: "Amount must be greater than zero.",
-    // Shared with the publish form's pre-flight check: a merchant who is told
-    // "at least 60 seconds" by the form and sees the same words if they
-    // somehow reach the simulation is not being given two different rules.
-    6: MIN_PERIOD_MESSAGE,
-    7: "That plan name is too long.",
-  },
-  vault: {
-    3: "Amount must be greater than zero.",
-    4: "Not enough balance in your vault.",
-    5: "The vault is not wired to a subscription contract yet.",
-  },
-  subscription: {
-    3: "That subscription does not exist.",
-    4: "You are not the subscriber on this mandate.",
-    5: "This subscription is not active.",
-    6: "This subscription is not due yet.",
-    7: "That plan is no longer accepting subscribers.",
-    9: "This subscription has reached its charge limit.",
-    11: "Only the merchant on this subscription can end it.",
-  },
-};
-
-/**
- * Codes raised by a contract that the called method invokes. An error in a
- * cross-contract call reaches the caller with the callee's number, so
- * `charge` failing in the vault reports the vault's #4 (not enough balance),
- * which the subscription table would misread as "not the subscriber". These
- * entries cover the codes a method can only get from its callee.
- */
-const CALLEE_ERRORS: Record<string, Record<number, string>> = {
-  charge: {
-    4: "The subscriber's vault does not hold enough to cover this charge.",
-  },
-  subscribe: {
-    3: "That plan does not exist.",
-  },
-};
-
-const REGISTRY_METHODS = new Set(["create_plan", "set_plan_active", "get_plan"]);
-const VAULT_METHODS = new Set(["deposit", "withdraw", "debit", "balance"]);
-
-/**
- * Exported for tests: a wrong code-to-message mapping shows a user the wrong
- * reason their payment failed, which is a correctness bug rather than copy.
- */
-export function decodeContractError(error: unknown, method: string): string {
-  if (isSignatureRejection(error)) return SIGNATURE_CANCELLED_MESSAGE;
-  const text =
-    typeof error === "string" ? error : ((error as Error)?.message ?? String(error));
-  const match = /Error\(Contract, #(\d+)\)/.exec(text);
-  if (match?.[1]) {
-    const code = Number(match[1]);
-    const fromCallee = CALLEE_ERRORS[method]?.[code];
-    if (fromCallee) return fromCallee;
-    const scope = REGISTRY_METHODS.has(method)
-      ? "plan_registry"
-      : VAULT_METHODS.has(method)
-        ? "vault"
-        : "subscription";
-    const known = ERRORS[scope]?.[code];
-    if (known) return known;
-    return `${method} failed with contract error #${code}.`;
-  }
-  if (/account not found/i.test(text)) {
-    return "That account does not exist on testnet yet. Fund it with Friendbot first.";
-  }
-  // An empty or non-descriptive message must never reach the UI: pages render
-  // errors with `{error && ...}`, so returning "" would fail the operation
-  // silently and leave the user with no feedback at all.
-  const trimmed = text.trim();
-  if (!trimmed || trimmed === "[object Object]" || trimmed === "undefined") {
-    return `${method} failed for an unknown reason. Check your wallet and try again.`;
-  }
-  return trimmed;
 }
 
 // ---------------------------------------------------------------------------
