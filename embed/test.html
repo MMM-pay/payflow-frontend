@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Payflow Embed Test Page</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      margin: 0;
+      padding: 2rem;
+      background: #020617;
+      color: #f8fafc;
+      line-height: 1.5;
+    }
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1.5rem;
+      margin-top: 1.5rem;
+    }
+    .preview-box {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 0.75rem;
+      padding: 1.5rem;
+    }
+    .phone-preview {
+      max-width: 375px;
+      margin: 1.5rem 0;
+      border: 2px dashed #334155;
+      padding: 1rem;
+      border-radius: 0.75rem;
+    }
+    code {
+      background: #1e293b;
+      padding: 0.2rem 0.4rem;
+      border-radius: 0.25rem;
+      font-size: 0.875rem;
+    }
+    pre {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      padding: 1rem;
+      border-radius: 0.5rem;
+      overflow-x: auto;
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body onload="var s=document.createElement('scr'+'ipt');s.src='./payflow-embed.js';document.head.appendChild(s);">
+  <div class="container">
+    <h1>Payflow Embeddable Subscribe Button Demo</h1>
+    <p>
+      This plain HTML test page demonstrates Payflow subscription buttons and plan cards.
+      Clicks trigger a focused popup window targeting the Payflow subscribe flow.
+    </p>
+
+    <h2>1. Web Component (Custom Element)</h2>
+    <p>Standard <code>&lt;payflow-button&gt;</code> rendering full plan card and button:</p>
+    <div class="grid">
+      <div class="preview-box">
+        <h3>Full Plan Card (Dark)</h3>
+        <payflow-button
+          plan-id="1"
+          merchant="GAKOHW5FUKSF3SXQQWLD647RQJPOR5RZOS4ITSMWC5NPC67DEXXYU43H"
+          name="Pro Membership"
+          amount="25 XLM"
+          period="monthly"
+          theme="dark"
+          app-url="http://localhost:3000">
+        </payflow-button>
+      </div>
+
+      <div class="preview-box">
+        <h3>Button Only</h3>
+        <payflow-button
+          plan-id="2"
+          merchant="GAKOHW5FUKSF3SXQQWLD647RQJPOR5RZOS4ITSMWC5NPC67DEXXYU43H"
+          app-url="http://localhost:3000">
+        </payflow-button>
+      </div>
+    </div>
+
+    <h2>2. HTML Data Attributes</h2>
+    <p>Using <code>data-payflow-plan-id</code> on regular HTML elements:</p>
+    <div class="preview-box">
+      <div
+        data-payflow-plan-id="3"
+        data-merchant="GAKOHW5FUKSF3SXQQWLD647RQJPOR5RZOS4ITSMWC5NPC67DEXXYU43H"
+        data-name="Annual VIP Pass"
+        data-amount="250 XLM"
+        data-period="yearly"
+        data-app-url="http://localhost:3000">
+      </div>
+    </div>
+
+    <h2>3. Mobile View Simulation (375px)</h2>
+    <div class="phone-preview">
+      <p style="font-size: 0.8rem; color: #94a3b8; margin-top: 0;">375px viewport boundary</p>
+      <payflow-button
+        plan-id="1"
+        merchant="GAKOHW5FUKSF3SXQQWLD647RQJPOR5RZOS4ITSMWC5NPC67DEXXYU43H"
+        name="Mobile Friendly Plan"
+        amount="10 XLM"
+        period="month"
+        app-url="http://localhost:3000">
+      </payflow-button>
+    </div>
+
+    <h2>Integration Snippet for Merchants</h2>
+    <pre><code>&lt;!-- 1. Include the embed script (zero tracking, self-contained) --&gt;
+&amp;lt;script src="https://mmm-pay.github.io/payflow-frontend/embed/payflow-embed.js" defer&amp;gt;&amp;lt;/script&amp;gt;
+
+&lt;!-- 2. Place the button wherever you want on your website --&gt;
+&lt;payflow-button
+  plan-id="1"
+  merchant="YOUR_STELLAR_ADDRESS"
+  name="Monthly Subscription"
+  amount="15 XLM"
+  period="month"&gt;
+&lt;/payflow-button&gt;</code></pre>
+  </div>
+</body>
+</html>

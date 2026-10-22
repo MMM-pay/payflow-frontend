@@ -1,10 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { decodeContractError, nameByteLength } from "@/lib/payflow";
+import {
+  CALLEE_ERRORS,
+  CONTRACT_ERROR_CODES,
+  contractErrorMessage,
+  SIGNATURE_CANCELLED_MESSAGE,
+  decodeContractError,
+  isSignatureRejection,
+  nameByteLength,
+} from "@/lib/payflow";
 
 /**
- * Soroban surfaces failures as `Error(Contract, #N)`, where N is scoped to the
- * contract that raised it — so the same number means different things in
- * different contracts. Mapping a code to the wrong sentence tells a user the
+ * Soroban surfaces failures as `Error(Contract, #N)`, where the code is scoped to the
+ * contract that raised it. Mapping a code to the wrong sentence tells a user the
  * wrong reason their payment failed, so the scoping is tested per method.
  */
 
@@ -69,6 +76,12 @@ describe("decodeContractError", () => {
     );
   });
 
+  it("does not treat a network rejection as a cancelled signature", () => {
+    const network = new Error('deposit rejected: {"result":"tx_failed"}');
+    expect(isSignatureRejection(network)).toBe(false);
+    expect(decodeContractError(network, "deposit")).toBe(network.message);
+  });
+
   it("accepts a bare string as well as an Error", () => {
     expect(decodeContractError("Error(Contract, #6)", "charge")).toMatch(/not due yet/i);
   });
@@ -77,6 +90,55 @@ describe("decodeContractError", () => {
     for (const input of [undefined, null, "", {}]) {
       expect(decodeContractError(input, "charge").length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("wallet signature rejection", () => {
+  // Freighter (SEP-43) throws an Error whose message is the raw wallet text.
+  // https://docs.freighter.app/extension-freighter-api/signing
+  const freighter = new Error("The user rejected this request.");
+
+  // Albedo rejects with a plain object, not an Error.
+  // @albedo-link/intent `actionRejectedByUser`.
+  const albedo = {
+    message: "Action request was rejected by the user.",
+    code: -4,
+  };
+
+  it("maps Freighter's rejection text to the friendly message", () => {
+    expect(isSignatureRejection(freighter)).toBe(true);
+    expect(decodeContractError(freighter, "subscribe")).toBe(SIGNATURE_CANCELLED_MESSAGE);
+  });
+
+  it("maps Albedo's rejection object to the friendly message", () => {
+    expect(isSignatureRejection(albedo)).toBe(true);
+    expect(decodeContractError(albedo, "deposit")).toBe(SIGNATURE_CANCELLED_MESSAGE);
+  });
+
+  it("maps a nested Freighter error payload that only carries code -4", () => {
+    const nested = { error: { message: "Cancelled", code: -4 } };
+    expect(isSignatureRejection(nested)).toBe(true);
+    expect(decodeContractError(nested, "charge")).toBe(SIGNATURE_CANCELLED_MESSAGE);
+  });
+
+  it("maps an older Freighter decline string", () => {
+    expect(isSignatureRejection("User declined access")).toBe(true);
+    expect(decodeContractError("User declined access", "withdraw")).toBe(
+      SIGNATURE_CANCELLED_MESSAGE,
+    );
+  });
+
+  it("does not treat the friendly message itself as another rejection", () => {
+    expect(isSignatureRejection(new Error(SIGNATURE_CANCELLED_MESSAGE))).toBe(false);
+  });
+
+  it("leaves a wallet failure that is not a cancellation alone", () => {
+    const internal = Object.assign(
+      new Error("The wallet encountered an internal error. Please try again."),
+      { code: -1 },
+    );
+    expect(isSignatureRejection(internal)).toBe(false);
+    expect(decodeContractError(internal, "withdraw")).toBe(internal.message);
   });
 });
 
@@ -92,7 +154,7 @@ describe("plan name validation", () => {
 });
 
 describe("every known contract error code", () => {
-  // Mirrors ERRORS and CALLEE_ERRORS in src/lib/payflow.ts. A code that is
+  // Mirrors CONTRACT_ERRORS and CALLEE_ERRORS in src/lib/payflow.ts. A code that is
   // added to the contract but missed here reaches the UI as
   // "Error(Contract, #N)", so keep this table in sync with that map.
   const cases: Array<[method: string, code: number, message: string]> = [
@@ -122,6 +184,31 @@ describe("every known contract error code", () => {
   it.each(cases)("%s maps code #%i to a readable message", (method, code, message) => {
     expect(decodeContractError(err(code), method)).toBe(message);
   });
+
+  // The table above is only as good as the map it mirrors. This checks the
+  // map itself, so a new contract error that is added to CONTRACT_ERRORS without
+  // a sentence (or with a generic "\"Error(Contract, #N)\"" string) fails the test.
+  const genericMessage = /Error\(Contract, #\d+\)/i;
+
+  it("gives every contract error a non-generic sentence", () => {
+    for (const [contract, codes] of Object.entries(CONTRACT_ERROR_CODES)) {
+      for (const code of codes) {
+        const message = contractErrorMessage(contract, code);
+        expect(message, `${contract} #${code} has no sentence`).toBeTypeOf("string");
+        expect(message!.trim().length, `${contract} #${code} is empty`).toBeGreaterThan(0);
+        expect(message, `${contract} #${code} is generic`).not.toMatch(genericMessage);
+      }
+    }
+  });
+
+  it("gives every callee error a non-generic sentence", () => {
+    for (const [method, codes] of Object.entries(CALLEE_ERRORS)) {
+      for (const [code, message] of Object.entries(codes)) {
+        expect(message.trim().length, `${method} #${code} is empty`).toBeGreaterThan(0);
+        expect(message, `${method} #${code} is generic`).not.toMatch(genericMessage);
+      }
+    }
+  });
 });
 
 describe("nameByteLength", () => {
@@ -137,6 +224,6 @@ describe("nameByteLength", () => {
   });
 
   it("treats an emoji as more than one byte", () => {
-    expect(nameByteLength("🚀")).toBeGreaterThan(1);
+    expect(nameByteLength("😀")).toBeGreaterThan(1);
   });
 });

@@ -1,5 +1,7 @@
 "use client";
 
+import { useI18n } from "@/i18n/provider";
+
 import { useWallet } from "@/lib/wallet";
 import { config } from "@/lib/config";
 import { fromStroops, shortAddress, spendableBalance } from "@/lib/format";
@@ -9,8 +11,8 @@ import { fromStroops, shortAddress, spendableBalance } from "@/lib/format";
  * way out of the dead end a brand new testnet account is in.
  */
 export function WalletButton() {
-  const { address, connecting, account, funding, connect, disconnect, fund } =
-    useWallet();
+  const { t: tr } = useI18n();
+  const { address, connecting, connect, disconnect } = useWallet();
 
   if (!address) {
     return (
@@ -35,7 +37,7 @@ export function WalletButton() {
         type="button"
         onClick={() => void disconnect()}
         className="btn-ghost mono"
-        title={`${address} — click to disconnect`}
+        title={tr("{0} — click to disconnect", { "0": address })}
       >
         <span className="h-2 w-2 rounded-full bg-accent" aria-hidden="true" />
         {shortAddress(address, 5)}
@@ -113,9 +115,7 @@ function BalanceLabel({
       aria-live="polite"
       title={`${fromStroops(balance)} XLM held, ${fromStroops(spendable)} XLM spendable after the ${subentryCount} ledger ${subentryCount === 1 ? "entry" : "entries"} this account keeps`}
     >
-      {/* Two places in the header is a summary, not an invoice; the full
-          precision is in the tooltip and on the account page. */}
-      {fromStroops(spendable, 2)} XLM
-    </span>
+      {connecting ?tr("Connecting…") :tr("Connect wallet")}
+    </button>
   );
 }

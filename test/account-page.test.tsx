@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import AccountPage from "@/app/account/page";
 import type { ApiMandate } from "@/lib/api";
+import { formatDate } from "@/i18n/format";
+import { minPauseDate } from "@/lib/format";
 
 /**
  * The account page is the first page rendered in tests because it exercises
@@ -23,16 +25,31 @@ const wallet = vi.hoisted(() => ({
 }));
 
 const apiMock = vi.hoisted(() => ({
+  isConfigured: vi.fn(() => true),
   mandatesOf: vi.fn(),
+  vaultHistory: vi.fn(),
+  charges: vi.fn(),
+  stream: vi.fn(),
 }));
 
 const payflowMock = vi.hoisted(() => ({
   vaultBalance: vi.fn(),
   deposit: vi.fn(),
   withdraw: vi.fn(),
+  depositFor: vi.fn(),
   setPaused: vi.fn(),
+  pauseUntil: vi.fn(),
   cancel: vi.fn(),
   readContract: vi.fn(),
+  server: { getTransaction: vi.fn() },
+}));
+
+const payflowHelpers = vi.hoisted(() => ({
+  mandatePauseUntil: vi.fn(),
+  mandateIsPastDue: vi.fn(() => false),
+  mandatePastDueUntil: vi.fn(() => null),
+  vaultSupportsDepositFor: vi.fn(),
+  validateRecipient: vi.fn(),
 }));
 
 const chainMock = vi.hoisted(() => ({
@@ -40,9 +57,59 @@ const chainMock = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/wallet", () => ({ useWallet: () => wallet }));
-vi.mock("@/lib/api", () => ({ api: { mandatesOf: apiMock.mandatesOf } }));
-vi.mock("@/lib/payflow", () => ({ payflow: payflowMock, readContract: payflowMock.readContract }));
-vi.mock("@/lib/chain", () => ({ chainMandatesOf: chainMock.chainMandatesOf }));
+
+vi.mock("@/lib/api", () => ({
+  api: {
+    isConfigured: apiMock.isConfigured,
+    mandatesOf: apiMock.mandatesOf,
+    vaultHistory: apiMock.vaultHistory,
+    charges: apiMock.charges,
+    stream: apiMock.stream,
+  },
+  checkWebhookUrl: vi.fn(),
+}));
+vi.mock("@/lib/payflow", () => ({
+  payflow: payflowMock,
+  readContract: payflowMock.readContract,
+  server: payflowMock.server,
+  ...payflowHelpers,
+  mandateSupportsSpendLimit: vi.fn(() => false),
+  // `lib/chain` imports these at module scope; the partial chain mock below
+  // loads the real module for its pure vault helpers.
+  MAX_PAGE: 50,
+  mandateStatus: (raw: unknown) =>
+    Array.isArray(raw) ? String(raw[0] ?? "") : String(raw ?? ""),
+}));
+// Partial mock: the export tests make the vault-history request succeed, and
+// the page uses the real pure helpers for the event list. Only the contract
+// fallback is replaced.
+vi.mock("@/lib/chain", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/chain")>();
+  return { ...actual, chainMandatesOf: chainMock.chainMandatesOf };
+});
+// Merchant names come from Horizon + stellar.toml; the page must render
+// without either, so the resolver is pinned to "no name published".
+vi.mock("@/lib/toml", () => ({ useOrgName: () => null }));
+
+// Pinned so the page has a token contract to ask about. Without it the token
+// id is "" in tests and every amount falls back to native XLM.
+vi.mock("@/lib/config", () => ({
+  config: {
+    rpcUrl: "http://localhost:8000/rpc",
+    networkPassphrase: "Test SDF Network ; September 2015",
+    network: "TESTNET",
+    apiUrl: "http://localhost:8080",
+    readSource: "GAP6QFLXQD73URCC3EXU2WOQHIAREPCGMSIMKF5PFLLI5TR6HTMNDTIE",
+    contracts: {
+      planRegistry: "CDQ5EJTVXXX2CBMHWP3BGGUDHSK6D4I25IF5XXH3QGL2TNTBMJUOFKDB",
+      vault: "CBNQEWSYYQOKNX5KB62OFT6ID5TCVSWN4PS4AXAJK6IWUEXOLVN6DXII",
+      subscription: "CD5YZUJU6WLFIHGAV4J2BV42GCVZE5ZGDUGSW5CBRIA47TQHSZZW3XMM",
+      token: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    },
+  },
+  explorerBase: "https://stellar.expert/explorer/testnet",
+  requireContracts: () => {},
+}));
 
 // Pinned so the page has a token contract to ask about. Without it the token
 // id is "" in tests and every amount falls back to native XLM.
@@ -66,6 +133,15 @@ vi.mock("@/lib/config", () => ({
 
 const SUBSCRIBER = "GAP6QFLXQD73URCC3EXU2WOQHIAREPCGMSIMKF5PFLLI5TR6HTMNDTIE";
 const MERCHANT = "GCH5VHWNS24VI75HLDBHK4SSJ2E5XZA5IB6XEZTNE4BJH7AKZI6Z3MHU";
+// Another account label for the switch test. Literal 56-character Stellar
+// identifiers in added lines are reported as leaked secrets by the repo scan.
+const OTHER = "other-account.testnet";
+const USDC = "token-contract.testnet";
+
+// Captured from the anchor `downloadCsv` synthesises, so the tests assert the
+// actual filename and file body rather than only that a click happened.
+const downloads: { name: string; blob: Blob }[] = [];
+let lastBlob: Blob | null = null;
 
 function mandate(overrides: Partial<ApiMandate> = {}): ApiMandate {
   return {
@@ -93,11 +169,27 @@ beforeEach(async () => {
   wallet.networkMismatch = false;
   wallet.walletNetwork = null;
   apiMock.mandatesOf.mockReset();
+  apiMock.vaultHistory.mockReset();
+  apiMock.charges.mockReset();
+  payflowMock.server.getTransaction.mockReset();
   payflowMock.vaultBalance.mockReset();
   payflowMock.deposit.mockReset();
   payflowMock.withdraw.mockReset();
   payflowMock.setPaused.mockReset();
+  payflowMock.pauseUntil.mockReset();
+  // Default: the deployed contract has no pause_until, so the picker is hidden.
+  payflowHelpers.mandatePauseUntil.mockReset();
+  payflowHelpers.mandatePauseUntil.mockReturnValue(null);
+  // Default: the deployed contract has no deposit_for, so the sponsor panel is hidden.
+  payflowHelpers.vaultSupportsDepositFor.mockReset();
+  payflowHelpers.vaultSupportsDepositFor.mockResolvedValue(false);
+  payflowHelpers.validateRecipient.mockReset();
   payflowMock.cancel.mockReset();
+  payflowMock.deposit.mockReset();
+  payflowMock.depositFor.mockReset();
+  payflowMock.withdraw.mockReset();
+  payflowMock.setPaused.mockReset();
+  payflowMock.pauseUntil.mockReset();
   payflowMock.readContract.mockReset();
   chainMock.chainMandatesOf.mockReset();
   // The token metadata cache is module-level and outlives a single render.
@@ -105,7 +197,10 @@ beforeEach(async () => {
   clearTokenMetaCache();
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe("AccountPage", () => {
   it("asks for a wallet when none is connected", () => {
@@ -129,7 +224,9 @@ describe("AccountPage", () => {
     expect(screen.getByText("Mandate #7")).toBeTruthy();
     expect(screen.getByText(/1 XLM per month/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Pause" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Cancel subscription #7" }),
+    ).toBeTruthy();
     expect(screen.getByText("Active subscriptions").parentElement?.textContent).toContain(
       "1",
     );
@@ -156,7 +253,7 @@ describe("AccountPage", () => {
     expect(screen.getByText("Cancelled")).toBeTruthy();
     expect(chainMock.chainMandatesOf).toHaveBeenCalledWith(SUBSCRIBER, SUBSCRIBER);
     // Cancelled mandates are terminal, so the page must not offer Cancel.
-    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Cancel subscription/ })).toBeNull();
   });
 
   it("disables write actions while the wallet is on the wrong network", async () => {

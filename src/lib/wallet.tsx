@@ -13,20 +13,62 @@ import {
 import type { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit";
 import { fundWithFriendbot, readNativeAccount, type NativeAccount } from "./account";
 import { config } from "./config";
+import { createWalletModules } from "./wallet-modules";
 import type { SignXdr } from "./payflow";
+import { translateSignatureError } from "./signature-error";
 
-const STORAGE_KEY = "payflow.wallet";
+export const STORAGE_KEY = "payflow.wallet";
+export const ACCOUNT_CHANGED_ERROR =
+  "Wallet account changed. Please retry the transaction with the new account.";
 
-/** What the app knows about the connected account's native funds. */
-export type AccountState =
-  | { state: "loading" }
-  | { state: "loaded"; account: NativeAccount }
-  /** The account does not exist on the network yet; it needs funding. */
-  | { state: "missing" }
-  /** Horizon could not be reached or answered unusably. */
-  | { state: "error"; message: string };
+export interface StoredSession {
+  walletId: string;
+  address: string;
+}
 
-interface WalletState {
+export function parseStoredSession(raw: string | null): StoredSession | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<StoredSession>;
+    if (typeof parsed?.walletId === "string" && typeof parsed?.address === "string") {
+      return { walletId: parsed.walletId, address: parsed.address };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function serializeSession(walletId: string, address: string): string {
+  return JSON.stringify({ walletId, address });
+}
+
+export function updateStoredSessionAddress(
+  raw: string | null,
+  newAddress: string,
+): string | null {
+  const session = parseStoredSession(raw);
+  if (!session) return null;
+  return serializeSession(session.walletId, newAddress);
+}
+
+export function checkNetworkMismatch(
+  walletNetwork: string | null,
+  targetPassphrase = config.networkPassphrase,
+): boolean {
+  if (!walletNetwork) return false;
+  return walletNetwork !== targetPassphrase;
+}
+
+export function shouldUpdateAddress(
+  currentAddress: string | null,
+  detectedAddress: string | null | undefined,
+): boolean {
+  if (!currentAddress || !detectedAddress) return false;
+  return currentAddress !== detectedAddress;
+}
+
+export interface WalletState {
   address: string | null;
   connecting: boolean;
   error: string | null;
@@ -54,22 +96,27 @@ const WalletContext = createContext<WalletState | null>(null);
  */
 let kitPromise: Promise<StellarWalletsKit> | null = null;
 
-async function getKit(): Promise<StellarWalletsKit> {
+export async function getKit(): Promise<StellarWalletsKit> {
   if (!kitPromise) {
     kitPromise = (async () => {
       const mod = await import("@creit.tech/stellar-wallets-kit");
-      return new mod.StellarWalletsKit({
-        network: config.networkPassphrase as unknown as (typeof mod.WalletNetwork)[keyof typeof mod.WalletNetwork],
-        modules: mod.allowAllModules(),
+      const network = config.networkPassphrase as (typeof mod.WalletNetwork)[keyof typeof mod.WalletNetwork];
+      const modules = await createWalletModules(mod.allowAllModules, {
+        projectId: config.walletConnectProjectId,
+        network,
+        appUrl: `${window.location.origin}${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/`,
       });
+      return new mod.StellarWalletsKit({ network, modules });
     })();
   }
   return kitPromise;
 }
 
-function checkNetworkMismatch(walletNetwork: string | null): boolean {
-  if (!walletNetwork) return false;
-  return walletNetwork !== config.networkPassphrase;
+/**
+ * Injects a kit instance for testing.
+ */
+export function setKitPromiseForTesting(p: Promise<StellarWalletsKit> | null) {
+  kitPromise = p;
 }
 
 export function WalletProvider({ children }: { children: ReactNode }) {
@@ -80,85 +127,122 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [account, setAccount] = useState<AccountState>({ state: "loading" });
   const [funding, setFunding] = useState(false);
 
+  // Keep a ref of the current address to avoid stale closures in event listeners
+  // and async callbacks. Every setter below already writes the ref alongside the
+  // state, so this effect only keeps them in step for addresses that reach the
+  // state some other way. Refs are not written during render (react-hooks/refs).
+  const addressRef = useRef<string | null>(address);
+  useEffect(() => {
+    addressRef.current = address;
+  }, [address]);
+
+  // Track in-flight checks to prevent duplicate concurrent queries.
+  const syncingRef = useRef(false);
+
   const networkMismatch = useMemo(
     () => checkNetworkMismatch(walletNetwork),
     [walletNetwork],
   );
 
-  /**
-   * Counts in-flight reads. A wallet can switch accounts mid-load, so a slow
-   * read for the previous address must not overwrite the current one's state.
-   */
-  const readId = useRef(0);
-
-  const loadAccount = useCallback(async (target: string | null) => {
-    const id = (readId.current += 1);
-    if (!target) {
-      setAccount({ state: "loading" });
-      return;
+  const applyAccountChange = useCallback((newAddress: string) => {
+    addressRef.current = newAddress;
+    setAddress(newAddress);
+    const stored = window.localStorage.getItem(STORAGE_KEY);
+    const updated = updateStoredSessionAddress(stored, newAddress);
+    if (updated) {
+      window.localStorage.setItem(STORAGE_KEY, updated);
     }
-    setAccount({ state: "loading" });
-    const result = await readNativeAccount(target);
-    if (id !== readId.current) return; // superseded by a newer read
-    setAccount(
-      result.state === "found"
-        ? { state: "loaded", account: result.account }
-        : result.state === "missing"
-          ? { state: "missing" }
-          : { state: "error", message: result.message },
-    );
+    // Re-check network mismatch for the new account
+    void getKit().then(async (kit) => {
+      try {
+        const { networkPassphrase } = await kit.getNetwork();
+        setWalletNetwork(networkPassphrase);
+      } catch {
+        setWalletNetwork(null);
+      }
+    });
   }, []);
 
-  useEffect(() => {
-    void loadAccount(address);
-  }, [address, loadAccount]);
-
-  /** Re-read the native balance. Called after any transaction changes it. */
-  const refreshAccount = useCallback(
-    () => loadAccount(address),
-    [address, loadAccount],
-  );
-
-  const fund = useCallback(async () => {
-    if (!address) return;
-    setFunding(true);
+  const checkAccount = useCallback(async () => {
+    if (!addressRef.current || syncingRef.current) return;
+    syncingRef.current = true;
     try {
-      await fundWithFriendbot(address);
-      // Friendbot creates the account, so the balance must be re-read: the
-      // first read may have raced ahead of the new ledger entry.
-      await refreshAccount();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not fund this account.");
+      const kit = await getKit();
+      const { address: detected } = await kit.getAddress();
+      if (shouldUpdateAddress(addressRef.current, detected)) {
+        applyAccountChange(detected);
+      }
+    } catch {
+      // Wallet extension may be closed, locked, or busy; ignore background errors
     } finally {
-      setFunding(false);
+      syncingRef.current = false;
     }
-  }, [address, refreshAccount]);
+  }, [applyAccountChange]);
 
   // Restore the previous session without prompting the user again.
   useEffect(() => {
     const stored = window.localStorage.getItem(STORAGE_KEY);
     if (!stored) return;
-    try {
-      const { walletId, address: saved } = JSON.parse(stored) as {
-        walletId: string;
-        address: string;
-      };
-      void getKit().then(async (kit) => {
-        kit.setWallet(walletId);
-        setAddress(saved);
-        // Restore the network mismatch state for the restored session
-        try {
-          const { networkPassphrase } = await kit.getNetwork();
-          setWalletNetwork(networkPassphrase);
-        } catch {
-          // Wallet may not support getNetwork; treat as no mismatch
-          setWalletNetwork(null);
-        }
-      });
-    } catch {
+    const session = parseStoredSession(stored);
+    if (!session) {
       window.localStorage.removeItem(STORAGE_KEY);
+      return;
     }
+    const { walletId, address: saved } = session;
+    void getKit().then(async (kit) => {
+      kit.setWallet(walletId);
+      let activeAddress = saved;
+      try {
+        const { address: detected } = await kit.getAddress();
+        if (detected) {
+          activeAddress = detected;
+          if (detected !== saved) {
+            window.localStorage.setItem(
+              STORAGE_KEY,
+              serializeSession(walletId, detected),
+            );
+          }
+        }
+      } catch {
+        // Wallet may be locked or not ready; keep saved
+      }
+      addressRef.current = activeAddress;
+      setAddress(activeAddress);
+      // Restore the network mismatch state for the restored session
+      try {
+        const { networkPassphrase } = await kit.getNetwork();
+        setWalletNetwork(networkPassphrase);
+      } catch {
+        // Wallet may not support getNetwork; treat as no mismatch
+        setWalletNetwork(null);
+      }
+    });
   }, []);
+
+  // Re-read address on window focus or document visibility change. If the user
+  // switched accounts in the wallet extension popup and returned to this tab,
+  // update state and storage.
+  useEffect(() => {
+    if (!address) return;
+
+    function onFocus() {
+      void checkAccount();
+    }
+
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        void checkAccount();
+      }
+    }
+
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [address, checkAccount]);
 
   const connect = useCallback(async () => {
     setConnecting(true);
@@ -170,6 +254,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
           try {
             kit.setWallet(option.id);
             const { address: selected } = await kit.getAddress();
+            addressRef.current = selected;
             setAddress(selected);
             // Detect network mismatch after connection
             try {
@@ -180,7 +265,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
             }
             window.localStorage.setItem(
               STORAGE_KEY,
-              JSON.stringify({ walletId: option.id, address: selected }),
+              serializeSession(option.id, selected),
             );
           } catch (err) {
             setError(err instanceof Error ? err.message : "Could not read address");
@@ -205,6 +290,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       // Some wallets have no disconnect concept; clearing local state is enough.
     }
     window.localStorage.removeItem(STORAGE_KEY);
+    addressRef.current = null;
     setAddress(null);
     setWalletNetwork(null);
   }, []);
@@ -214,13 +300,37 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       if (!address) throw new Error("Connect a wallet first.");
       if (networkMismatch) throw new Error("Switch your wallet to the correct network first.");
       const kit = await getKit();
-      const { signedTxXdr } = await kit.signTransaction(xdrString, {
-        networkPassphrase: config.networkPassphrase,
-        address,
-      });
-      return signedTxXdr;
+
+      // Re-read the address before signing. If the user switched accounts
+      // in the wallet extension popup, the prepared transaction was built
+      // for the previous address. Signing it would fail verification or act
+      // on the wrong account.
+      let currentAddress: string | null = null;
+      try {
+        const res = await kit.getAddress();
+        currentAddress = res.address;
+      } catch (err) {
+        throw new Error(
+          err instanceof Error ? err.message : "Could not read address from wallet.",
+        );
+      }
+
+      if (shouldUpdateAddress(address, currentAddress)) {
+        applyAccountChange(currentAddress!);
+        throw new Error(ACCOUNT_CHANGED_ERROR);
+      }
+
+      try {
+        const { signedTxXdr } = await kit.signTransaction(xdrString, {
+          networkPassphrase: config.networkPassphrase,
+          address,
+        });
+        return signedTxXdr;
+      } catch (err) {
+        translateSignatureError(err);
+      }
     },
-    [address, networkMismatch],
+    [address, networkMismatch, applyAccountChange],
   );
 
   const value = useMemo<WalletState>(
