@@ -203,6 +203,31 @@ export async function chainMandatesFor(
   return mandates.map(mandateToApi).sort((a, b) => b.id - a.id);
 }
 
+/**
+ * Read a single mandate from contract state.
+ */
+export async function chainMandate(
+  source: string,
+  mandateId: number,
+): Promise<ApiMandate | null> {
+  try {
+    const raw = await payflow.getMandate(source, mandateId);
+    if (!raw) return null;
+    return mandateToApi(raw);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reads protocol counters directly from contract state when the indexer is offline.
+ * Only returns what contract state can determine (plans count from next_plan_id).
+ */
+export async function chainProtocolStats(source: string): Promise<{ plans: number }> {
+  const next = Number(await payflow.nextPlanId(source));
+  return { plans: Math.max(0, next - 1) };
+}
+
 /** A merchant can end a mandate that could still be charged. */
 export function endable(m: Pick<ApiMandate, "status">): boolean {
   return m.status === "Active" || m.status === "Paused";
@@ -329,6 +354,62 @@ export function vaultEventTone(event: ApiVaultEvent): "ok" | "error" {
 /** Return a new array of vault events sorted newest first by ledger. */
 export function sortVaultEventsNewestFirst(events: ApiVaultEvent[]): ApiVaultEvent[] {
   return [...events].sort((a, b) => b.ledger - a.ledger);
+}
+
+/**
+ * An unpaid mandate: due but the subscriber's vault cannot cover the charge.
+ *
+ * All amounts stay in smallest units (stroops); time is Unix seconds.
+ */
+export interface UnpaidMandate {
+  mandate: ApiMandate;
+  /** How much the vault falls short, in smallest units. */
+  shortfall: bigint;
+  /** How long the charge has been overdue, in seconds. */
+  overdueDuration: number;
+}
+
+/**
+ * Contract-only fallback for unpaid mandates.
+ *
+ * Reads active mandates for the merchant and checks each subscriber's vault
+ * balance. Returns mandates where the vault cannot cover the next charge and
+ * that charge is already due.
+ *
+ * Sorted by most overdue first: a merchant addresses the oldest shortfalls
+ * before newer ones, so the list reflects urgency rather than mandate id.
+ */
+export async function chainUnpaidMandates(
+  source: string,
+  merchant: string,
+  now: number = Math.floor(Date.now() / 1000),
+): Promise<UnpaidMandate[]> {
+  const mandates = await chainMandatesFor(source, merchant);
+  const active = mandates.filter((m) => m.status === "Active" && m.next_charge <= now);
+
+  const results = await Promise.allSettled(
+    active.map(async (mandate): Promise<UnpaidMandate | null> => {
+      try {
+        const amount = BigInt(mandate.amount);
+        const balance = await payflow.vaultBalance(source, mandate.subscriber, mandate.token ?? source);
+        const shortfall = chargeShortfall(balance, amount);
+        if (shortfall === null || shortfall === 0n) return null;
+        return {
+          mandate,
+          shortfall,
+          overdueDuration: now - mandate.next_charge,
+        };
+      } catch {
+        return null;
+      }
+    }),
+  );
+
+  const unpaid = results
+    .flatMap((r) => (r.status === "fulfilled" && r.value !== null ? [r.value] : []))
+    .sort((a, b) => b.overdueDuration - a.overdueDuration);
+
+  return unpaid;
 }
 
 

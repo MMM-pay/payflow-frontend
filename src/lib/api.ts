@@ -1,4 +1,5 @@
 import { config } from "./config";
+import { parseWebhookDeliveries } from "./webhook-deliveries";
 
 export interface ApiPlan {
   id: number;
@@ -103,6 +104,30 @@ export interface ApiCharge {
   ledger: number;
 }
 
+/**
+ * A charge attempt that failed, proposed by payflow-backend#144.
+ *
+ * The backend records every attempt to settle a charge, including failures.
+ * This lets merchants understand why charges are failing and diagnose
+ * subscriber issues (insufficient balance, paused mandate, etc.).
+ */
+export interface ApiChargeAttempt {
+  /** Unique identifier for this attempt. */
+  id: number;
+  /** The mandate the charge was attempted against. */
+  mandate_id: number;
+  /** Unix timestamp when the charge was attempted. */
+  attempted_at: number;
+  /** Result: "success" or "failed". */
+  result: "success" | "failed";
+  /** Contract error code if the attempt failed, null otherwise. */
+  error_code: number | null;
+  /** Plain-language error message if the attempt failed, null otherwise. */
+  error_message: string | null;
+  /** Transaction hash if the charge succeeded, null otherwise. */
+  tx_hash: string | null;
+}
+
 export interface ApiWebhook {
   id: string;
   url: string;
@@ -196,6 +221,72 @@ export interface RecentCharge {
   timestamp: number;
   plan_id: number;
 }
+
+/**
+ * Events emitted by the backend SSE stream (payflow-backend#19).
+ *
+ * The stream is scoped to a single wallet address (subscriber or merchant).
+ * Each event carries the mandate id it pertains to so the UI can update
+ * the affected row in place without a full reload.
+ */
+export type StreamEventType =
+  | "charge"
+  | "mandate_status"
+  | "mandate_pause"
+  | "mandate_discount"
+  | "mandate_end";
+
+export interface StreamEventBase {
+  type: StreamEventType;
+  mandate_id: number;
+  /** Unix seconds when the event was indexed. */
+  timestamp: number;
+}
+
+export interface StreamChargeEvent extends StreamEventBase {
+  type: "charge";
+  /** The charge that was settled. */
+  charge: ApiCharge;
+}
+
+export interface StreamMandateStatusEvent extends StreamEventBase {
+  type: "mandate_status";
+  /** The new status: "Active", "Paused", "Cancelled", "Completed". */
+  status: string;
+  /** Who initiated the status change: "subscriber" or "merchant". */
+  by: "subscriber" | "merchant";
+}
+
+export interface StreamMandatePauseEvent extends StreamEventBase {
+  type: "mandate_pause";
+  /** Unix seconds when the pause ends, or null for an indefinite pause. */
+  pause_until: number | null;
+  /** Who initiated the pause: "subscriber" or "merchant". */
+  by: "subscriber" | "merchant";
+}
+
+export interface StreamMandateDiscountEvent extends StreamEventBase {
+  type: "mandate_discount";
+  /** New discount rate in basis points. */
+  discount_bps: number;
+  /** How many charges the discount covers. */
+  discount_charges: number;
+  /** How many discounted charges have been settled so far. */
+  discount_charges_made: number;
+}
+
+export interface StreamMandateEndEvent extends StreamEventBase {
+  type: "mandate_end";
+  /** Who ended the mandate: "subscriber" or "merchant". */
+  by: "subscriber" | "merchant";
+}
+
+export type StreamEvent =
+  | StreamChargeEvent
+  | StreamMandateStatusEvent
+  | StreamMandatePauseEvent
+  | StreamMandateDiscountEvent
+  | StreamMandateEndEvent;
 
 /**
  * The indexer is a convenience, not a source of truth. Every call here is
@@ -306,6 +397,29 @@ export const api = {
     get<{ webhooks: ApiWebhook[] }>(`/api/merchants/${merchant}/webhooks`).then(
       (body) => body?.webhooks ?? null,
     ),
+  /** Proposed authenticated read for payflow-backend#140. Never cache proofs. */
+  webhookDeliveries: async (
+    id: string,
+    proof: { merchant: string; timestamp: number; signature: string },
+    signal?: AbortSignal,
+  ) => {
+    if (!api.isConfigured()) return null;
+    try {
+      const response = await fetch(`${config.apiUrl}/api/webhooks/${encodeURIComponent(id)}/deliveries`, {
+        cache: "no-store",
+        redirect: "error",
+        signal,
+        headers: {
+          "X-Payflow-Merchant": proof.merchant,
+          "X-Payflow-Timestamp": String(proof.timestamp),
+          "X-Payflow-Signature": proof.signature,
+        },
+      });
+      return response.ok ? parseWebhookDeliveries(await response.json()) : null;
+    } catch {
+      return null;
+    }
+  },
   /**
    * Proposed by payflow-backend#5. Returns the created webhook including the
    * signing secret, which the merchant must copy immediately — it is shown
@@ -318,6 +432,16 @@ export const api = {
   testWebhook: (merchant: string, id: string) =>
     post<{ ok: boolean }>(`/api/merchants/${merchant}/webhooks/${id}/test`, {}),
   /**
+   * Rotate a webhook's signing secret, proposed by payflow-backend#139.
+   *
+   * Returns the new secret, which the merchant must copy immediately — it is
+   * shown once and never returned again. The old secret remains valid for a
+   * brief overlap period so the merchant can update their system without
+   * missing events.
+   */
+  rotateWebhookSecret: (merchant: string, id: string) =>
+    post<{ secret: string }>(`/api/merchants/${merchant}/webhooks/${id}/rotate-secret`, {}),
+  /**
    * Recent charges across the protocol, proposed by payflow-backend#30.
    *
    * Returns null when the backend is unreachable or does not yet serve this
@@ -325,4 +449,67 @@ export const api = {
    */
   recentCharges: (limit = 10) =>
     get<{ charges: RecentCharge[] }>(`/api/recent?limit=${limit}`),
+  /**
+   * Charge attempts for a mandate, proposed by payflow-backend#144.
+   *
+   * Returns null when the backend is unreachable or does not yet serve this
+   * endpoint. Contract-only mode cannot reconstruct attempt history — only
+   * successful charges are recorded on-chain.
+   */
+  chargeAttempts: (mandateId: number) =>
+    get<{ attempts: ApiChargeAttempt[] }>(`/api/mandates/${mandateId}/attempts`).then(
+      (body) => body?.attempts ?? null,
+    ),
+
+  /**
+   * Unpaid subscribers for a merchant, proposed by payflow-backend#146.
+   *
+   * Returns active mandates where the subscriber's vault balance cannot cover
+   * the next charge. Returns null when the backend is unreachable or does not
+   * yet serve this endpoint — the UI falls back to checking vault balances
+   * from contract state.
+   */
+  unpaidMandates: (merchant: string) =>
+    get<{ unpaid: ApiMandate[] }>(`/api/merchants/${merchant}/unpaid`),
+
+  /**
+   * Cohort retention analysis by signup month, proposed by payflow-backend#142.
+   *
+   * Returns a grid showing what percentage of each month's signups remained
+   * subscribed in subsequent months. The endpoint is optional until deployed.
+   * An empty API URL must not turn this into a same-origin request or a
+   * contract-only approximation.
+   */
+  merchantCohortRetention: (address: string) => {
+    if (!api.isConfigured()) return Promise.resolve(null);
+    return get<unknown>(`/api/merchants/${address}/cohort-retention?bucket=month`);
+  },
+
+  /**
+   * Open an SSE stream for live updates scoped to the given address.
+   *
+   * The backend must be configured (NEXT_PUBLIC_API_URL set) and the deployed
+   * backend must serve the `/api/stream` endpoint (payflow-backend#19).
+   * Returns null when either condition is not met — the caller must not
+   * attempt to open a stream in contract-only mode.
+   *
+   * The returned EventSource emits `message` events with JSON bodies matching
+   * the `StreamEvent` union. The caller is responsible for closing the stream
+   * when the component unmounts or the tab is hidden.
+   */
+  stream: (
+    address: string,
+    role: "subscriber" | "merchant",
+  ): EventSource | null => {
+    if (!api.isConfigured()) return null;
+    const params = new URLSearchParams();
+    params.set(role, address);
+    const url = `${config.apiUrl}/api/stream?${params.toString()}`;
+    try {
+      return new EventSource(url);
+    } catch {
+      // EventSource not supported (e.g., non-browser test env)
+      return null;
+    }
+  },
 };
