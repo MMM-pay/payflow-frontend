@@ -3,6 +3,7 @@
 import { useI18n } from "@/i18n/provider";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { LanguagePicker } from "@/i18n/LanguagePicker";
 
 import { useRouter } from "next/navigation";
@@ -226,6 +227,10 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
                 )}
               </button>
             </div>
+          </div>
+
+          <div className="mt-3 md:hidden">
+            <Search onNavigate={(href) => router.push(href)} />
           </div>
 
           <div className="mt-3 flex justify-end"><LanguagePicker /></div>

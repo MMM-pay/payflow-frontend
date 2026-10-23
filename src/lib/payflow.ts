@@ -239,33 +239,81 @@ async function pollTransaction(
   return result;
 }
 
-/** Maps the contracterror codes from payflow-contract onto readable text. */
+/**
+ * Maps the contracterror codes from payflow-contract onto readable text.
+ *
+ * Every entry mirrors a `#[contracterror]` variant in that repository's
+ * `contracts/<name>/src/error.rs` (named in the comment). A code means different
+ * things in different contracts, so never reuse a sentence across scopes
+ * without checking the variant.
+ */
 const ERRORS: Record<string, Record<number, string>> = {
   plan_registry: {
-    3: "That plan does not exist.",
-    4: "You do not own that plan.",
-    5: "Amount must be greater than zero.",
+    1: "The plan registry is already set up.", // AlreadyInitialized
+    2: "The plan registry has not been set up yet.", // NotInitialized
+    3: "That plan does not exist.", // PlanNotFound
+    4: "You do not own that plan.", // NotPlanOwner
+    5: "Amount must be greater than zero.", // InvalidAmount
     // Shared with the publish form's pre-flight check: a merchant who is told
     // "at least 60 seconds" by the form and sees the same words if they
     // somehow reach the simulation is not being given two different rules.
-    6: MIN_PERIOD_MESSAGE,
-    7: "That plan name is too long.",
+    6: MIN_PERIOD_MESSAGE, // InvalidPeriod
+    7: "That plan name is too long.", // NameTooLong
+    8: "That merchant has not set up a profile yet.", // ProfileNotFound
+    9: "That profile name is too long.", // ProfileNameTooLong
+    10: "That profile URL is too long.", // ProfileUrlTooLong
   },
   vault: {
-    3: "Amount must be greater than zero.",
-    4: "Not enough balance in your vault.",
-    5: "The vault is not wired to a subscription contract yet.",
+    1: "The vault is already set up.", // AlreadyInitialized
+    2: "The vault has not been set up yet.", // NotInitialized
+    3: "Amount must be greater than zero.", // InvalidAmount
+    4: "Not enough balance in your vault.", // InsufficientBalance
+    5: "The vault is not wired to a subscription contract yet.", // SubscriptionNotSet
   },
   subscription: {
-    3: "That subscription does not exist.",
-    4: "You are not the subscriber on this mandate.",
-    5: "This subscription is not active.",
-    6: "This subscription is not due yet.",
-    7: "That plan is no longer accepting subscribers.",
-    9: "This subscription has reached its charge limit.",
-    11: "Only the merchant on this subscription can end it.",
+    1: "The subscription contract is already set up.", // AlreadyInitialized
+    2: "The subscription contract has not been set up yet.", // NotInitialized
+    3: "That subscription does not exist.", // MandateNotFound
+    4: "You are not the subscriber on this mandate.", // NotSubscriber
+    5: "This subscription is not active.", // MandateNotActive
+    6: "This subscription is not due yet.", // NotDue
+    7: "That plan is no longer accepting subscribers.", // PlanInactive
+    8: "That protocol fee is above the 10% ceiling.", // FeeTooHigh
+    9: "This subscription has reached its charge limit.", // MaxChargesReached
+    10: "That charge limit is not valid.", // InvalidMaxCharges
+    11: "Only the merchant on this subscription can end it.", // NotMerchant
   },
 };
+
+/**
+ * Every error variant each contract can raise, keyed by contract and code.
+ *
+ * `ERRORS` above is the subset the UI has copy for; this table is the full
+ * set from the docs repo's error reference. The test in
+ * `test/contract-errors.test.ts` asserts that every entry here has a
+ * non-generic message in `ERRORS` (or `CALLEE_ERRORS`), so a new contract
+ * error cannot reach a user as "contract error #N".
+ *
+ * Codes are the `#[contracterror]` discriminants. Variants that carry no
+ * user-facing meaning (e.g. an internal invariant) still need a sentence.
+ */
+export const CONTRACT_ERROR_CODES: Record<string, readonly number[]> = {
+  plan_registry: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+  vault: [1, 2, 3, 4, 5],
+  subscription: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+};
+
+/**
+ * Exported for tests: the message `decodeContractError` would produce for a
+ * given contract scope and code, without going through the RPC error text.
+ * Returns undefined when the code has no entry in `ERRORS`.
+ */
+export function contractErrorMessage(
+  scope: keyof typeof CONTRACT_ERROR_CODES,
+  code: number,
+): string | undefined {
+  return ERRORS[scope]?.[code];
+}
 
 /**
  * Codes raised by a contract that the called method invokes. An error in a
@@ -274,7 +322,7 @@ const ERRORS: Record<string, Record<number, string>> = {
  * which the subscription table would misread as "not the subscriber". These
  * entries cover the codes a method can only get from its callee.
  */
-const CALLEE_ERRORS: Record<string, Record<number, string>> = {
+export const CALLEE_ERRORS: Record<string, Record<number, string>> = {
   charge: {
     4: "The subscriber's vault does not hold enough to cover this charge.",
   },
@@ -283,7 +331,14 @@ const CALLEE_ERRORS: Record<string, Record<number, string>> = {
   },
 };
 
-const REGISTRY_METHODS = new Set(["create_plan", "set_plan_active", "get_plan"]);
+const REGISTRY_METHODS = new Set([
+  "create_plan",
+  "set_plan_active",
+  "get_plan",
+  "set_profile",
+  "profile",
+  "deactivate_page",
+]);
 const VAULT_METHODS = new Set(["deposit", "withdraw", "debit", "balance"]);
 
 /**
