@@ -1,0 +1,52 @@
+name: PR preview build
+
+# Builds the static export for every pull request so the privileged
+# "PR preview deploy" workflow can publish it as a preview.
+#
+# This runs on `pull_request`, which for pull requests from forks gets a
+# read-only token and no secrets — the build cannot leak anything, and that
+# is exactly what lets the deploy workflow trust the artifact enough to
+# publish it without re-running any contributor code.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview-build-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build preview
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+        env:
+          # Previews are served from the root of a preview URL, so the export
+          # is built without the GitHub Pages base path.
+          NEXT_PUBLIC_SOROBAN_RPC_URL: https://soroban-testnet.stellar.org
+          NEXT_PUBLIC_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
+          NEXT_PUBLIC_STELLAR_NETWORK: TESTNET
+          NEXT_PUBLIC_PLAN_REGISTRY_ID: CDQ5EJTVXXX2CBMHWP3BGGUDHSK6D4I25IF5XXH3QGL2TNTBMJUOFKDB
+          NEXT_PUBLIC_VAULT_ID: CBNQEWSYYQOKNX5KB62OFT6ID5TCVSWN4PS4AXAJK6IWUEXOLVN6DXII
+          NEXT_PUBLIC_SUBSCRIPTION_ID: CD5YZUJU6WLFIHGAV4J2BV42GCVZE5ZGDUGSW5CBRIA47TQHSZZW3XMM
+          NEXT_PUBLIC_TOKEN_ID: CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC
+          NEXT_PUBLIC_READ_SOURCE: GAKOHW5FUKSF3SXQQWLD647RQJPOR5RZOS4ITSMWC5NPC67DEXXYU43H
+          # Contract-only mode: previews must work with no payflow-backend,
+          # exactly like the public demo, so the indexer URL stays empty.
+          NEXT_PUBLIC_API_URL: ""
+      - uses: actions/upload-artifact@v4
+        with:
+          name: preview-build
+          path: out
+          retention-days: 7

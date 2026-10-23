@@ -1,0 +1,56 @@
+name: Lighthouse
+
+# Runs Lighthouse CI against the static export for every pull request, with
+# budgets for performance, accessibility and best practices (issue #57).
+# The budgets live in lighthouserc.json; this workflow only builds and runs
+# them. The report is attached to the workflow run as the
+# `lighthouse-results` artifact, and this job itself is the PR check.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lighthouse-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  lighthouse:
+    name: lighthouse budgets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+        env:
+          # Built without a base path: Lighthouse serves the export from the
+          # root of a local static server (see lighthouserc.json).
+          NEXT_PUBLIC_SOROBAN_RPC_URL: https://soroban-testnet.stellar.org
+          NEXT_PUBLIC_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
+          NEXT_PUBLIC_STELLAR_NETWORK: TESTNET
+          NEXT_PUBLIC_PLAN_REGISTRY_ID: CDQ5EJTVXXX2CBMHWP3BGGUDHSK6D4I25IF5XXH3QGL2TNTBMJUOFKDB
+          NEXT_PUBLIC_VAULT_ID: CBNQEWSYYQOKNX5KB62OFT6ID5TCVSWN4PS4AXAJK6IWUEXOLVN6DXII
+          NEXT_PUBLIC_SUBSCRIPTION_ID: CD5YZUJU6WLFIHGAV4J2BV42GCVZE5ZGDUGSW5CBRIA47TQHSZZW3XMM
+          NEXT_PUBLIC_TOKEN_ID: CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC
+          NEXT_PUBLIC_READ_SOURCE: GAKOHW5FUKSF3SXQQWLD647RQJPOR5RZOS4ITSMWC5NPC67DEXXYU43H
+          # Contract-only mode, like the public demo: no payflow-backend.
+          NEXT_PUBLIC_API_URL: ""
+      - name: Run Lighthouse with budgets
+        uses: treosh/lighthouse-ci-action@v12
+        with:
+          configPath: ./lighthouserc.json
+          uploadArtifacts: true
+      - name: Link the report
+        run: |
+          {
+            echo "### Lighthouse"
+            echo "Budgets are asserted by the \`lighthouse budgets\` job itself."
+            echo "Full HTML reports are in the \`lighthouse-results\` artifact on [this run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+          } >> "$GITHUB_STEP_SUMMARY"

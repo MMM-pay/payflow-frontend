@@ -3,8 +3,8 @@ import { scValToNative } from "@stellar/stellar-sdk";
 import { MAX_NAME_LEN, MAX_PAGE, arg } from "@/lib/payflow";
 
 /**
- * The typed wrappers in `payflow.ts` encode every contract argument through
- * `arg`. A wrong ScVal type is only caught by the network at submission time,
+ * The generated bindings in `bindings.ts` encode every contract argument
+ * through `arg`. A wrong ScVal type is only caught by the network at submission time,
  * so these tests decode the encoded values back and check the SDK types the
  * contract expects — especially u64/i128, where a Number would lose precision.
  */

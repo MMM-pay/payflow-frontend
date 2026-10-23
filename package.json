@@ -13,7 +13,9 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "build:visual": "NEXT_PUBLIC_APP_VERSION=0.0.0 NEXT_PUBLIC_COMMIT_HASH=0000000 NEXT_PUBLIC_SOROBAN_RPC_URL=https://rpc.visual.test NEXT_PUBLIC_NETWORK_PASSPHRASE=\"Test SDF Network ; September 2015\" NEXT_PUBLIC_STELLAR_NETWORK=TESTNET NEXT_PUBLIC_PLAN_REGISTRY_ID=CDQ5EJTVXXX2CBMHWP3BGGUDHSK6D4I25IF5XXH3QGL2TNTBMJUOFKDB NEXT_PUBLIC_VAULT_ID=CBNQEWSYYQOKNX5KB62OFT6ID5TCVSWN4PS4AXAJK6IWUEXOLVN6DXII NEXT_PUBLIC_SUBSCRIPTION_ID=CD5YZUJU6WLFIHGAV4J2BV42GCVZE5ZGDUGSW5CBRIA47TQHSZZW3XMM NEXT_PUBLIC_TOKEN_ID=CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC NEXT_PUBLIC_READ_SOURCE=GAKOHW5FUKSF3SXQQWLD647RQJPOR5RZOS4ITSMWC5NPC67DEXXYU43H NEXT_PUBLIC_API_URL= next build",
+    "test:visual": "playwright test"
   },
   "dependencies": {
     "@creit.tech/stellar-wallets-kit": "^1.7.0",
@@ -23,6 +25,7 @@
     "react-dom": "^19.3.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/react": "^16.3.3",
     "@types/node": "^22.10.5",
