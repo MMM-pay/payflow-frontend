@@ -1,6 +1,7 @@
 node_modules/
 .next/
 out/
+storybook-static/
 build/
 .env
 .env.local
@@ -8,3 +9,6 @@ build/
 next-env.d.ts
 public/embed/
 .DS_Store
+
+# Drawn by scripts/generate-og.mjs before every build.
+public/og/

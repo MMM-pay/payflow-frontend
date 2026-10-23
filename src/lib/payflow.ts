@@ -173,6 +173,11 @@ export const arg = {
   string: (v: string): xdr.ScVal => nativeToScVal(v, { type: "string" }),
 };
 
+/** Progress status of a transaction lifecycle (#17). */
+export type TransactionStatus = "signing" | "submitted" | "confirmed" | "failed";
+
+export type WriteContractProgressCallback = (status: TransactionStatus, txHash?: string) => void;
+
 /**
  * Submit a state-changing call.
  *
@@ -186,6 +191,7 @@ export async function writeContract(
   sourceAddress: string,
   signXdr: SignXdr,
   args: xdr.ScVal[] = [],
+  onProgress?: WriteContractProgressCallback,
 ): Promise<string> {
   const account = await server.getAccount(sourceAddress);
   const built = new TransactionBuilder(account, {
@@ -203,10 +209,12 @@ export async function writeContract(
     throw new Error(decodeContractError(err, method));
   }
 
+  onProgress?.("signing");
   let signedXdr: string;
   try {
     signedXdr = await signXdr(prepared.toXDR());
   } catch (err) {
+    onProgress?.("failed");
     // A declined prompt must not look like a failed payment. Wallets that
     // throw their own text are rewritten; every other failure is unchanged.
     translateSignatureError(err);
@@ -215,13 +223,17 @@ export async function writeContract(
 
   const sent = await server.sendTransaction(signed);
   if (sent.status === "ERROR") {
+    onProgress?.("failed");
     throw new Error(`${method} rejected: ${JSON.stringify(sent.errorResult)}`);
   }
+  onProgress?.("submitted", sent.hash);
 
   const confirmed = await pollTransaction(sent.hash);
   if (confirmed.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
+    onProgress?.("failed", sent.hash);
     throw new Error(`${method} failed on-chain (${confirmed.status})`);
   }
+  onProgress?.("confirmed", sent.hash);
   return sent.hash;
 }
 
@@ -781,6 +793,12 @@ export const payflow = {
   },
 
   // --- vault ---
+  /** Whether the vault has enough balance to cover the first plan charge (#33). */
+  hasSufficientVaultBalance: (vaultBalance: bigint | null, planPrice: bigint): boolean => {
+    if (vaultBalance === null) return true;
+    return vaultBalance >= planPrice;
+  },
+
   vaultBalance: (source: string, user: string, token: string) =>
     readContract<bigint>(config.contracts.vault, "balance", source, [
       arg.address(user),
