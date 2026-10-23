@@ -6,6 +6,8 @@
   "license": "Apache-2.0",
   "scripts": {
     "dev": "next dev",
+    "og": "node scripts/generate-og.mjs",
+    "prebuild": "npm run og",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",

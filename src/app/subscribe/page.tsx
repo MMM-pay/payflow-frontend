@@ -25,6 +25,7 @@ import { filterAndSortPlans, type PlanPeriodOption, type PlanSortOption } from "
 import { formatUsdEstimate, formatUsdcEstimate, useXlmUsdPrice } from "@/lib/price";
 import { checkChargeLimit, confirmationFor } from "@/lib/subscribe-confirmation";
 import { Dialog, Empty, MerchantAccount, Notice, Panel, SkeletonPlanCards, TxLink } from "@/components/ui";
+import { SubscriberGuide } from "@/components/SubscriberGuide";
 
 /** Remaining seats in words, without inventing a count the source cannot provide. */
 function seatsLabel(plan: ApiPlan, now: number, tr: Translation): string {
@@ -423,6 +424,8 @@ function SubscribeInner() {
         <p className="mt-1 text-sm text-muted">{tr("Subscribing opens a mandate. Fund your vault on the")}{" "}
           <Link href="/account" className="text-accent hover:underline">{tr("account page")}</Link>{" "}{tr("or charges will fail for lack of balance.")}</p>
       </div>
+
+      <SubscriberGuide />
 
       {direct && (
         <Notice tone="info">{tr("Reading plans directly from the contract — the indexer is not reachable, so this list is capped at the first 24 plans.")}</Notice>
