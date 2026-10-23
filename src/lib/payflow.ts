@@ -1,7 +1,9 @@
 import {
   Address,
+  Asset,
   BASE_FEE,
   Contract,
+  Operation,
   StrKey,
   TransactionBuilder,
   nativeToScVal,
@@ -10,6 +12,8 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 import { config } from "./config";
+import { mandateStatus } from "./mandate-status";
+import { MIN_PERIOD_MESSAGE } from "./period";
 import {
   SIGNATURE_CANCELLED_MESSAGE,
   isSignatureRejection,
@@ -241,7 +245,10 @@ const ERRORS: Record<string, Record<number, string>> = {
     3: "That plan does not exist.",
     4: "You do not own that plan.",
     5: "Amount must be greater than zero.",
-    6: "Billing period must be at least 60 seconds.",
+    // Shared with the publish form's pre-flight check: a merchant who is told
+    // "at least 60 seconds" by the form and sees the same words if they
+    // somehow reach the simulation is not being given two different rules.
+    6: MIN_PERIOD_MESSAGE,
     7: "That plan name is too long.",
   },
   vault: {
@@ -330,6 +337,8 @@ export function nameByteLength(name: string): number {
   return new TextEncoder().encode(name).length;
 }
 
+export { nativeToScVal };
+
 export interface Plan {
   id: bigint;
   merchant: string;
@@ -415,10 +424,7 @@ export interface Mandate {
  * with `=== "Active"` is always false, which on the contract-only path hid
  * "Charge now" and made Pause send a resume.
  */
-export function mandateStatus(raw: unknown): string {
-  if (Array.isArray(raw)) return String(raw[0] ?? "");
-  return String(raw ?? "");
-}
+export { mandateStatus };
 
 // ---------------------------------------------------------------------------
 // Session cache for get_plan.
@@ -562,6 +568,28 @@ export function mandateSupportsRefund(mandate: unknown): boolean {
 }
 
 /**
+ * Whether the deployed contract supports spend limits on mandates.
+ * A contract built before payflow-contract#28 does not have the
+ * `set_spend_limit` / `get_spend_limit` methods, so this returns false — the
+ * UI hides the control rather than building a transaction the contract would
+ * reject.
+ */
+export function mandateSupportsSpendLimit(mandate: unknown): boolean {
+  const value = (mandate as { spend_limit?: unknown } | null | undefined)?.spend_limit;
+  return typeof value !== "undefined" && value !== null;
+}/**
+   * Read the current spend limit for a mandate.
+   * Returns `null` when the contract predates payflow-contract#28.
+   */
+export async function getSpendLimit(source: string, mandateId: number | bigint): Promise<number | null> {
+  const result = await readContract<number | null>(config.contracts.subscription, "get_spend_limit", source, [
+    arg.u64(mandateId),
+  ]);
+  return result;
+}
+
+
+/**
  * The maximum amount that can be refunded on this mandate, in the token's
  * smallest unit. Returns null when the contract cannot say.
  *
@@ -666,6 +694,34 @@ export const payflow = {
     // `writeContract` polls until the transaction is confirmed, so the cached
     // record is now the only stale copy of this plan.
     forgetPlan(planId);
+    return hash;
+  },
+
+  /**
+   * Deactivate a page of the merchant's plans in one call.
+   *
+   * Mirrors `deactivate_page` in the plan registry contract: the merchant
+   * specifies a page (start index and limit) and every plan in that page is
+   * set to inactive. The cache entries for those plans are dropped so the next
+   * read reflects the change.
+   */
+  deactivatePage: async (
+    source: string,
+    sign: SignXdr,
+    start: number,
+    limit: number,
+  ) => {
+    const hash = await writeContract(
+      config.contracts.planRegistry,
+      "deactivate_page",
+      source,
+      sign,
+      [arg.address(source), arg.u32(start), arg.u32(limit)],
+    );
+    // The write confirmed; we cannot know exactly which plan IDs were in the
+    // page without re-reading, so the conservative approach is to clear the
+    // entire plan cache. The next read will repopulate it from contract state.
+    clearPlanCache();
     return hash;
   },
 
@@ -878,4 +934,90 @@ export const payflow = {
       arg.u64(mandateId),
       arg.i128(amount),
     ]),
+
+  /** Check if an account has established a trustline on Horizon */
+  checkTrustline: (
+    address: string,
+    assetCode: string,
+    assetIssuer?: string,
+    horizonUrl: string = config.horizonUrl,
+  ) => checkTrustline(address, assetCode, assetIssuer, horizonUrl),
+
+  /** Establish a trustline for a classic Stellar asset via ChangeTrust */
+  addTrustline: (
+    source: string,
+    sign: SignXdr,
+    assetCode: string,
+    assetIssuer: string,
+  ) => addTrustline(source, sign, assetCode, assetIssuer),
 };
+
+/**
+ * Checks whether an account has an established trustline for a classic asset on Horizon.
+ * Returns true if the account holds or has a trustline for the specified asset.
+ */
+export async function checkTrustline(
+  address: string,
+  assetCode: string,
+  assetIssuer?: string,
+  horizonUrl: string = config.horizonUrl,
+): Promise<boolean> {
+  if (!address || !assetCode || !horizonUrl) return true;
+  try {
+    const res = await fetch(`${horizonUrl}/accounts/${address}`, { cache: "no-store" });
+    if (!res.ok) return false;
+    const data = (await res.json()) as {
+      balances?: Array<{ asset_type: string; asset_code?: string; asset_issuer?: string }>;
+    };
+    if (!data.balances) return false;
+    return data.balances.some(
+      (b) =>
+        b.asset_code === assetCode &&
+        (!assetIssuer || b.asset_issuer === assetIssuer),
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Builds and submits a ChangeTrust operation to establish a trustline for a classic asset.
+ */
+export async function addTrustline(
+  source: string,
+  sign: SignXdr,
+  assetCode: string,
+  assetIssuer: string,
+): Promise<string> {
+  const account = await server.getAccount(source);
+  const tx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: config.networkPassphrase,
+  })
+    .addOperation(
+      Operation.changeTrust({
+        asset: new Asset(assetCode, assetIssuer),
+      }),
+    )
+    .setTimeout(30)
+    .build();
+
+  let signedXdr: string;
+  try {
+    signedXdr = await sign(tx.toXDR());
+  } catch (err) {
+    translateSignatureError(err);
+    throw err;
+  }
+
+  const signed = TransactionBuilder.fromXDR(signedXdr, config.networkPassphrase);
+  const sent = await server.sendTransaction(signed);
+  if (sent.status === "ERROR") {
+    throw new Error(`changeTrust rejected: ${JSON.stringify(sent.errorResult)}`);
+  }
+  const confirmed = await pollTransaction(sent.hash);
+  if (confirmed.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
+    throw new Error(`changeTrust failed on-chain (${confirmed.status})`);
+  }
+  return sent.hash;
+}
