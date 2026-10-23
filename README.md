@@ -13,7 +13,7 @@
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-green"/>
 </p>
 
-> **Live demo:** https://mmm-pay.github.io/payflow-frontend/ ·
+> **Livedemo:** https://mmm-pay.github.io/payflow-frontend/ ·
 > **Docs:** https://mmm-pay.github.io/payflow-docs/
 
 ---
@@ -105,6 +105,22 @@ reason a deployed frontend keeps calling `localhost`.
 | `NEXT_PUBLIC_API_URL` | payflow-backend base URL. Empty means read contract state directly |
 | `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | Optional public Reown project ID; empty disables WalletConnect |
 | `NEXT_PUBLIC_READ_SOURCE` | Any existing account, used as the source for read-only simulations before a wallet connects |
+| `NEXT_PUBLIC_SITE_URL` | Origin the canonical link and the social preview URLs are built from |
+| `NEXT_PUBLIC_BASE_PATH` | Path the static export is served from. GitHub Pages serves a project site from `/<repo>`; Vercel and local dev serve from the root and set nothing |
+
+## Titles, descriptions and link previews
+
+Every route has its own title, description and share image. The page list
+lives in `src/lib/pages.json`; `src/lib/metadata.ts` turns it into the
+metadata, and `scripts/generate-og.mjs` draws the 1200×630 preview image of
+each page into `public/og/`. The images are drawn before every build
+(`npm run og`), because Next's own image route writes a file without an
+extension, which GitHub Pages then serves as `application/octet-stream` — a
+type the link-preview crawlers refuse.
+
+Set `NEXT_PUBLIC_SITE_URL` and `NEXT_PUBLIC_BASE_PATH` to the host and the
+path the site is served from, so the canonical link and the image URL are
+absolute and still carry the base path.
 
 ## Deploying to Vercel
 
@@ -118,7 +134,7 @@ reason a deployed frontend keeps calling `localhost`.
 
 ```
 src/
-  app/            routes: /, /subscribe, /account, /merchant
+  app/            routes: /, /subscribe, /account, /merchant, /m, /plans/[id]
   components/     presentational pieces (ui.tsx, WalletButton.tsx)
   lib/
     payflow.ts    contract SDK — read via simulation, write via wallet
