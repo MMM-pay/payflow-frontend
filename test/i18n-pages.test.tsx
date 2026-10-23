@@ -42,7 +42,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 describe("French on the four main pages", () => {
   it("translates the overview instructions and number counters", async () => {
     render(<App><HomePage /></App>);
-    await screen.findByText("Le marchand publie une offre");
+    await screen.findByText("Alimentez votre coffre");
     await screen.findByText(/^1\s234$/);
     expect(screen.queryByText("The merchant publishes a plan")).toBeNull();
   });
