@@ -404,6 +404,20 @@ export function nameByteLength(name: string): number {
   return new TextEncoder().encode(name).length;
 }
 
+/**
+ * Validate a new plan name before anything is signed. Returns an error message,
+ * or null when the name is acceptable. Empty names and names over
+ * MAX_NAME_LEN bytes are rejected.
+ */
+export function validatePlanName(name: string): string | null {
+  const trimmed = name.trim();
+  if (trimmed.length === 0) return "Enter a plan name.";
+  if (nameByteLength(trimmed) > MAX_NAME_LEN) {
+    return `Too long: ${MAX_NAME_LEN} bytes maximum.`;
+  }
+  return null;
+}
+
 export { nativeToScVal };
 
 export interface Plan {
@@ -744,6 +758,44 @@ export const payflow = {
         ...(params.trial === undefined ? [] : [arg.u64(params.trial)]),
       ],
     ),
+
+  /**
+   * Whether the deployed plan registry has `set_plan_name`
+   * (payflow-contract#16). Probed by simulating a rename to the plan's current
+   * name: nothing commits, and a contract without the method rejects it, so
+   * the UI hides the control instead of building a doomed transaction.
+   */
+  supportsPlanRename: async (source: string, plan: { id: number; name: string }): Promise<boolean> => {
+    try {
+      await readContract(config.contracts.planRegistry, "set_plan_name", source, [
+        arg.address(source),
+        arg.u64(plan.id),
+        arg.string(plan.name),
+      ]);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  setPlanName: async (
+    source: string,
+    sign: SignXdr,
+    planId: number | bigint,
+    name: string,
+  ) => {
+    const error = validatePlanName(name);
+    if (error) throw new Error(error);
+    const hash = await writeContract(
+      config.contracts.planRegistry,
+      "set_plan_name",
+      source,
+      sign,
+      [arg.address(source), arg.u64(planId), arg.string(name.trim())],
+    );
+    forgetPlan(planId);
+    return hash;
+  },
 
   setPlanActive: async (
     source: string,
