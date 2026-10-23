@@ -60,6 +60,7 @@ vi.mock("@/lib/wallet", () => ({
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/",
+  useRouter: () => ({ push: vi.fn() }),
 }));
 
 vi.mock("@/lib/config", () => ({
