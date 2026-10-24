@@ -2,8 +2,10 @@ import { api, type ApiCharge, type ApiMandate } from "@/lib/api";
 import { mandateToApi } from "@/lib/chain";
 import { config } from "@/lib/config";
 import { feeSplit, type TokenMeta } from "@/lib/format";
+// The SDK-backed module loads on demand: a receipt is read after the page
+// has already painted, so the SDK need not ship with it.
+import { payflow, server } from "@/lib/lazy-payflow";
 import { loadTokenMeta } from "@/lib/token";
-import { loadPayflow } from "@/lib/lazy-payflow";
 
 export interface ParsedReceiptParams {
   txHash: string | null;
@@ -182,10 +184,6 @@ export async function loadReceipt(
   apiAvailable: boolean;
   error: string | null;
 }> {
-  // The SDK-backed contract module loads on demand: this helper runs after
-  // the receipt page has already painted, so the SDK need not ship first.
-  const { payflow, server } = await loadPayflow();
-
   let charge: ApiCharge | null = null;
   let apiAvailable = false;
 

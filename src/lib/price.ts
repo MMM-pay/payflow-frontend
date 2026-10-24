@@ -76,8 +76,8 @@ export async function fetchXlmUsdPrice(options?: {
       const passphrase = options?.networkPassphrase ?? config.networkPassphrase;
       const sourceAccount = options?.sourceAccount ?? config.readSource;
 
-      // Loaded on demand: the SDK must stay out of every first-load bundle,
-      // and this fetch only runs when a price is actually needed.
+      // Loaded on demand: the oracle is only read once a page actually wants
+      // a USD estimate, and the SDK must stay out of every first-load bundle.
       const { Account, Contract, TransactionBuilder, rpc, scValToNative, xdr } =
         await import("@stellar/stellar-sdk");
 

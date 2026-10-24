@@ -42,6 +42,7 @@ const payflowMock = vi.hoisted(() => ({
   feeBps: vi.fn(),
   createPlan: vi.fn(),
   setPlanActive: vi.fn(),
+  supportsPlanRename: vi.fn().mockResolvedValue(false),
   charge: vi.fn(),
   endMandate: vi.fn(),
   merchantPlanCount: vi.fn(),
@@ -49,6 +50,8 @@ const payflowMock = vi.hoisted(() => ({
   vaultBalance: vi.fn(),
   getMandate: vi.fn(),
 }));
+
+const endMandatesMock = vi.hoisted(() => vi.fn());
 
 const chainMock = vi.hoisted(() => ({
   chainMandatesFor: vi.fn(),
@@ -68,6 +71,7 @@ vi.mock("@/lib/payflow", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/payflow")>();
   return { payflow: payflowMock, MAX_NAME_LEN: 64, MAX_PAGE: actual.MAX_PAGE, nameByteLength: (n: string) => n.length, mandateSupportsRefund: actual.mandateSupportsRefund, mandateRefundableAmount: actual.mandateRefundableAmount, mandatePauseUntil: actual.mandatePauseUntil };
 });
+vi.mock("@/lib/end-mandates", () => ({ endMandates: endMandatesMock }));
 vi.mock("@/lib/chain", () => chainMock);
 
 const MERCHANT = "GCH5VHWNS24VI75HLDBHK4SSJ2E5XZA5IB6XEZTNE4BJH7AKZI6Z3MHU";
@@ -106,6 +110,8 @@ beforeEach(() => {
     discount_bps: 0,
     discount_charges: 0,
   });
+  endMandatesMock.mockReset();
+  endMandatesMock.mockResolvedValue({ ended: [], failed: null });
   chainMock.chainMerchantSummary.mockReturnValue({
     merchant: MERCHANT,
     activeMandates: 0,

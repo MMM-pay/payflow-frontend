@@ -8,8 +8,11 @@ import { useSearchParams } from "next/navigation";
 import { api, type ApiPlan } from "@/lib/api";
 import { chainPlansOf, merchantFromParam } from "@/lib/chain";
 import { config } from "@/lib/config";
+// The SDK-backed contract module loads on demand, so the Stellar SDK
+// stays out of this route's first-load bundle.
+import { payflow } from "@/lib/lazy-payflow";
 import { useWallet } from "@/lib/wallet";
-import{ fromStroops } from "@/lib/format";
+
 import { metaFor, useTokenMetas } from "@/lib/token";
 import {
   AddressLink,
@@ -20,9 +23,6 @@ import {
   SkeletonPlanCards,
   TxLink,
 } from "@/components/ui";
-import { loadPayflow } from "@/lib/lazy-payflow";
-
-/** The SDK-backed contract module loads on demand, keeping first-load JS small. */
 
 /**
  * The public catalogue a merchant can link to: `/m/?address=G…` lists that
@@ -106,7 +106,6 @@ function MerchantCatalogue() {
       if (!Number.isInteger(limit) || limit < 0) {
         throw new Error(tr("Charge limit must be a whole number, or 0 for open-ended."));
       }
-      const { payflow } = await loadPayflow();
       const hash = await payflow.subscribe(address, signXdr, plan.id, limit);
       setDone(hash);
       await load();

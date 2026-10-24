@@ -9,12 +9,12 @@ import { api, type ApiMandate, type ApiPlan } from "@/lib/api";
 import { chainMandatesFor, chainPlans, planChargeRow, type PlanCharge } from "@/lib/chain";
 import { planAvailability } from "@/lib/availability";
 import { config } from "@/lib/config";
+// The SDK-backed contract module loads on demand, so the Stellar SDK
+// stays out of this route's first-load bundle.
+import { payflow } from "@/lib/lazy-payflow";
 import { useWallet } from "@/lib/wallet";
-import{ fromStroops } from "@/lib/format";
-import { AddressLink, Badge, Empty, Notice, Panel, TxLink } from "@/components/ui";
-import { loadPayflow } from "@/lib/lazy-payflow";
 
-/** The SDK-backed contract module loads on demand, keeping first-load JS small. */
+import { AddressLink, Badge, Empty, Notice, Panel, TxLink } from "@/components/ui";
 
 type ChargeRow = PlanCharge;
 
@@ -159,7 +159,6 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
         if (reason) throw new Error(reason);
       };
       check();
-      const { payflow } = await loadPayflow();
       const hash = await payflow.subscribe(address, async (xdr) => {
         check();
         return signXdr(xdr);

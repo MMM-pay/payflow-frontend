@@ -44,6 +44,7 @@ const payflowMock = vi.hoisted(() => ({
   createPlan: vi.fn(),
   subscribe: vi.fn(),
   setPlanActive: vi.fn(),
+  supportsPlanRename: vi.fn().mockResolvedValue(false),
   charge: vi.fn(),
   endMandate: vi.fn(),
 }));
@@ -61,9 +62,18 @@ vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return { api: apiMock, checkWebhookUrl: actual.checkWebhookUrl };
 });
-vi.mock("@/lib/payflow", () => ({ payflow: payflowMock }));
+// The page reads these from the SDK-free core, so the stubs stand there too.
 vi.mock("@/lib/payflow-core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/payflow-core")>()),
+  mandatePendingTransfer: () => null,
+  MAX_NAME_LEN: 64,
+  nameByteLength: (n: string) => n.length,
+}));
+vi.mock("@/lib/payflow", () => ({
+  // payflow-contract#68 not shipped; the two-step transfer stays off.
+  mandateSupportsTransfer: () => false,
+  mandatePendingTransfer: () => null,
+  payflow: payflowMock,
   MAX_NAME_LEN: 64,
   nameByteLength: (n: string) => n.length,
 }));
@@ -160,7 +170,7 @@ describe("SubscribePage free-trial badges", () => {
     const button = await screen.findByRole("button", { name: "Subscribe" });
     // Issue #139: the signature request now sits behind a confirmation dialog.
     fireEvent.click(button);
-    fireEvent.click(screen.getByRole("button", { name: "Confirm and sign" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm and sign" }));
 
     await vi.waitFor(() => expect(payflowMock.subscribe).toHaveBeenCalled());
     const notice = await screen.findByText(/Subscribed\./);
@@ -174,7 +184,7 @@ describe("SubscribePage free-trial badges", () => {
 
     render(<SubscribePage />);
     fireEvent.click(await screen.findByRole("button", { name: "Subscribe" }));
-    fireEvent.click(screen.getByRole("button", { name: "Confirm and sign" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm and sign" }));
 
     const notice = await screen.findByText(/Subscribed\./);
     expect(notice.parentElement?.textContent).not.toMatch(/free trial/i);

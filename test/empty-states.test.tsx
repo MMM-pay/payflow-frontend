@@ -53,7 +53,6 @@ const chainMock = vi.hoisted(() => ({
 const payflowMock = vi.hoisted(() => ({
   vaultBalance: vi.fn(),
   feeBps: vi.fn(),
-  vaultSupportsDepositFor: vi.fn(async () => false),
 }));
 
 vi.mock("next/link", () => ({
@@ -80,6 +79,7 @@ vi.mock("@/lib/chain", async (importOriginal) => ({
 vi.mock("@/lib/config", () => ({
   config: {
     rpcUrl: "http://localhost:8000/rpc",
+    rpcUrls: ["http://localhost:8000/rpc"],
     networkPassphrase: "Test SDF Network ; September 2015",
     network: "TESTNET",
     apiUrl: "",
@@ -100,9 +100,9 @@ vi.mock("@/lib/token", () => ({
   useTokenMetas: () => new Map(),
 }));
 vi.mock("@/lib/toml", () => ({ useOrgName: () => null }));
-vi.mock("@/lib/payflow", () => ({
+vi.mock("@/lib/payflow", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/payflow")>()),
   payflow: payflowMock,
-  vaultSupportsDepositFor: payflowMock.vaultSupportsDepositFor,
 }));
 
 function plan(overrides: Partial<ApiPlan> = {}): ApiPlan {

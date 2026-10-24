@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { config } from "./config";
-import { XLM, type TokenMeta } from "./format";
 import { loadPayflow } from "./lazy-payflow";
+import { XLM, type TokenMeta } from "./format";
 
 /**
  * Token symbol and decimals, read from the token contract itself.
@@ -51,11 +51,9 @@ export async function loadTokenMeta(
 
   let meta: TokenMeta;
   try {
-    // Loaded on demand: the SDK-backed contract module must stay out of the
-    // first-load bundle, and this runs after paint anyway.
-    const { readContract } = await loadPayflow();
     // Settled rather than all: a token that answers only one of the two still
     // gets that half right instead of losing both.
+    const { readContract } = await loadPayflow();
     const [symbol, decimals] = await Promise.allSettled([
       readContract<string>(token, "symbol", source),
       readContract<number>(token, "decimals", source),
