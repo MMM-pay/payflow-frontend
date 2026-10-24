@@ -4,7 +4,7 @@
 
 Unaudited. Testnet only. Do not connect a wallet holding real value.
 
-## Scope
+##Scope
 
 In scope: transaction construction in `src/lib/payflow.ts`, wallet handling in
 `src/lib/wallet.tsx`, amount parsing and formatting in `src/lib/format.ts`, and
