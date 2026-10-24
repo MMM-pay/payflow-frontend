@@ -133,15 +133,10 @@ const TESTNET: NetworkConfig = {
 /** Horizon serves account `home_domain`s (stellar.toml names); RPC does not. */
   horizonUrl:
     process.env.NEXT_PUBLIC_HORIZON_URL ??
-    (isTestnetNetwork ? "https://horizon-testnet.stellar.org" : "https://horizon.stellar.org"),
+    "https://horizon-testnet.stellar.org",
   networkPassphrase:
     process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015",
-  network: networkName,
-  /**
-   * Friendbot is a testnet faucet with no mainnet equivalent, so the button
-   * that calls it is driven off this rather than off a runtime network check.
-   */
-  friendbotUrl: isTestnetNetwork ? "https://friendbot.stellar.org" : null,
+  network: "TESTNET",
   apiUrl: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080",
   readSource:
     process.env.NEXT_PUBLIC_READ_SOURCE ??

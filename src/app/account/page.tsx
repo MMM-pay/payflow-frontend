@@ -120,7 +120,11 @@ function AccountInner() {
   const [history, setHistory] = useState<ApiVaultEvent[] | null>(null);
   const [indexerAvailable, setIndexerAvailable] = useState(false);
   const [amount, setAmount] = useState("");
-  const { balance: nativeBalance } = useWallet();
+  // The wallet reports the native balance through its account state; a
+  // balance it has not read yet is null, not zero.
+  const { account: nativeAccount } = useWallet();
+  const nativeBalance =
+    nativeAccount?.state === "loaded" ? nativeAccount.account.balance : null;
   const [busy, setBusy] = useState<string | null>(null);
   // Cancelling is permanent, so the first click only reveals Keep/Confirm.
   const [confirmCancel, setConfirmCancel] = useState<number | null>(null);
@@ -1042,23 +1046,36 @@ function AccountInner() {
             <button
               type="button"
               className="btn-ghost"
+              disabled={busy !== null || balance === null || balance === 0n}
+              onClick={() =>
+                setAmount(fromStroops(balance ?? 0n, vaultMeta.decimals, vaultMeta.decimals))
+              }
+              aria-label="Fill the amount with the full vault balance"
+              title={`Withdraw the full balance (${formatAmount(balance ?? 0n, vaultMeta)})`}
+            >
+              Max
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
               disabled={busy !== null || nativeBalance === null || nativeBalance === 0n}
               onClick={() => {
-                if (vaultMeta.symbol === "XLM") {
-                  const maxVal = maxDeposit(nativeBalance);
-                  setAmount(fromStroops(maxVal, vaultMeta.decimals, vaultMeta.decimals));
-                } else {
-                  setAmount(fromStroops(nativeBalance ?? 0n, vaultMeta.decimals, vaultMeta.decimals));
-                }
+                // XLM pays the fees and the account's own reserve, so the most
+                // that can be deposited is less than the balance on screen.
+                const fill =
+                  vaultMeta.symbol === "XLM"
+                    ? maxDeposit(nativeBalance ?? 0n)
+                    : (nativeBalance ?? 0n);
+                setAmount(fromStroops(fill, vaultMeta.decimals, vaultMeta.decimals));
               }}
               aria-label="Fill the amount with the maximum spendable wallet balance"
               title={
                 vaultMeta.symbol === "XLM"
-                  ? tr("Fill max spendable balance (leaving 1.5 XLM reserve)")
+                  ? tr("Fill max spendable balance (leaving the account reserve)")
                   : tr("Fill full wallet balance")
               }
             >
-              Max
+              Max wallet
             </button>
             <button
               type="button"

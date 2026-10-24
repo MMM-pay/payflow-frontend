@@ -353,30 +353,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setWalletNetwork(null);
   }, []);
 
-  const refreshAccount = useCallback(async () => {
-    if (!address) return;
-    const kit = await getKit();
-    try {
-      const native = await readNativeAccount(kit, address, config.horizonUrl);
-      setAccount({ state: "loaded", balance: native.balance, entryCount: native.entryCount });
-    } catch {
-      setAccount({ state: "error", message: "Failed to load account" });
-    }
-  }, [address]);
-
-  const fund = useCallback(async () => {
-    if (!address) return;
-    setFunding(true);
-    try {
-      await fundWithFriendbot(address);
-      void refreshAccount();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to fund account");
-    } finally {
-      setFunding(false);
-    }
-  }, [address, refreshAccount]);
-
   const signXdr = useCallback<SignXdr>(
     async (xdrString) => {
       if (!address) throw new Error("Connect a wallet first.");
