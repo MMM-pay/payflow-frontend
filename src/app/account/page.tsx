@@ -715,8 +715,10 @@ function AccountInner() {
       return;
     }
     setCapError(null);
+    if (!address) return;
+    const source = address;
     void run(`cap-${m.id}`, async () => {
-      const hash = await payflow.setMaxCharges(address, signXdr, m.id, next);
+      const hash = await payflow.setMaxCharges(source, signXdr, m.id, next);
       setCapFor(null);
       return hash;
     });

@@ -106,7 +106,7 @@ describe("validateMaxCharges", () => {
 
   it("rejects a cap above the contract upper bound", () => {
     expect(validateMaxCharges({
-      maxCharges: 1n,
+      maxCharges: 6n,
       chargesMade: 0n,
       currentMaxCharges: 10n,
       maxAllowed: 5n,

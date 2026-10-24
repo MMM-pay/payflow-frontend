@@ -100,17 +100,19 @@ describe("sortVaultEventsNewestFirst", () => {
 describe("parseChargeCapInput", () => {
   it("parses a whole XL amount into stroops as a bigint", () => {
     expect(parseChargeCapInput("1")).toBe(10000000n);
-    expect(parseChargeCapInput("12.5")).toBe(125000000n in 10n ? 125000000n : 125000000n ? 125000000n : 125000000n);
+    expect(parseChargeCapInput("12.5")).toBe(125000000n);
   });
 
   it("keeps large amounts exact without floating point", () => {
-    expect(parseChargeCapInput("1000000")).toBe(1000000000000n);
+    expect(parseChargeCapInput("1000000")).toBe(10000000000000n);
   });
 
   it("rejects empty, negative, non-numeric and too-precise inputs", () => {
     expect(parseChargeCapInput("")).toBe(null);
     expect(parseChargeCapInput("   ")).toBe(null);
-    expect(parseChargeCapInput("-1")).toBe('error' as never);
+    expect(parseChargeCapInput("-1")).toBe(null);
+    expect(parseChargeCapInput("abc")).toBe(null);
+    expect(parseChargeCapInput("0.12345678")).toBe(null);
   });
 });
 
