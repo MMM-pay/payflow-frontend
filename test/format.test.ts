@@ -4,6 +4,7 @@ import {
   BPS_DENOMINATOR,
   canonicalAmount,
   checkAmount,
+  checkWithdraw,
   DECIMALS,
   feeSplit,
   formatAmount,
@@ -267,6 +268,55 @@ describe("checkAmount", () => {
       if (!check.ok) continue;
       expect(check.stroops).toBe(toStroops("12.345678", decimals));
     }
+  });
+});
+
+describe("checkWithdraw", () => {
+  // The vault balance is the second constraint on a withdrawal: the amount
+  // can parse perfectly and still be more than the vault holds, which would
+  // only surface as a failed simulation after the user has signed.
+  const ONE_XLM = 10_000_000n;
+
+  it("accepts an amount within the vault balance", () => {
+    expect(checkWithdraw("1", ONE_XLM)).toEqual({ ok: true, stroops: ONE_XLM });
+    expect(checkWithdraw("0.5", ONE_XLM)).toEqual({ ok: true, stroops: 5_000_000n });
+  });
+
+  it("accepts the full balance — the Max button must not be blocked", () => {
+    expect(checkWithdraw("1", ONE_XLM)).toEqual({ ok: true, stroops: ONE_XLM });
+    // And the exact round-trip the Max button produces: a full-precision
+    // display string that parses back to the same bigint.
+    expect(checkWithdraw(fromStroops(ONE_XLM, 7), ONE_XLM)).toEqual({
+      ok: true,
+      stroops: ONE_XLM,
+    });
+  });
+
+  it("rejects an amount above the balance, naming the balance", () => {
+    const over = checkWithdraw("2", ONE_XLM);
+    expect(over.ok).toBe(false);
+    if (!over.ok) expect(over.message).toBe("Amount is more than your vault balance of 1.");
+    // One stroop over is still over.
+    expect(checkWithdraw("1.0000001", ONE_XLM).ok).toBe(false);
+  });
+
+  it("refuses while the balance is still loading rather than waving it through", () => {
+    const unknown = checkWithdraw("1", null);
+    expect(unknown.ok).toBe(false);
+    if (!unknown.ok) expect(unknown.message).toMatch(/balance is still loading/i);
+  });
+
+  it("still applies the amount rules before the balance ones", () => {
+    for (const bad of ["", "abc", "0", "-1"]) {
+      expect(checkWithdraw(bad, ONE_XLM).ok, `"${bad}"`).toBe(false);
+    }
+  });
+
+  it("validates against the token's decimals, not a hardcoded 7", () => {
+    // 1.5 USDC is 1_500_000 smallest units; the balance must be read at the
+    // same scale or the comparison is off by 10×.
+    expect(checkWithdraw("1.5", 1_500_000n, 6)).toEqual({ ok: true, stroops: 1_500_000n });
+    expect(checkWithdraw("2", 1_500_000n, 6).ok).toBe(false);
   });
 });
 
