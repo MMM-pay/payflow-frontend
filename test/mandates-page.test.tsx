@@ -46,6 +46,9 @@ vi.mock("@/lib/chain", () => ({
 }));
 
 vi.mock("@/lib/payflow", () => ({
+  // payflow-contract#68 not shipped; the two-step transfer stays off.
+  mandateSupportsTransfer: () => false,
+  mandatePendingTransfer: () => null,
   payflow: payflowMock,
   mandateStatus: (s: unknown) => (Array.isArray(s) ? s[0] : s),
 }));

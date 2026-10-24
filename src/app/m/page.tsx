@@ -10,7 +10,7 @@ import { chainPlansOf, merchantFromParam } from "@/lib/chain";
 import { config } from "@/lib/config";
 import { payflow } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
-import{ fromStroops } from "@/lib/format";
+
 import { metaFor, useTokenMetas } from "@/lib/token";
 import {
   AddressLink,

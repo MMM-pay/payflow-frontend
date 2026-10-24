@@ -11,8 +11,8 @@ import { fromStroops, shortAddress, spendableBalance } from "@/lib/format";
  * way out of the dead end a brand new testnet account is in.
  */
 export function WalletButton() {
-const { t: tr } = useI18n();
-  const { address, connecting, account, funding, connect, disconnect, fund } =
+  const { t: tr } = useI18n();
+  const { address, connecting, connect, disconnect, account, funding, fund } =
     useWallet();
 
   if (!address) {
@@ -23,7 +23,7 @@ const { t: tr } = useI18n();
         disabled={connecting}
         className="btn-primary"
       >
-        {connecting ? "Connecting…" : "Connect wallet"}
+        {connecting ? tr("Connecting…") : tr("Connect wallet")}
       </button>
     );
   }
@@ -116,9 +116,7 @@ function BalanceLabel({
       aria-live="polite"
       title={`${fromStroops(balance)} XLM held, ${fromStroops(spendable)} XLM spendable after the ${subentryCount} ledger ${subentryCount === 1 ? "entry" : "entries"} this account keeps`}
     >
-{/* Two places in the header is a summary, not an invoice; the full
-          precision is in the tooltip and on the account page. */}
-      {fromStroops(spendable, 2)} XLM
+      {fromStroops(spendable)} XLM
     </span>
   );
 }
