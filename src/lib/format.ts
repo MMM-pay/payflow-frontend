@@ -459,3 +459,13 @@ export function spendableBalance(balance: bigint, subentryCount: number): bigint
   const spendable = balance - reserve;
   return spendable > 0n ? spendable : 0n;
 }
+
+/**
+ * Calculate the maximum deposit a wallet can make, reserving a minimum balance
+ * for network fees and base reserves.
+ */
+export function maxDeposit(nativeBalance: bigint, subentryCount = 0): bigint {
+  const reserve = (STROOPS_PER_XLM / 2n) * BigInt(2 + Math.max(0, subentryCount)) + STROOPS_PER_XLM;
+  const max = nativeBalance - reserve;
+  return max > 0n ? max : 0n;
+}

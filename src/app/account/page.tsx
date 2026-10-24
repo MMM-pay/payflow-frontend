@@ -77,6 +77,7 @@ import {
   parsePauseDate,
   resumeDate,
   shortAddress,
+  maxDeposit,
 } from "@/lib/format";
 import { buildChargeSchedule, chargeShortfall } from "@/lib/schedule";
 import { computeVaultRunway } from "@/lib/runway";
@@ -119,6 +120,7 @@ function AccountInner() {
   const [history, setHistory] = useState<ApiVaultEvent[] | null>(null);
   const [indexerAvailable, setIndexerAvailable] = useState(false);
   const [amount, setAmount] = useState("");
+  const { balance: nativeBalance } = useWallet();
   const [busy, setBusy] = useState<string | null>(null);
   // Cancelling is permanent, so the first click only reveals Keep/Confirm.
   const [confirmCancel, setConfirmCancel] = useState<number | null>(null);
@@ -1023,7 +1025,11 @@ function AccountInner() {
                 decimals={vaultMeta.decimals}
                 placeholder="5.0"
                 disabled={busy !== null}
-                hint={tr("Accepts 5, 5.0 — and 5,0 where commas are decimals.")}
+                hint={
+                  nativeBalance !== null && vaultMeta.symbol === "XLM"
+                    ? tr("Wallet balance: {0}", { "0": formatAmount(nativeBalance, vaultMeta) })
+                    : tr("Accepts 5, 5.0 — and 5,0 where commas are decimals.")
+                }
                 hideError={withdrawError !== null}
                 describedBy={withdrawError ? "withdraw-amount-error" : undefined}
               />
@@ -1036,12 +1042,21 @@ function AccountInner() {
             <button
               type="button"
               className="btn-ghost"
-              disabled={busy !== null || balance === null || balance === 0n}
-              onClick={() =>
-                setAmount(fromStroops(balance ?? 0n, vaultMeta.decimals, vaultMeta.decimals))
+              disabled={busy !== null || nativeBalance === null || nativeBalance === 0n}
+              onClick={() => {
+                if (vaultMeta.symbol === "XLM") {
+                  const maxVal = maxDeposit(nativeBalance);
+                  setAmount(fromStroops(maxVal, vaultMeta.decimals, vaultMeta.decimals));
+                } else {
+                  setAmount(fromStroops(nativeBalance ?? 0n, vaultMeta.decimals, vaultMeta.decimals));
+                }
+              }}
+              aria-label="Fill the amount with the maximum spendable wallet balance"
+              title={
+                vaultMeta.symbol === "XLM"
+                  ? tr("Fill max spendable balance (leaving 1.5 XLM reserve)")
+                  : tr("Fill full wallet balance")
               }
-              aria-label="Fill the amount with the full vault balance"
-              title={`Withdraw the full balance (${formatAmount(balance ?? 0n, vaultMeta)})`}
             >
               Max
             </button>
@@ -1456,17 +1471,6 @@ function AccountInner() {
                           </Notice>
                         )}
                       </div>
-                      <div className="mt-1 text-sm text-muted">
-                        {fromStroops(m.amount, 4, meta.decimals)} {meta.symbol}{" "}
-                        {formatPeriod(m.period)} · to <AddressLink value={m.merchant} />
-                      </div>
-                      <div className="mt-1 text-xs text-muted">
-                        {m.charges_made} charge{m.charges_made === 1 ? "" : "s"} taken
-                        {m.max_charges > 0 && ` of ${m.max_charges}`}
-                        {" · next "}
-                        {m.status === "Active" ? formatWhen(m.next_charge) : "—"}
-                      </div>
-                    </div>
 
                     {!terminal && !isReadOnly && (
                       <div className="flex flex-wrap items-center gap-2 mt-4 pt-3 border-t border-edge">
