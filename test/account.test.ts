@@ -6,6 +6,10 @@ import {
   vaultEventLabel,
   vaultEventTone,
 } from "@/lib/chain";
+import {
+  canEditChargeCap,
+  parseChargeCapInput,
+} from "@/lib/payflow";
 import type { ApiVaultEvent } from "@/lib/api";
 
 /**
@@ -90,5 +94,30 @@ describe("sortVaultEventsNewestFirst", () => {
   it("handles empty and single-element lists", () => {
     expect(sortVaultEventsNewestFirst([])).toEqual([]);
     expect(sortVaultEventsNewestFirst([event()])).toEqual([event()]);
+  });
+});
+
+describe("parseChargeCapInput", () => {
+  it("parses a whole XL amount into stroops as a bigint", () => {
+    expect(parseChargeCapInput("1")).toBe(10000000n);
+    expect(parseChargeCapInput("12.5")).toBe(125000000n);
+  });
+
+  it("keeps large amounts exact without floating point", () => {
+    expect(parseChargeCapInput("1000000")).toBe(10000000000000n);
+  });
+
+  it("rejects empty, negative, non-numeric and too-precise inputs", () => {
+    expect(parseChargeCapInput("")).toBe(null);
+    expect(parseChargeCapInput("   ")).toBe(null);
+    expect(parseChargeCapInput("-1")).toBe(null);
+    expect(parseChargeCapInput("abc")).toBe(null);
+    expect(parseChargeCapInput("0.12345678")).toBe(null);
+  });
+});
+
+describe("canEditChargeCap", () => {
+  it("allows editing when the new cap is at least the charges made", () => {
+    expect(canEditChargeCap(3, null)).toBe(true);
   });
 });
