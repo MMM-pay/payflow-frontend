@@ -26,12 +26,14 @@ export { SIGNATURE_CANCELLED_MESSAGE, isSignatureRejection, translateSignatureEr
  * One RPC client per configured endpoint. The first entry is the primary; the
  * rest are fallbacks tried in order when a read fails with a network error.
  */
-export const servers: rpc.Server[] = config.rpcUrls.map(
+// `config.rpcUrls` is parsed to be non-empty, so the tuple type says so and
+// callers need no undefined check on the primary.
+export const servers: [rpc.Server, ...rpc.Server[]] = config.rpcUrls.map(
   (url) =>
     new rpc.Server(url, {
       allowHttp: url.startsWith("http://"),
     }),
-);
+) as [rpc.Server, ...rpc.Server[]];
 
 /** The primary endpoint, kept for callers that only need one client. */
 export const server = servers[0];
@@ -78,7 +80,7 @@ export async function withFallback<T>(
   let lastError: unknown;
   for (let i = 0; i < clients.length; i += 1) {
     try {
-      return await fn(clients[i]);
+      return await fn(clients[i]!);
     } catch (err) {
       lastError = err;
       const isLast = i === clients.length - 1;
