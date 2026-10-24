@@ -151,6 +151,8 @@ function SubscribeInner() {
   const { t: tr, formatPeriod, formatDate, formatWhen, translateMessage, formatTrialLength, trialBadge, formatTokenValue, formatUsdString, formatNumber, formatAmount, formatFeeBps } = useI18n();
   const searchParams = useSearchParams();
   const sortParam = (searchParams?.get("sort") as PlanSortOption) || "newest";
+  // A shared link (?plan=12) shows that one plan instead of the catalogue.
+  const shared = planParam(searchParams?.get("plan"));
   const periodParam = (searchParams?.get("period") as PlanPeriodOption) || "all";
 
   const [sort, setSort] = useState<PlanSortOption>(sortParam);
@@ -427,9 +429,20 @@ function SubscribeInner() {
   }
 
   const active = useMemo(() => (plans ?? []).filter((p) => p.active === 1), [plans]);
+  // A link to a plan that has been deactivated or removed is not an empty
+  // page: `sharedPlan` stays null and the page says the plan is gone.
+  const sharedPlan = useMemo(
+    () => (shared.kind === "plan" ? active.find((p) => p.id === shared.id) ?? null : null),
+    [active, shared],
+  );
+  const sharedMissing = shared.kind === "plan" && plans !== null && sharedPlan === null;
   const filteredPlans = useMemo(() => {
+    // A link that names a plan shows that plan and nothing else: falling back
+    // to the catalogue would quietly offer a different plan from the one the
+    // link promised.
+    if (shared.kind === "plan") return sharedPlan ? [sharedPlan] : [];
     return filterAndSortPlans(active, { sort, period });
-  }, [active, sort, period]);
+  }, [active, sort, period, shared, sharedPlan]);
   // Compare from the full active list rather than the filtered one: changing
   // the filter must not silently drop a column the subscriber already picked.
   const comparedPlans = useMemo(
@@ -481,13 +494,32 @@ function SubscribeInner() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">{tr("Available plans")}</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">
+          {sharedPlan ? sharedPlan.name || tr("Available plans") : tr("Available plans")}
+        </h1>
         <p className="mt-1 text-sm text-muted">{tr("Subscribing opens a mandate. Fund your vault on the")}{" "}
           <Link href="/account" className="text-accent hover:underline">{tr("account page")}</Link>{" "}{tr("or charges will fail for lack of balance.")}</p>
+        {shared.kind === "plan" && (
+          <p className="mt-2 text-sm">
+            <Link href="/subscribe/" className="text-accent hover:underline">
+              {tr("See all plans")}
+            </Link>
+          </p>
+        )}
       </div>
 
       <SubscriberGuide />
 
+      {sharedMissing && (
+        <Notice tone="info">
+          {tr("That plan is no longer listed. The merchant may have deactivated it.")}
+        </Notice>
+      )}
+      {shared.kind === "invalid" && (
+        <Notice tone="info">
+          {tr("That link does not name a plan, so every plan is listed below.")}
+        </Notice>
+      )}
       {direct && (
         <Notice tone="info">{tr("Reading plans directly from the contract — the indexer is not reachable, so this list is capped at the first 24 plans.")}</Notice>
       )}

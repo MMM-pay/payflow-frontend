@@ -25,10 +25,21 @@ const wallet = vi.hoisted(() => ({
 }));
 
 const apiMock = vi.hoisted(() => ({
+  // The page asks whether an indexer is configured before every read.
+  isConfigured: () => true,
   plans: vi.fn(),
   mandatesFor: vi.fn(),
   merchantSummary: vi.fn(),
   merchantRevenue: vi.fn(),
+  // The dashboard loads these panels too; share links do not depend on them,
+  // so they answer "nothing to show".
+  merchantChurn: vi.fn(),
+  merchantCohortRetention: vi.fn(),
+  webhooks: vi.fn(),
+  charges: vi.fn(),
+  planStats: vi.fn(),
+  // The live-event stream is not what these cases exercise.
+  stream: () => ({ close: () => {}, addEventListener: () => {} }),
 }));
 
 const payflowMock = vi.hoisted(() => ({
@@ -37,6 +48,11 @@ const payflowMock = vi.hoisted(() => ({
   setPlanActive: vi.fn(),
   charge: vi.fn(),
   endMandate: vi.fn(),
+  // Capability probes the dashboard runs on load; share links need none of
+  // them, so they answer "not supported".
+  supportsPlanRename: async () => false,
+  supportsPlanDescription: async () => false,
+  supportsTrials: () => false,
 }));
 
 const chainMock = vi.hoisted(() => ({
@@ -47,13 +63,23 @@ const chainMock = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/wallet", () => ({ useWallet: () => wallet }));
-vi.mock("@/lib/api", () => ({ api: apiMock }));
-vi.mock("@/lib/payflow", () => ({
-  payflow: payflowMock,
-  MAX_NAME_LEN: 64,
-  nameByteLength: (n: string) => n.length,
+// The page imports more from this module than it reads here, so keep the real
+// exports and replace only the client.
+vi.mock("@/lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api")>()),
+  api: apiMock,
 }));
-vi.mock("@/lib/chain", () => chainMock);
+// Keep the module's real constants and helpers; only the client is faked.
+vi.mock("@/lib/payflow", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/payflow")>()),
+  payflow: payflowMock,
+}));
+// Same reason as the api mock: the page imports more from this module than
+// these cases drive.
+vi.mock("@/lib/chain", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/chain")>()),
+  ...chainMock,
+}));
 vi.mock("@/lib/token", () => ({
   metaFor: () => ({ symbol: "XLM", decimals: 7 }),
   useTokenMetas: () => new Map(),
@@ -62,6 +88,7 @@ vi.mock("@/lib/toml", () => ({ useOrgName: () => "Acme Payments" }));
 vi.mock("@/lib/config", () => ({
   config: {
     rpcUrl: "http://localhost:8000/rpc",
+    rpcUrls: ["http://localhost:8000/rpc"],
     horizonUrl: "http://localhost:8081",
     networkPassphrase: "Test SDF Network ; September 2015",
     network: "TESTNET",
@@ -100,6 +127,11 @@ beforeEach(() => {
   apiMock.mandatesFor.mockResolvedValue({ mandates: [] });
   apiMock.merchantSummary.mockResolvedValue(null);
   apiMock.merchantRevenue.mockResolvedValue(null);
+  apiMock.merchantChurn.mockResolvedValue(null);
+  apiMock.merchantCohortRetention.mockResolvedValue(null);
+  apiMock.webhooks.mockResolvedValue(null);
+  apiMock.charges.mockResolvedValue(null);
+  apiMock.planStats.mockResolvedValue(null);
   payflowMock.feeBps.mockResolvedValue(100);
 });
 

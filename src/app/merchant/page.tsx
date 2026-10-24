@@ -46,7 +46,9 @@ import { countOpenMandates } from "@/lib/plans";
 import { formatUsdEstimate, formatUsdcEstimate, useXlmUsdPrice } from "@/lib/price";
 import { AmountInput } from "@/components/AmountInput";
 import { CopyButton } from "@/components/CopyButton";
+import { QrCode } from "@/components/QrCode";
 import { AddressLink, Badge, Dialog, Empty, Notice, Panel, SkeletonRows, Stat, TimeAgo, TxLink } from "@/components/ui";
+import { subscribeLink } from "@/lib/share";
 
 /** How far back the revenue chart looks, in days. */
 const REVENUE_WINDOW_DAYS = 90;
@@ -1935,6 +1937,33 @@ export default function MerchantPage() {
                         >{busy === `rename-${p.id}` ? tr("Saving…") : tr("Save name")}</button>
                       </div>
                     </form>
+                  )}
+                  <div className="flex w-full flex-wrap items-center gap-2 mt-2">
+                    <CopyButton
+                      value={planLinks[p.id] ?? ""}
+                      label={`link to ${p.name || `plan #${p.id}`}`}
+                    />
+                    <button
+                      type="button"
+                      className="btn-ghost text-xs"
+                      aria-expanded={qrPlan === p.id}
+                      onClick={() => setQrPlan(qrPlan === p.id ? null : p.id)}
+                    >
+                      {qrPlan === p.id ? tr("Hide QR") : tr("Show QR")}
+                    </button>
+                  </div>
+                  {qrPlan === p.id && planLinks[p.id] && (
+                    <div className="w-full mt-3 flex flex-col items-start gap-2 rounded-lg border border-edge bg-surface/50 p-3">
+                      <QrCode
+                        data={planLinks[p.id] ?? ""}
+                        label={`QR code for the link to ${p.name || `plan #${p.id}`}`}
+                      />
+                      {/* The link in text: a camera reads the code, a screen
+                          reader reads this. */}
+                      <code className="break-all font-mono text-[11px] text-muted">
+                        {planLinks[p.id]}
+                      </code>
+                    </div>
                   )}
                   {embedFor === p.id && (
                     <div className="w-full mt-3 rounded-lg border border-edge bg-surface/50 p-3 text-xs space-y-2">
