@@ -549,6 +549,9 @@ function AccountInner() {
     try {
       setDone(await fn());
       await load();
+      // Every write here spends the native balance on fees, so the header's
+      // figure is stale the moment the transaction lands.
+      await refreshAccount();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

@@ -931,6 +931,14 @@ export default function MerchantPage() {
   // merchant has asked for one — so the gap is theirs to fill, said plainly.
   const periodError = periodCheck.ok ? null : periodCheck.message;
 
+  // Plans are published in the configured token; mandates carry their own.
+  const metas = useTokenMetas([
+    config.contracts.token,
+    ...(plans ?? []).map((p) => p.token),
+    ...(mandates ?? []).map((m) => m.token ?? config.contracts.token),
+  ]);
+  const tokenMeta = metaFor(metas, config.contracts.token);
+
   const load = useCallback(async () => {
     if (!address) return;
     const [p, m, s] = await Promise.all([
