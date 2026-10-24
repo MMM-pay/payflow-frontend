@@ -1714,7 +1714,10 @@ export default function MerchantPage() {
             </select>
           </div>
           <div className="min-w-[10rem] flex-1">
-            <AmountInput
+            <label className="label" htmlFor="price">
+              Price ({tokenMeta.symbol})
+            </label>
+            <input
               id="price"
               label={tr("Price ({0})", { "0": tokenMeta.symbol })}
               value={price}
