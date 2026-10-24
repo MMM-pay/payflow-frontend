@@ -19,8 +19,16 @@ const wallet = vi.hoisted(() => ({
   error: null as string | null,
   networkMismatch: false,
   walletNetwork: null as string | null,
+  account: { state: "loading" } as
+    | { state: "loading" }
+    | { state: "loaded"; account: { balance: bigint; subentryCount: number } }
+    | { state: "missing" }
+    | { state: "error"; message: string },
+  funding: false,
   connect: vi.fn(),
   disconnect: vi.fn(),
+  refreshAccount: vi.fn(),
+  fund: vi.fn(),
   signXdr: vi.fn(),
 }));
 
@@ -115,6 +123,26 @@ vi.mock("@/lib/config", () => ({
   requireContracts: () => {},
 }));
 
+// Pinned so the page has a token contract to ask about. Without it the token
+// id is "" in tests and every amount falls back to native XLM.
+vi.mock("@/lib/config", () => ({
+  config: {
+    rpcUrl: "http://localhost:8000/rpc",
+    networkPassphrase: "Test SDF Network ; September 2015",
+    network: "TESTNET",
+    apiUrl: "http://localhost:8080",
+    readSource: "GAP6QFLXQD73URCC3EXU2WOQHIAREPCGMSIMKF5PFLLI5TR6HTMNDTIE",
+    contracts: {
+      planRegistry: "CDQ5EJTVXXX2CBMHWP3BGGUDHSK6D4I25IF5XXH3QGL2TNTBMJUOFKDB",
+      vault: "CBNQEWSYYQOKNX5KB62OFT6ID5TCVSWN4PS4AXAJK6IWUEXOLVN6DXII",
+      subscription: "CD5YZUJU6WLFIHGAV4J2BV42GCVZE5ZGDUGSW5CBRIA47TQHSZZW3XMM",
+      token: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    },
+  },
+  explorerBase: "https://stellar.expert/explorer/testnet",
+  requireContracts: () => {},
+}));
+
 const SUBSCRIBER = "GAP6QFLXQD73URCC3EXU2WOQHIAREPCGMSIMKF5PFLLI5TR6HTMNDTIE";
 const MERCHANT = "GCH5VHWNS24VI75HLDBHK4SSJ2E5XZA5IB6XEZTNE4BJH7AKZI6Z3MHU";
 // Another account label for the switch test. Literal 56-character Stellar
@@ -152,6 +180,10 @@ beforeEach(async () => {
   wallet.error = null;
   wallet.networkMismatch = false;
   wallet.walletNetwork = null;
+  wallet.funding = false;
+  wallet.account = { state: "loading" };
+  wallet.refreshAccount.mockClear();
+  wallet.fund.mockClear();
   apiMock.mandatesOf.mockReset();
   apiMock.vaultHistory.mockReset();
   apiMock.charges.mockReset();

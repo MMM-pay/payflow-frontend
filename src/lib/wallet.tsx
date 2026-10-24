@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import type { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit";
+import { fundWithFriendbot, readNativeAccount } from "./account";
 import { config } from "./config";
 import { createWalletModules } from "./wallet-modules";
 import type { SignXdr } from "./payflow";
@@ -352,6 +353,30 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setAddress(null);
     setWalletNetwork(null);
   }, []);
+
+  const refreshAccount = useCallback(async () => {
+    if (!address) return;
+    const kit = await getKit();
+    try {
+      const native = await readNativeAccount(kit, address, config.horizonUrl);
+      setAccount({ state: "loaded", balance: native.balance, entryCount: native.entryCount });
+    } catch {
+      setAccount({ state: "error", message: "Failed to load account" });
+    }
+  }, [address]);
+
+  const fund = useCallback(async () => {
+    if (!address) return;
+    setFunding(true);
+    try {
+      await fundWithFriendbot(address);
+      void refreshAccount();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to fund account");
+    } finally {
+      setFunding(false);
+    }
+  }, [address, refreshAccount]);
 
   const signXdr = useCallback<SignXdr>(
     async (xdrString) => {
