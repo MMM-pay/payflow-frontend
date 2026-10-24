@@ -36,8 +36,24 @@ const DEFAULT_TOKENS: readonly ConfiguredToken[] = [
     },
   },
 ];
-import { checkDiscountBps, checkDiscountCharges, discountedAmount, remainingDiscountCharges, supportsDiscounts } from "@/lib/discount";
+import {
+  checkDiscountBps,
+  checkDiscountCharges,
+  discountedAmount,
+  discountBadge,
+  remainingDiscountCharges,
+  supportsDiscounts,
+} from "@/lib/discount";
 import { MAX_NAME_LEN, MAX_PAGE, mandatePauseUntil, mandateRefundableAmount, mandateSupportsRefund, nameByteLength, validatePlanName, payflow, server, decodeContractError } from "@/lib/payflow";
+import {
+  checkProfileName,
+  checkProfileUrl,
+  emptyProfile,
+  MAX_PROFILE_NAME_LEN,
+  MAX_PROFILE_URL_LEN,
+  profileSupports,
+  type MerchantProfile,
+} from "@/lib/profile";
 import { useWallet } from "@/lib/wallet";
 import { useStream } from "@/lib/stream";
 import{ feeSplit, fromStroops, type FeeSplit, type TokenMeta } from "@/lib/format";
@@ -93,6 +109,159 @@ function FeePreview({
       {formatAmount(split.fee, meta)} ({formatFeeBps(feeBps)}{tr(") · you receive")}{" "}
       {formatAmount(split.net, meta)}.
     </span>
+  );
+}
+
+/**
+ * The merchant's on-chain profile: a display name and a URL.
+ *
+ * Both fields are validated in `src/lib/profile.ts` so the same rules run in
+ * the form and in tests. The preview shows how the name and URL will appear
+ * on plan cards, which is the only place subscribers see them.
+ */
+function ProfilePanel({
+  address,
+  signXdr,
+  profile,
+  supported,
+  onSaved,
+}: {
+  address: string;
+  signXdr: Parameters<typeof payflow.setProfile>[1];
+  profile: MerchantProfile;
+  supported: boolean;
+  onSaved: () => Promise<void>;
+}) {
+  const [name, setName] = useState(profile.name);
+  const [url, setUrl] = useState(profile.url);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  // Keep the form in sync when the profile is reloaded (e.g. wallet switch).
+  useEffect(() => {
+    setName(profile.name);
+    setUrl(profile.url);
+  }, [profile.name, profile.url]);
+
+  const nameCheck = checkProfileName(name);
+  const urlCheck = checkProfileUrl(url);
+  const usable = nameCheck.ok && urlCheck.ok;
+
+  if (!supported) {
+    return (
+      <Panel
+        title="Merchant profile"
+        subtitle="A display name and URL shown to subscribers on plan cards."
+      >
+        <Notice tone="info">
+          The deployed contract does not support merchant profiles yet, so this
+          control is hidden. It will appear once the contract exposes
+          set_profile and get_profile.
+        </Notice>
+      </Panel>
+    );
+  }
+
+  async function save() {
+    if (!nameCheck.ok || !urlCheck.ok) return;
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const hash = await payflow.setProfile(address, signXdr, {
+        name: nameCheck.name,
+        url: urlCheck.url,
+      });
+      setDone(hash);
+      await onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Panel
+      title="Merchant profile"
+      subtitle="A display name and URL shown to subscribers on plan cards. Stored on-chain."
+    >
+      {error && <Notice tone="error">{error}</Notice>}
+      {done && (
+        <Notice tone="ok">
+          Profile saved. Transaction <TxLink hash={done} />
+        </Notice>
+      )}
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="min-w-[12rem] flex-1">
+          <label className="label" htmlFor="profile-name">
+            Display name
+          </label>
+          <input
+            id="profile-name"
+            className="input"
+            placeholder="Acme Inc."
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            disabled={busy}
+            maxLength={MAX_PROFILE_NAME_LEN}
+            aria-invalid={!nameCheck.ok}
+            aria-describedby={nameCheck.ok ? undefined : "profile-name-error"}
+          />
+          {!nameCheck.ok && (
+            <p id="profile-name-error" className="mt-1 text-sm text-danger">
+              {nameCheck.message}
+            </p>
+          )}
+        </div>
+        <div className="min-w-[16rem] flex-1">
+          <label className="label" htmlFor="profile-url">
+            URL
+          </label>
+          <input
+            id="profile-url"
+            className="input"
+            placeholder="https://acme.example"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            disabled={busy}
+            maxLength={MAX_PROFILE_URL_LEN}
+            aria-invalid={!urlCheck.ok}
+            aria-describedby={urlCheck.ok ? undefined : "profile-url-error"}
+          />
+          {!urlCheck.ok && (
+            <p id="profile-url-error" className="mt-1 text-sm text-danger">
+              {urlCheck.message}
+            </p>
+          )}
+        </div>
+        <button
+          type="button"
+          className="btn-primary"
+          disabled={busy || !usable}
+          onClick={() => void save()}
+        >
+          {busy ? "Saving…" : "Save profile"}
+        </button>
+      </div>
+
+      <div className="mt-4 rounded-lg border border-edge p-3">
+        <p className="text-xs font-medium text-muted">Preview on plan cards</p>
+        <div className="mt-2">
+          <div className="font-medium">
+            {nameCheck.ok && nameCheck.name ? nameCheck.name : "Your business name"}
+          </div>
+          {urlCheck.ok && urlCheck.url ? (
+            <div className="text-xs text-muted mono truncate" title={urlCheck.url}>
+              {urlCheck.url}
+            </div>
+          ) : (
+            <div className="text-xs text-muted">https://your-site.example</div>
+          )}
+        </div>
+      </div>
+    </Panel>
   );
 }
 
@@ -932,6 +1101,14 @@ export default function MerchantPage() {
     }
   }, []);
 
+  /**
+   * The merchant's on-chain profile, or the empty profile when the deployed
+   * contract does not support it. `profileSupported` gates the panel so the
+   * control is hidden rather than failing every save.
+   */
+  const [profile, setProfile] = useState<MerchantProfile>(emptyProfile);
+  const [profileSupported, setProfileSupported] = useState(false);
+
   // Track who paused each mandate: "subscriber" | "merchant" | undefined
   // Updated by the SSE stream when available.
   const [pausedBy, setPausedBy] = useState<Map<number, "subscriber" | "merchant">>(new Map());
@@ -1004,6 +1181,36 @@ export default function MerchantPage() {
       firstSubscriber: hasSubscriber,
     };
   }, [plans, mandates, sharedLink]);
+
+  /**
+   * Read the merchant profile from the contract, if it supports one.
+   *
+   * The read is best-effort: a contract without `get_profile` throws, which
+   * hides the panel rather than showing a form that cannot save.
+   */
+  const loadProfile = useCallback(async () => {
+    if (!address) return;
+    try {
+      const result = await payflow.getProfile(address);
+      if (result === null) {
+        setProfileSupported(false);
+        setProfile(emptyProfile);
+        return;
+      }
+      setProfileSupported(profileSupports(result));
+      setProfile({
+        name: result.name ?? "",
+        url: result.url ?? "",
+      });
+    } catch {
+      setProfileSupported(false);
+      setProfile(emptyProfile);
+    }
+  }, [address]);
+
+  useEffect(() => {
+    void loadProfile();
+  }, [loadProfile]);
 
   const load = useCallback(async () => {
     if (!address) return;
@@ -1584,6 +1791,15 @@ export default function MerchantPage() {
           }}
         />
       )}
+
+      <ProfilePanel
+        key={address}
+        address={address}
+        signXdr={signXdr}
+        profile={profile}
+        supported={profileSupported}
+        onSaved={loadProfile}
+      />
 
       <MerchantChurnPanel
         key={address}

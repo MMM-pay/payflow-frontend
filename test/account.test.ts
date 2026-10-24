@@ -10,6 +10,8 @@ import {
   canEditChargeCap,
   parseChargeCapInput,
 } from "@/lib/payflow";
+
+
 import type { ApiVaultEvent } from "@/lib/api";
 
 /**
@@ -47,25 +49,14 @@ describe("vaultEventLabel", () => {
 
 describe("vaultEventAmount", () => {
   it("signs deposits positive and withdrawals/debits negative as decimal strings", () => {
-    expect(vaultEventAmount(event({ type: "deposit", amount: "10000000" }))).toBe(
-      "+1",
-    );
-    expect(vaultEventAmount(event({ type: "withdraw", amount: "5000000" }))).toBe(
-      "-0.5",
-    );
-    expect(vaultEventAmount(event({ type: "debit", amount: "9900000" }))).toBe(
-      "-0.99",
-    );
+    expect(vaultEventAmount(event({ type: "deposit", amount: "10000000" }))).toBe("+1");
+    expect(vaultEventAmount(event({ type: "withdraw", amount: "5000000" }))).toBe("-0.5");
+    expect(vaultEventAmount(event({ type: "debit", amount: "9900000" }))).toBe("-0.99");
   });
 
   it("keeps large amounts exact without floating point", () => {
-    // 1 million XLM — beyond safe integer range once scaled to stroops.
-    expect(
-      vaultEventAmount(event({ type: "deposit", amount: "10000000000000" })),
-    ).toBe("+1000000");
-    expect(
-      vaultEventAmount(event({ type: "debit", amount: "500000000000" })),
-    ).toBe("-50000");
+    expect(vaultEventAmount(event({ type: "deposit", amount: "10000000000000" }))).toBe("+1000000");
+    expect(vaultEventAmount(event({ type: "debit", amount: "500000000000" }))).toBe("-50000");
   });
 });
 
@@ -87,7 +78,6 @@ describe("sortVaultEventsNewestFirst", () => {
     const sorted = sortVaultEventsNewestFirst(events);
     expect(sorted.map((e) => e.ledger)).toEqual([3, 2, 1]);
     expect(sorted.map((e) => e.tx_hash)).toEqual(["ccc", "bbb", "aaa"]);
-    // Original array is untouched.
     expect(events.map((e) => e.ledger)).toEqual([1, 3, 2]);
   });
 

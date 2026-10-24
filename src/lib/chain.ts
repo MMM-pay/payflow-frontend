@@ -80,6 +80,8 @@ export function mandateToApi(mandate: Mandate): ApiMandate {
       ? { pause_until: Number(mandate.pause_until) }
       : {}),
     // Only present once payflow-contract#37 adds the discount onto the
+
+    // Only present once payflow-contract#37 adds the discount to the
     // mandate; a contract without the fields cannot say, and a zero would
     // claim there is no discount where there is one.
     ...(mandate.discount_bps !== undefined
@@ -197,7 +199,7 @@ export async function chainPlansOf(source: string, merchant: string): Promise<Ap
  * Read the open-mandate count for a single plan from contract state.
  *
  * Returns null when the deployed contract predates `plan_subscriber_count`
- * (payflow-contract#25), so the caller can hide the stat rather than show
+ * (payflow-contract+25), so the caller can hide the stat rather than show
  * a misleading zero.
  *
  * Exported for tests.
@@ -209,7 +211,7 @@ export async function chainPlanSubscriberCount(
   try {
     return await payflow.planSubscriberCount(source, planId);
   } catch {
-    // Old contracts do not expose this getter. Return null so the UI can
+    // Old contracts do not expose this getter. Return null so the UI
     // hide the subscriber count rather than claim it is zero.
     return null;
   }

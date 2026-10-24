@@ -12,6 +12,11 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 import { config } from "./config";
+import {
+  checkProfileName,
+  checkProfileUrl,
+  type MerchantProfile,
+} from "./profile";
 import { mandateStatus } from "./mandate-status";
 import { MIN_PERIOD_MESSAGE } from "./period";
 import {
@@ -96,7 +101,7 @@ export async function withFallback<T>(
  */
 class Semaphore {
   private permits: number;
-  private waiters: Array<() => void> = [];
+  private waiters: Array< () => void > = [];
 
   constructor(permits: number) {
     this.permits = permits;
@@ -246,8 +251,8 @@ export type WriteContractProgressCallback = (status: TransactionStatus, txHash?:
  * Submit a state-changing call.
  *
  * `prepareTransaction` runs the simulation and attaches the resulting
- * authorization entries and resource footprint — skipping it produces a
- * transaction the network rejects.
+ * authorization entries and resource footprint — skipping it produces
+ * a transaction the network rejects.
  */
 export async function writeContract(
   contractId: string,
@@ -459,7 +464,7 @@ export function decodeContractError(error: unknown, method: string): string {
 }
 
 // ----------------------------------------------------------------------------
- // Typed wrappers. These mirror payflow-contract's public interface exactly.
+// Typed wrappers. These mirror payflow-contract's public interface exactly.
 // ----------------------------------------------------------------------------
 
 /**
@@ -576,6 +581,8 @@ export interface Mandate {
    * transaction the contract would reject.
    */
   pending_subscriber?: string;
+
+
 }
 
 /**
@@ -780,17 +787,18 @@ export function mandateSupportsRefund(mandate: unknown): boolean {
 export function mandateSupportsSpendLimit(mandate: unknown): boolean {
   const value = (mandate as { spend_limit?: unknown } | null | undefined)?.spend_limit;
   return typeof value !== "undefined" && value !== null;
-}/**
-   * Read the current spend limit for a mandate.
-   * Returns `null` when the contract predates payflow-contract#28.
-   */
+}
+
+/**
+ * Read the current spend limit for a mandate.
+ * Returns `null` when the contract predates payflow-contract#28.
+ */
 export async function getSpendLimit(source: string, mandateId: number | bigint): Promise<number | null> {
   const result = await readContract<number | null>(config.contracts.subscription, "get_spend_limit", source, [
     arg.u64(mandateId),
   ]);
   return result;
 }
-
 
 /**
  * The maximum amount that can be refunded on this mandate, in the token's
@@ -993,6 +1001,53 @@ export const payflow = {
     );
     forgetPlan(planId);
     return hash;
+  },
+
+  /**
+   * The merchant's profile as the registry holds it, or null when the deployed
+   * contract has no profiles at all. A merchant who has simply not set one
+   * reads as an empty profile, which the UI treats differently: the first
+   * hides the control, the second invites filling it in.
+   */
+  getProfile: async (source: string): Promise<MerchantProfile | null> => {
+    try {
+      const profile = await readContract<{ name?: unknown; url?: unknown }>(
+        config.contracts.planRegistry,
+        "profile",
+        source,
+        [arg.address(source)],
+      );
+      return {
+        name: typeof profile?.name === "string" ? profile.name : "",
+        url: typeof profile?.url === "string" ? profile.url : "",
+      };
+    } catch (err) {
+      // ProfileNotFound means the merchant has none yet; anything else means
+      // this contract cannot answer, so the control stays hidden.
+      // #8 is ProfileNotFound: the contract has profiles, this merchant has
+      // not set one. Any other failure means it cannot answer at all.
+      if (/Error\(Contract, #8\)/.test(String((err as Error)?.message ?? err))) {
+        return { name: "", url: "" };
+      }
+      return null;
+    }
+  },
+
+  /** Set or clear the merchant's own profile. */
+  setProfile: async (
+    source: string,
+    sign: SignXdr,
+    profile: MerchantProfile,
+  ) => {
+    const name = checkProfileName(profile.name);
+    if (!name.ok) throw new Error(name.message);
+    const url = checkProfileUrl(profile.url);
+    if (!url.ok) throw new Error(url.message);
+    return writeContract(config.contracts.planRegistry, "set_profile", source, sign, [
+      arg.address(source),
+      arg.string(profile.name.trim()),
+      arg.string(profile.url.trim()),
+    ]);
   },
 
   setPlanActive: async (
