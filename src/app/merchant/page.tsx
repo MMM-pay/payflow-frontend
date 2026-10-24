@@ -11,7 +11,8 @@ import { CohortRetentionTable } from "@/components/CohortRetentionTable";
 import { buildCsv, downloadCsv, exportFilename, type ChargeRow } from "@/lib/csv";
 import { fillBuckets, parseRevenue, type BucketSize, type RevenuePoint } from "@/lib/revenue";
 import { parseMerchantChurn, type MerchantChurnMonth } from "@/lib/churn";
-import { chainMandatesFor, chainMerchantSummary, chainPlanSubscriberCount, chainPlansOf, chainUnpaidMandates, endable, mandateFunding, type UnpaidMandate } from "@/lib/chain";
+import { chainMandatesFor, chainMerchantSummary, chainPlanSubscriberCount, chainPlansOf, chainUnpaidMandates, endable, mandateFunding } from "@/lib/chain";
+import type { UnpaidMandate } from "@/lib/chain";
 import { config, type ConfiguredToken } from "@/lib/config";
 import { VirtualList } from "@/components/VirtualList";
 
