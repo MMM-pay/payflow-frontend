@@ -11,7 +11,6 @@ import {
   type ReactNode,
 } from "react";
 import type { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit";
-import { fundWithFriendbot, readNativeAccount, type NativeAccount } from "./account";
 import { config } from "./config";
 import { createWalletModules } from "./wallet-modules";
 import type { SignXdr } from "./payflow";
@@ -124,8 +123,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [walletNetwork, setWalletNetwork] = useState<string | null>(null);
-  const [account, setAccount] = useState<AccountState>({ state: "loading" });
-  const [funding, setFunding] = useState(false);
+  const [account] = useState<AccountState>({ state: "loading" });
 
   // Keep a ref of the current address to avoid stale closures in event listeners
   // and async callbacks. Every setter below already writes the ref alongside the
@@ -355,11 +353,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       networkMismatch,
       walletNetwork,
       account,
-      funding,
       connect,
       disconnect,
-      refreshAccount,
-      fund,
       signXdr,
     ],
   );
