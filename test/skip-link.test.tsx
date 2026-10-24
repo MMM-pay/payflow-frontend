@@ -23,6 +23,7 @@ vi.mock("@/lib/wallet", () => ({
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/",
+  useRouter: () => ({ push: vi.fn() }),
 }));
 
 const mockNetwork = vi.hoisted(() => ({
