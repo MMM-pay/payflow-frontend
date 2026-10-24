@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import type { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit";
+import { fundWithFriendbot, readNativeAccount } from "./account";
 import { config } from "./config";
 import { createWalletModules } from "./wallet-modules";
 import type { SignXdr } from "./payflow";
@@ -73,8 +74,16 @@ export interface WalletState {
   error: string | null;
   networkMismatch: boolean;
   walletNetwork: string | null;
+  /** Native balance and entry count, or why they are not known. */
+  account: AccountState;
+  /** True while a Friendbot request is in flight. */
+  funding: boolean;
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
+  /** Re-reads the native balance. Safe to call after any transaction. */
+  refreshAccount: () => Promise<void>;
+  /** Creates and funds the account with Friendbot. Testnet only. */
+  fund: () => Promise<void>;
   signXdr: SignXdr;
 }
 
@@ -115,6 +124,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [walletNetwork, setWalletNetwork] = useState<string | null>(null);
+  const [account, setAccount] = useState<AccountState>({ state: "loading" });
+  const [funding, setFunding] = useState(false);
 
   // Keep a ref of the current address to avoid stale closures in event listeners
   // and async callbacks. Every setter below already writes the ref alongside the
@@ -284,6 +295,30 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setWalletNetwork(null);
   }, []);
 
+  const refreshAccount = useCallback(async () => {
+    if (!address) return;
+    const kit = await getKit();
+    try {
+      const native = await readNativeAccount(kit, address, config.horizonUrl);
+      setAccount({ state: "loaded", balance: native.balance, entryCount: native.entryCount });
+    } catch {
+      setAccount({ state: "error", message: "Failed to load account" });
+    }
+  }, [address]);
+
+  const fund = useCallback(async () => {
+    if (!address) return;
+    setFunding(true);
+    try {
+      await fundWithFriendbot(address);
+      void refreshAccount();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to fund account");
+    } finally {
+      setFunding(false);
+    }
+  }, [address, refreshAccount]);
+
   const signXdr = useCallback<SignXdr>(
     async (xdrString) => {
       if (!address) throw new Error("Connect a wallet first.");
@@ -323,8 +358,34 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo<WalletState>(
-    () => ({ address, connecting, error, networkMismatch, walletNetwork, connect, disconnect, signXdr }),
-    [address, connecting, error, networkMismatch, walletNetwork, connect, disconnect, signXdr],
+    () => ({
+      address,
+      connecting,
+      error,
+      networkMismatch,
+      walletNetwork,
+      account,
+      funding,
+      connect,
+      disconnect,
+      refreshAccount,
+      fund,
+      signXdr,
+    }),
+    [
+      address,
+      connecting,
+      error,
+      networkMismatch,
+      walletNetwork,
+      account,
+      funding,
+      connect,
+      disconnect,
+      refreshAccount,
+      fund,
+      signXdr,
+    ],
   );
 
   return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>;

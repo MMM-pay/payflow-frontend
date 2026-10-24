@@ -549,6 +549,9 @@ function AccountInner() {
     try {
       setDone(await fn());
       await load();
+      // Every write here spends the native balance on fees, so the header's
+      // figure is stale the moment the transaction lands.
+      await refreshAccount();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -1333,6 +1336,17 @@ function AccountInner() {
                           </Notice>
                         )}
                       </div>
+                      <div className="mt-1 text-sm text-muted">
+                        {fromStroops(m.amount, 4, meta.decimals)} {meta.symbol}{" "}
+                        {formatPeriod(m.period)} · to <AddressLink value={m.merchant} />
+                      </div>
+                      <div className="mt-1 text-xs text-muted">
+                        {m.charges_made} charge{m.charges_made === 1 ? "" : "s"} taken
+                        {m.max_charges > 0 && ` of ${m.max_charges}`}
+                        {" · next "}
+                        {m.status === "Active" ? formatWhen(m.next_charge) : "—"}
+                      </div>
+                    </div>
 
                     {!terminal && !isReadOnly && (
                       <div className="flex flex-wrap items-center gap-2 mt-4 pt-3 border-t border-edge">
