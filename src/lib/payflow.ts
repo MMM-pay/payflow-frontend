@@ -22,9 +22,73 @@ import {
 
 export { SIGNATURE_CANCELLED_MESSAGE, isSignatureRejection, translateSignatureError };
 
-export const server = new rpc.Server(config.rpcUrl, {
-  allowHttp: config.rpcUrl.startsWith("http://"),
-});
+/**
+ * One RPC client per configured endpoint. The first entry is the primary; the
+ * rest are fallbacks tried in order when a read fails with a network error.
+ */
+// `config.rpcUrls` is parsed to be non-empty, so the tuple type says so and
+// callers need no undefined check on the primary.
+export const servers: [rpc.Server, ...rpc.Server[]] = config.rpcUrls.map(
+  (url) =>
+    new rpc.Server(url, {
+      allowHttp: url.startsWith("http://"),
+    }),
+) as [rpc.Server, ...rpc.Server[]];
+
+/** The primary endpoint, kept for callers that only need one client. */
+export const server = servers[0];
+
+/**
+ * True for errors that mean "this endpoint did not answer" — a transport
+ * failure, a timeout, or a 5kx — as opposed to a contract or validation error
+ * that the next endpoint would return identically. Only the former should
+ * trigger a fallback.
+ */
+export function isNetworkError(error: unknown): boolean {
+  if (!error) return false;
+  const err = error as { name?: string; message?: string; response?: { status?: number } };
+  const status = err.response?.status;
+  if (typeof status === "number" && status >= 400 && status < 500) return false;
+  if (typeof status === "number" && status >= 500) return true;
+  const name = err.name ?? "";
+  if (name === "TimeoutError" || name === "AbortError") return true;
+  if (name === "TypeError") return true; // fetch network failure
+  const text = (err.message ?? "").toLowerCase();
+  return (
+    text.includes("fetch failed") ||
+    text.includes("network") ||
+    text.includes("econnrefused") ||
+    text.includes("enotfound") ||
+    text.includes("etimedout") ||
+    text.includes("timeout") ||
+    text.includes("socket hang up") ||
+    text.includes("502") ||
+    text.includes("503") ||
+    text.includes("504")
+  );
+}
+
+/**
+ * Runs `fn` against each endpoint in order, returning the first success.
+ * Non-network errors are rethrown immediately so a contract error is never
+ * retried against a second provider. Exported for tests.
+ */
+export async function withFallback<T>(
+  fn: (srv: rpc.Server) => Promise<T>,
+  clients: rpc.Server[] = servers,
+): Promise<T> {
+  let lastError: unknown;
+  for (let i = 0; i < clients.length; i += 1) {
+    try {
+      return await fn(clients[i]!);
+    } catch (err) {
+      lastError = err;
+      const isLast = i === clients.length - 1;
+      if (isLast || !isNetworkError(err)) throw err;
+    }
+  }
+  throw lastError;
+}
 
 /**
  * Semaphore to limit concurrent contract simulations.
@@ -173,6 +237,11 @@ export const arg = {
   string: (v: string): xdr.ScVal => nativeToScVal(v, { type: "string" }),
 };
 
+/** Progress status of a transaction lifecycle (#17). */
+export type TransactionStatus = "signing" | "submitted" | "confirmed" | "failed";
+
+export type WriteContractProgressCallback = (status: TransactionStatus, txHash?: string) => void;
+
 /**
  * Submit a state-changing call.
  *
@@ -186,27 +255,33 @@ export async function writeContract(
   sourceAddress: string,
   signXdr: SignXdr,
   args: xdr.ScVal[] = [],
+  onProgress?: WriteContractProgressCallback,
 ): Promise<string> {
-  const account = await server.getAccount(sourceAddress);
-  const built = new TransactionBuilder(account, {
-    fee: BASE_FEE,
-    networkPassphrase: config.networkPassphrase,
-  })
-    .addOperation(new Contract(contractId).call(method, ...args))
-    .setTimeout(60)
-    .build();
+  // Preparation is a read: it may be retried on another endpoint. The signed
+  // transaction is then submitted exactly once — a write must never be sent
+  // twice, so submission and polling are not wrapped in the fallback loop.
+  const prepared = await withFallback(async (srv) => {
+    const account = await srv.getAccount(sourceAddress);
+    const built = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: config.networkPassphrase,
+    })
+      .addOperation(new Contract(contractId).call(method, ...args))
+      .setTimeout(60)
+      .build();
+    try {
+      return await srv.prepareTransaction(built);
+    } catch (err) {
+      throw new Error(decodeContractError(err, method));
+    }
+  });
 
-  let prepared;
-  try {
-    prepared = await server.prepareTransaction(built);
-  } catch (err) {
-    throw new Error(decodeContractError(err, method));
-  }
-
+  onProgress?.("signing");
   let signedXdr: string;
   try {
     signedXdr = await signXdr(prepared.toXDR());
   } catch (err) {
+    onProgress?.("failed");
     // A declined prompt must not look like a failed payment. Wallets that
     // throw their own text are rewritten; every other failure is unchanged.
     translateSignatureError(err);
@@ -215,13 +290,17 @@ export async function writeContract(
 
   const sent = await server.sendTransaction(signed);
   if (sent.status === "ERROR") {
+    onProgress?.("failed");
     throw new Error(`${method} rejected: ${JSON.stringify(sent.errorResult)}`);
   }
+  onProgress?.("submitted", sent.hash);
 
   const confirmed = await pollTransaction(sent.hash);
   if (confirmed.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
+    onProgress?.("failed", sent.hash);
     throw new Error(`${method} failed on-chain (${confirmed.status})`);
   }
+  onProgress?.("confirmed", sent.hash);
   return sent.hash;
 }
 
@@ -230,42 +309,90 @@ async function pollTransaction(
   attempts = 15,
   delayMs = 1_000,
 ): Promise<rpc.Api.GetTransactionResponse> {
-  let result = await server.getTransaction(hash);
+  let result = await withFallback((srv) => srv.getTransaction(hash));
   for (let i = 0; i < attempts; i += 1) {
     if (result.status !== rpc.Api.GetTransactionStatus.NOT_FOUND) return result;
     await new Promise((r) => setTimeout(r, delayMs));
-    result = await server.getTransaction(hash);
+    result = await withFallback((srv) => srv.getTransaction(hash));
   }
   return result;
 }
 
-/** Maps the contracterror codes from payflow-contract onto readable text. */
+/**
+ * Maps the contracterror codes from payflow-contract onto readable text.
+ *
+ * Every entry mirrors a `#[contracterror]` variant in that repository's
+ * `contracts/<name>/src/error.rs` (named in the comment). A code means different
+ * things in different contracts, so never reuse a sentence across scopes
+ * without checking the variant.
+ */
 const ERRORS: Record<string, Record<number, string>> = {
   plan_registry: {
-    3: "That plan does not exist.",
-    4: "You do not own that plan.",
-    5: "Amount must be greater than zero.",
+    1: "The plan registry is already set up.", // AlreadyInitialized
+    2: "The plan registry has not been set up yet.", // NotInitialized
+    3: "That plan does not exist.", // PlanNotFound
+    4: "You do not own that plan.", // NotPlanOwner
+    5: "Amount must be greater than zero.", // InvalidAmount
     // Shared with the publish form's pre-flight check: a merchant who is told
     // "at least 60 seconds" by the form and sees the same words if they
     // somehow reach the simulation is not being given two different rules.
-    6: MIN_PERIOD_MESSAGE,
-    7: "That plan name is too long.",
+    6: MIN_PERIOD_MESSAGE, // InvalidPeriod
+    7: "That plan name is too long.", // NameTooLong
+    8: "That merchant has not set up a profile yet.", // ProfileNotFound
+    9: "That profile name is too long.", // ProfileNameTooLong
+    10: "That profile URL is too long.", // ProfileUrlTooLong
   },
   vault: {
-    3: "Amount must be greater than zero.",
-    4: "Not enough balance in your vault.",
-    5: "The vault is not wired to a subscription contract yet.",
+    1: "The vault is already set up.", // AlreadyInitialized
+    2: "The vault has not been set up yet.", // NotInitialized
+    3: "Amount must be greater than zero.", // InvalidAmount
+    4: "Not enough balance in your vault.", // InsufficientBalance
+    5: "The vault is not wired to a subscription contract yet.", // SubscriptionNotSet
   },
   subscription: {
-    3: "That subscription does not exist.",
-    4: "You are not the subscriber on this mandate.",
-    5: "This subscription is not active.",
-    6: "This subscription is not due yet.",
-    7: "That plan is no longer accepting subscribers.",
-    9: "This subscription has reached its charge limit.",
-    11: "Only the merchant on this subscription can end it.",
+    1: "The subscription contract is already set up.", // AlreadyInitialized
+    2: "The subscription contract has not been set up yet.", // NotInitialized
+    3: "That subscription does not exist.", // MandateNotFound
+    4: "You are not the subscriber on this mandate.", // NotSubscriber
+    5: "This subscription is not active.", // MandateNotActive
+    6: "This subscription is not due yet.", // NotDue
+    7: "That plan is no longer accepting subscribers.", // PlanInactive
+    8: "That protocol fee is above the 10% ceiling.", // FeeTooHigh
+    9: "This subscription has reached its charge limit.", // MaxChargesReached
+    10: "That charge limit is not valid.", // InvalidMaxCharges
+    11: "Only the merchant on this subscription can end it.", // NotMerchant
   },
 };
+
+/**
+ * Every error variant each contract can raise, keyed by contract and code.
+ *
+ * `ERRORS` above is the subset the UI has copy for; this table is the full
+ * set from the docs repo's error reference. The test in
+ * `test/contract-errors.test.ts` asserts that every entry here has a
+ * non-generic message in `ERRORS` (or `CALLEE_ERRORS`), so a new contract
+ * error cannot reach a user as "contract error #N".
+ *
+ * Codes are the `#[contracterror]` discriminants. Variants that carry no
+ * user-facing meaning (e.g. an internal invariant) still need a sentence.
+ */
+export const CONTRACT_ERROR_CODES: Record<string, readonly number[]> = {
+  plan_registry: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+  vault: [1, 2, 3, 4, 5],
+  subscription: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+};
+
+/**
+ * Exported for tests: the message `decodeContractError` would produce for a
+ * given contract scope and code, without going through the RPC error text.
+ * Returns undefined when the code has no entry in `ERRORS`.
+ */
+export function contractErrorMessage(
+  scope: keyof typeof CONTRACT_ERROR_CODES,
+  code: number,
+): string | undefined {
+  return ERRORS[scope]?.[code];
+}
 
 /**
  * Codes raised by a contract that the called method invokes. An error in a
@@ -274,7 +401,7 @@ const ERRORS: Record<string, Record<number, string>> = {
  * which the subscription table would misread as "not the subscriber". These
  * entries cover the codes a method can only get from its callee.
  */
-const CALLEE_ERRORS: Record<string, Record<number, string>> = {
+export const CALLEE_ERRORS: Record<string, Record<number, string>> = {
   charge: {
     4: "The subscriber's vault does not hold enough to cover this charge.",
   },
@@ -283,7 +410,14 @@ const CALLEE_ERRORS: Record<string, Record<number, string>> = {
   },
 };
 
-const REGISTRY_METHODS = new Set(["create_plan", "set_plan_active", "get_plan"]);
+const REGISTRY_METHODS = new Set([
+  "create_plan",
+  "set_plan_active",
+  "get_plan",
+  "set_profile",
+  "profile",
+  "deactivate_page",
+]);
 const VAULT_METHODS = new Set(["deposit", "withdraw", "debit", "balance"]);
 
 /**
@@ -321,9 +455,9 @@ export function decodeContractError(error: unknown, method: string): string {
   return trimmed;
 }
 
-// ---------------------------------------------------------------------------
-// Typed wrappers. These mirror payflow-contract's public interface exactly.
-// ---------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
+ // Typed wrappers. These mirror payflow-contract's public interface exactly.
+// ----------------------------------------------------------------------------
 
 /**
  * Mirrors MAX_NAME_LEN in the plan-registry contract, which bounds the name in
@@ -335,6 +469,20 @@ export const MAX_NAME_LEN = 64;
 /** Encoded byte length of a plan name, as the contract counts it. */
 export function nameByteLength(name: string): number {
   return new TextEncoder().encode(name).length;
+}
+
+/**
+ * Validate a new plan name before anything is signed. Returns an error message,
+ * or null when the name is acceptable. Empty names and names over
+ * MAX_NAME_LEN bytes are rejected.
+ */
+export function validatePlanName(name: string): string | null {
+  const trimmed = name.trim();
+  if (trimmed.length === 0) return "Enter a plan name.";
+  if (nameByteLength(trimmed) > MAX_NAME_LEN) {
+    return `Too long: ${MAX_NAME_LEN} bytes maximum.`;
+  }
+  return null;
 }
 
 export { nativeToScVal };
@@ -360,7 +508,7 @@ export interface Plan {
   max_subscribers?: number;
 }
 
-/** Mirrors MAX_PAGE in the contracts: the most ids one index call returns. */
+/** Mirrors MAX_PAGE in the contracts: the most ids an index call returns. */
 export const MAX_PAGE = 50;
 
 export interface Mandate {
@@ -678,6 +826,44 @@ export const payflow = {
       ],
     ),
 
+  /**
+   * Whether the deployed plan registry has `set_plan_name`
+   * (payflow-contract#16). Probed by simulating a rename to the plan's current
+   * name: nothing commits, and a contract without the method rejects it, so
+   * the UI hides the control instead of building a doomed transaction.
+   */
+  supportsPlanRename: async (source: string, plan: { id: number; name: string }): Promise<boolean> => {
+    try {
+      await readContract(config.contracts.planRegistry, "set_plan_name", source, [
+        arg.address(source),
+        arg.u64(plan.id),
+        arg.string(plan.name),
+      ]);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  setPlanName: async (
+    source: string,
+    sign: SignXdr,
+    planId: number | bigint,
+    name: string,
+  ) => {
+    const error = validatePlanName(name);
+    if (error) throw new Error(error);
+    const hash = await writeContract(
+      config.contracts.planRegistry,
+      "set_plan_name",
+      source,
+      sign,
+      [arg.address(source), arg.u64(planId), arg.string(name.trim())],
+    );
+    forgetPlan(planId);
+    return hash;
+  },
+
   setPlanActive: async (
     source: string,
     sign: SignXdr,
@@ -726,6 +912,12 @@ export const payflow = {
   },
 
   // --- vault ---
+  /** Whether the vault has enough balance to cover the first plan charge (#33). */
+  hasSufficientVaultBalance: (vaultBalance: bigint | null, planPrice: bigint): boolean => {
+    if (vaultBalance === null) return true;
+    return vaultBalance >= planPrice;
+  },
+
   vaultBalance: (source: string, user: string, token: string) =>
     readContract<bigint>(config.contracts.vault, "balance", source, [
       arg.address(user),
@@ -766,9 +958,9 @@ export const payflow = {
     ]),
 
   // --- subscription ---
-  getMandate: (source: string, mandateId: number | bigint) =>
+  getMandate: (source: string, id: number | bigint) =>
     readContract<Mandate>(config.contracts.subscription, "get_mandate", source, [
-      arg.u64(mandateId),
+      arg.u64(id),
     ]),
 
   /**
@@ -843,21 +1035,58 @@ export const payflow = {
     writeContract(config.contracts.subscription, "subscribe", source, sign, [
       arg.address(source),
       arg.u64(planId),
-      arg.u32(maxCharges),
     ]),
 
-  cancel: (source: string, sign: SignXdr, mandateId: number | bigint) =>
+  charge: (source: string, sign: SignXdr, id: number | bigint) =>
+    writeContract(config.contracts.subscription, "charge", source, sign, [
+      arg.u64(id),
+    ]),
+
+  pause: (source: string, sign: SignXdr, id: number | bigint) =>
+    writeContract(config.contracts.subscription, "pause", source, sign, [
+      arg.address(source),
+      arg.u64(id),
+    ]),
+
+  resume: (source: string, sign: SignXdr, id: number | bigint) =>
+    writeContract(config.contracts.subscription, "resume", source, sign, [
+      arg.address(source),
+      arg.u64(id),
+    ]),
+
+  cancel: (source: string, sign: SignXdr, id: number | bigint) =>
     writeContract(config.contracts.subscription, "cancel", source, sign, [
       arg.address(source),
-      arg.u64(mandateId),
+      arg.u64(id),
     ]),
 
-  /** Merchant side: permanently stop billing one of the merchant's mandates. */
-  endMandate: (source: string, sign: SignXdr, mandateId: number | bigint) =>
+  endMandate: (source: string, sign: SignXdr, id: number | bigint) =>
     writeContract(config.contracts.subscription, "end_mandate", source, sign, [
       arg.address(source),
-      arg.u64(mandateId),
+      arg.u64(id),
     ]),
+
+  // --- indexes ---
+  listPlans: (source: string, start: number | bigint) =>
+    readContract<bigint[]>(config.contracts.planRegistry, "list_plans", source, [
+      arg.u64(start),
+    ]),
+
+  listMandatesBySubscriber: (source: string, user: string, start: number | bigint) =>
+    readContract<bigint[]>(
+      config.contracts.subscription,
+      "list_mandates_by_subscriber",
+      source,
+      [arg.address(user), arg.u64(start)],
+    ),
+
+  listMandatesByMerchant: (source: string, user: string, start: number | bigint) =>
+    readContract<bigint[]>(
+      config.contracts.subscription,
+      "list_mandates_by_merchant",
+      source,
+      [arg.address(user), arg.u64(start)],
+    ),
 
   setPaused: (
     source: string,
@@ -907,12 +1136,6 @@ export const payflow = {
       arg.u64(mandateId),
       arg.u32(discountBps),
       arg.u32(discountCharges),
-    ]),
-
-  /** Permissionless: anyone may settle a due mandate. */
-  charge: (source: string, sign: SignXdr, mandateId: number | bigint) =>
-    writeContract(config.contracts.subscription, "charge", source, sign, [
-      arg.u64(mandateId),
     ]),
 
   /**

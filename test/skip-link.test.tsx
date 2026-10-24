@@ -23,6 +23,20 @@ vi.mock("@/lib/wallet", () => ({
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/",
+  useRouter: () => ({ push: vi.fn() }),
+}));
+
+const mockNetwork = vi.hoisted(() => ({
+  id: "testnet",
+  label: "Testnet",
+  networkPassphrase: "Test SDF Network ; September 2015",
+  contracts: {
+    planRegistry: "",
+    vault: "",
+    subscription: "",
+  },
+  explorerBase: "https://stellar.expert/explorer/testnet",
+  disclaimer: "Stellar testnet · unaudited · do not use with real funds",
 }));
 
 vi.mock("@/lib/config", () => ({
@@ -35,6 +49,11 @@ vi.mock("@/lib/config", () => ({
     },
   },
   explorerBase: "https://stellar.expert/explorer/testnet",
+  // The layout reads the network through `useNetwork`; pin it to testnet.
+  defaultNetwork: () => mockNetwork,
+  activeNetwork: () => mockNetwork,
+  availableNetworks: () => [mockNetwork],
+  selectNetwork: vi.fn(),
 }));
 
 vi.mock("@/lib/build-info", async (importOriginal) => {
