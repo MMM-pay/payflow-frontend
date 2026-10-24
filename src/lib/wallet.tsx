@@ -11,7 +11,6 @@ import {
   type ReactNode,
 } from "react";
 import type { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit";
-import { fundWithFriendbot, readNativeAccount } from "./account";
 import { config } from "./config";
 import { createWalletModules } from "./wallet-modules";
 import type { SignXdr } from "./payflow";
