@@ -12,6 +12,11 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 import { config } from "./config";
+import {
+  checkProfileName,
+  checkProfileUrl,
+  type MerchantProfile,
+} from "./profile";
 import { mandateStatus } from "./mandate-status";
 import { MIN_PERIOD_MESSAGE } from "./period";
 import {
@@ -408,6 +413,9 @@ export const CALLEE_ERRORS: Record<string, Record<number, string>> = {
   subscribe: {
     3: "That plan does not exist.",
   },
+  set_max_charges: {
+    8: "The new cap cannot be below the number of charges already made.",
+  },
 };
 
 const REGISTRY_METHODS = new Set([
@@ -519,6 +527,62 @@ export interface Mandate {
   token: string;
   amount: bigint;
   period: bigint;
+  next_charge: bigint;
+  last_charge: bigint;
+  charges_made: number;
+  max_charges: number;
+  fee_bps: number;
+  /**
+   * The discount the merchant set on this mandate, in basis points.
+   *
+   * Optional on purpose: payflow-contract#37 has not shipped, so a contract
+   * built before it returns a `Mandate` map without these keys. Absent means
+   * "this contract cannot say", which is not the same as "no discount" — see
+   * `supportsDiscounts` in `lib/discount`.
+   */
+  discount_bps?: number;
+  /** How many charges the discount covers. */
+  discount_charges?: number;
+  /** How many of those charges have been settled. */
+  discount_charges_made?: number;
+  /**
+   * A `#[contracttype]` enum variant without data is encoded as a vector
+   * holding its name, so this decodes as `["Active"]`, not `"Active"`. Use
+   * `mandateStatus` to read it.
+   */
+  status: string | string[];
+  /**
+   * The trial frozen into the mandate at subscribe time, from
+   * payflow-contract#9. Optional for the same reason as `Plan.trial`.
+   */
+  trial?: bigint;
+  /**
+   * When a paused mandate resumes, from payflow-contract#41. Optional because
+   * the deployed contract predates it: a mandate decoded without the key means
+   * that contract cannot service a pause-until, and the UI hides the control
+   * rather than building a transaction the contract would reject.
+   */
+  pause_until?: bigint;
+  /**
+   * When a past-due mandate's grace period ends, from payflow-contract#34.
+   * Optional because the deployed contract predates it.
+   */
+  past_due_until?: bigint;
+  /**
+   * The net amount the merchant received that can be refunded to the subscriber,
+   * from payflow-contract#36. Optional because the deployed contract predates it.
+   */
+  refundable_amount?: bigint;
+  /**
+   * The address a subscriber has proposed to take over this mandate, from
+   * payflow-contract#68. Optional because the deployed contract predates it:
+   * a mandate decoded without the key means that contract cannot service a
+   * transfer, and the UI hides the control rather than building a
+   * transaction the contract would reject.
+   */
+  pending_subscriber?: string;
+
+
 }
 
 /**
@@ -527,6 +591,50 @@ export interface Mandate {
  * "Charge now" and made Pause send a resume.
  */
 export { mandateStatus };
+
+/**
+ * The address a transfer is pending to, or null when none is pending.
+ *
+ * Proposed in payflow-contract#68. A contract built before that change
+ * decodes without `pending_subscriber`, so its absence *is* the capability
+ * signal: there is no method to probe and no version to guess at, and
+ * treating null as "no transfer" hides the accept panel exactly when the
+ * contract cannot service it. Read through this helper rather than the raw
+ * field because contract state carries a string while an indexer row may
+ * carry null.
+ */
+export function mandatePendingSubscriber(mandate: unknown): string | null {
+  const value = (mandate as { pending_subscriber?: unknown } | null | undefined)
+    ?.pending_subscriber;
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+/**
+ * Whether the deployed contract supports moving a mandate to a new wallet.
+ *
+ * Proposed in payflow-contract#68. A contract built before that change has
+ * neither the `transfer_mandate` / `accept_mandate_transfer` methods nor the
+ * `pending_subscriber` field on `Mandate`. Since there is no version probe,
+ * we check the field: if the decoded mandate carries the key at all (even
+ * as null), the contract is new enough to service a transfer.
+ */
+export function mandateSupportsTransfer(mandate: unknown): boolean {
+  if (!mandate || typeof mandate !== "object") return false;
+  return Object.prototype.hasOwnProperty.call(mandate, "pending_subscriber");
+}
+
+/**
+ * The wallet a mandate has been offered to, or null when there is no transfer
+ * in flight. A contract that predates the field reads as "no transfer" rather
+ * than as an error, so the control simply does not appear.
+ */
+export function mandatePendingTransfer(mandate: unknown): string | null {
+  if (!mandateSupportsTransfer(mandate)) return null;
+  const pending = (mandate as { pending_subscriber?: unknown }).pending_subscriber;
+  return typeof pending === "string" && pending.length > 0 ? pending : null;
+}
 
 // ---------------------------------------------------------------------------
 // Session cache for get_plan.
@@ -707,6 +815,82 @@ export function mandateRefundableAmount(mandate: unknown): bigint | null {
   return null;
 }
 
+/**
+ * One step of a sequential batch of contract writes.
+ *
+ * `id` is the mandate id the step acts on, so a caller can map a failure back
+ * to the row the merchant selected without relying on array position.
+ */
+export interface BatchWriteStep<T> {
+  id: bigint;
+  run: () => Promise<T>;
+}
+
+export interface BatchWriteProgress<T> {
+  /** The step that just finished, 1-based. */
+  completed: number;
+  /** How many steps the batch was asked to run. */
+  total: number;
+  /** The id of the step that just finished. */
+  id: bigint;
+  /** The value the step resolved to. */
+  result: T;
+}
+
+export interface BatchWriteFailure<T> {
+  /** The id of the step that failed. */
+  id: bigint;
+  /** The error the step threw, unchanged. */
+  error: unknown;
+  /** Results of the steps that succeeded before the failure, in order. */
+  completed: Array<{ id: bigint; result: T }>;
+  /** How many steps succeeded before the failure. */
+  completedCount: number;
+  /** How many steps were never attempted. */
+  remainingCount: number;
+}
+
+export type BatchWriteOutcome<T> =
+  | { ok: true; results: Array<{ id: bigint; result: T }> }
+  | { ok: false; failure: BatchWriteFailure<T> };
+
+/**
+ * Run contract writes one at a time, stopping on the first failure.
+ *
+ * Writes are serialized rather than parallel because each one is signed by the
+ * wallet and submitted as its own transaction: firing them together would
+ * stack wallet prompts and race sequence numbers on the same source account.
+ * The outcome reports exactly how far the batch got so the UI can say which
+ * mandates were ended and which were not.
+ *
+ * Pure apart from the `run` callbacks, so it is testable without a wallet.
+ */
+export async function runSequentialWrites<T>(
+  steps: ReadonlyArray<BatchWriteStep<T>>,
+  onProgress?: (progress: BatchWriteProgress<T>) => void,
+): Promise<BatchWriteOutcome<T>> {
+  const results: Array<{ id: bigint; result: T }> = [];
+  for (const [i, step] of steps.entries()) {
+    try {
+      const result = await step.run();
+      results.push({ id: step.id, result });
+      onProgress?.({ completed: i + 1, total: steps.length, id: step.id, result });
+    } catch (error) {
+      return {
+        ok: false,
+        failure: {
+          id: step.id,
+          error,
+          completed: results,
+          completedCount: results.length,
+          remainingCount: steps.length - results.length - 1,
+        },
+      };
+    }
+  }
+  return { ok: true, results };
+}
+
 /** A Stellar account a sponsor can pay into: a valid ed25519 public key. */
 export function validateRecipient(recipient: string): string | null {
   const trimmed = recipient.trim();
@@ -817,6 +1001,53 @@ export const payflow = {
     );
     forgetPlan(planId);
     return hash;
+  },
+
+  /**
+   * The merchant's profile as the registry holds it, or null when the deployed
+   * contract has no profiles at all. A merchant who has simply not set one
+   * reads as an empty profile, which the UI treats differently: the first
+   * hides the control, the second invites filling it in.
+   */
+  getProfile: async (source: string): Promise<MerchantProfile | null> => {
+    try {
+      const profile = await readContract<{ name?: unknown; url?: unknown }>(
+        config.contracts.planRegistry,
+        "profile",
+        source,
+        [arg.address(source)],
+      );
+      return {
+        name: typeof profile?.name === "string" ? profile.name : "",
+        url: typeof profile?.url === "string" ? profile.url : "",
+      };
+    } catch (err) {
+      // ProfileNotFound means the merchant has none yet; anything else means
+      // this contract cannot answer, so the control stays hidden.
+      // #8 is ProfileNotFound: the contract has profiles, this merchant has
+      // not set one. Any other failure means it cannot answer at all.
+      if (/Error\(Contract, #8\)/.test(String((err as Error)?.message ?? err))) {
+        return { name: "", url: "" };
+      }
+      return null;
+    }
+  },
+
+  /** Set or clear the merchant's own profile. */
+  setProfile: async (
+    source: string,
+    sign: SignXdr,
+    profile: MerchantProfile,
+  ) => {
+    const name = checkProfileName(profile.name);
+    if (!name.ok) throw new Error(name.message);
+    const url = checkProfileUrl(profile.url);
+    if (!url.ok) throw new Error(url.message);
+    return writeContract(config.contracts.planRegistry, "set_profile", source, sign, [
+      arg.address(source),
+      arg.string(profile.name.trim()),
+      arg.string(profile.url.trim()),
+    ]);
   },
 
   setPlanActive: async (
@@ -1055,6 +1286,23 @@ export const payflow = {
     ]),
 
   /**
+   * Subscriber side: change a mandate's charge cap. The contract rejects a cap
+   * below `charges_made`, so callers should validate against the mandate's
+   * current `charges_made` before submitting.
+   */
+  setMaxCharges: (
+    source: string,
+    sign: SignXdr,
+    mandateId: number | bigint,
+    maxCharges: number | bigint,
+  ) =>
+    writeContract(config.contracts.subscription, "set_max_charges", source, sign, [
+      arg.address(source),
+      arg.u64(mandateId),
+      arg.u32(Number(maxCharges)),
+    ]),
+
+  /**
    * Subscriber side: pause billing until a point in time, from the interface
    * proposed in payflow-contract#41. Only callable against a contract that
    * carries `pause_until` — see `mandatePauseUntil`, which is how the UI
@@ -1111,6 +1359,47 @@ export const payflow = {
       arg.address(source),
       arg.u64(mandateId),
       arg.i128(amount),
+    ]),
+
+  /**
+   * Subscriber side: propose moving this mandate to a new wallet.
+   *
+   * Built against the interface proposed in payflow-contract#68:
+   * `transfer_mandate(subscriber: Address, mandate_id: u64, new_subscriber:
+   * Address)`. The current subscriber authorizes the proposal by signing;
+   * the mandate keeps billing the old wallet until the new one accepts.
+   *
+   * Only call this when `mandateSupportsTransfer` confirms the deployed
+   * contract carries the field.
+   */
+  transferMandate: (
+    source: string,
+    sign: SignXdr,
+    mandateId: number | bigint,
+    newSubscriber: string,
+  ) =>
+    writeContract(config.contracts.subscription, "transfer_mandate", source, sign, [
+      arg.address(source),
+      arg.u64(mandateId),
+      arg.address(newSubscriber),
+    ]),
+
+  /**
+   * New wallet side: accept a pending transfer of a mandate to the caller.
+   *
+   * Built against the interface proposed in payflow-contract#68:
+   * `accept_mandate_transfer(new_subscriber: Address, mandate_id: u64)`. The
+   * receiving wallet authorizes by signing; the contract only accepts when
+   * `pending_subscriber` on the mandate matches the caller.
+   */
+  acceptMandateTransfer: (
+    source: string,
+    sign: SignXdr,
+    mandateId: number | bigint,
+  ) =>
+    writeContract(config.contracts.subscription, "accept_mandate_transfer", source, sign, [
+      arg.address(source),
+      arg.u64(mandateId),
     ]),
 
   /** Check if an account has established a trustline on Horizon */
@@ -1198,4 +1487,74 @@ export async function addTrustline(
     throw new Error(`changeTrust failed on-chain (${confirmed.status})`);
   }
   return sent.hash;
+}
+
+/** What `validateMaxCharges` needs to judge a proposed cap. */
+export interface MaxChargesCheck {
+  /** The cap the subscriber typed, already parsed. */
+  maxCharges: bigint;
+  /** Charges the mandate has already settled; the cap can never go below it. */
+  chargesMade: bigint;
+  /** The cap currently in force, for context in the message. */
+  currentMaxCharges: bigint;
+  /** Upper bound the contract enforces, when the deployment has one. */
+  maxAllowed?: bigint;
+}
+
+/**
+ * Whether the deployed subscription contract carries `set_max_charges`. The
+ * control is hidden rather than offered and rejected on a contract that
+ * predates it.
+ */
+export function canSetMaxCharges(methods: readonly string[] | null | undefined): boolean {
+  return !!methods && methods.includes("set_max_charges");
+}
+
+/**
+ * Why a proposed charge cap cannot be submitted, or null when it can.
+ *
+ * The contract rejects a cap below `charges_made`, so the same rule is checked
+ * here: a wallet should never open for a transaction the chain will refuse.
+ */
+export function validateMaxCharges({
+  maxCharges,
+  chargesMade,
+  maxAllowed,
+}: MaxChargesCheck): string | null {
+  if (maxCharges < 1n) return "The cap must be at least 1 charge.";
+  if (maxCharges < chargesMade) {
+    return `The cap cannot be below the ${chargesMade} charges made already.`;
+  }
+  if (maxAllowed !== undefined && maxCharges > maxAllowed) {
+    return `The cap can be at most ${maxAllowed}.`;
+  }
+  return null;
+}
+
+/**
+ * Whether a mandate's cap can still be edited at all: a mandate that has
+ * reached its cap is completed, and a completed mandate has nothing to cap.
+ */
+export function canEditChargeCap(
+  chargesMade: number,
+  maxCharges: number | null,
+): boolean {
+  if (chargesMade < 0) return false;
+  if (maxCharges === null || maxCharges === 0) return true;
+  return chargesMade < maxCharges;
+}
+
+/**
+ * Parse a decimal amount into stroops, or null when it is not an amount this
+ * can submit. Integer arithmetic throughout: a cap above ~90 million XLM
+ * would lose its last digits through Number.
+ */
+export function parseChargeCapInput(input: string): bigint | null {
+  const text = input.trim();
+  if (!text || !/^\d+(\.\d{1,7})?$/.test(text)) return null;
+  const parts = text.split(".");
+  const padded = ((parts[1] ?? "") + "0000000").slice(0, 7);
+  const whole = parts[0] ?? "0";
+  const stroops = BigInt(whole) * 10_000_000n + BigInt(padded);
+  return stroops > 0n ? stroops : null;
 }

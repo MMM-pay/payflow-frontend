@@ -69,6 +69,9 @@ vi.mock("@/lib/api", () => ({
   checkWebhookUrl: vi.fn(),
 }));
 vi.mock("@/lib/payflow", () => ({
+  // payflow-contract#68 not shipped; the two-step transfer stays off.
+  mandateSupportsTransfer: () => false,
+  mandatePendingTransfer: () => null,
   payflow: payflowMock,
   readContract: payflowMock.readContract,
   server: payflowMock.server,

@@ -33,6 +33,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/api", () => ({ api: { plans: mocks.plans } }));
 vi.mock("@/lib/chain", () => ({ chainPlans: mocks.chainPlans }));
 vi.mock("@/lib/payflow", () => ({
+  // payflow-contract#68 not shipped; the two-step transfer stays off.
+  mandateSupportsTransfer: () => false,
+  mandatePendingTransfer: () => null,
   payflow: { subscribe: mocks.subscribe, feeBps: mocks.feeBps },
 }));
 vi.mock("@/lib/wallet", () => ({ useWallet: () => mocks.wallet }));

@@ -1,4 +1,17 @@
 import { describe, expect, it } from "vitest";
+import {
+  sortVaultEventsNewestFirst,
+  vaultEventAmount,
+  vaultEventIsCredit,
+  vaultEventLabel,
+  vaultEventTone,
+} from "@/lib/chain";
+import {
+  canEditChargeCap,
+  parseChargeCapInput,
+} from "@/lib/payflow";
+
+
 import type { ApiVaultEvent } from "@/lib/api";
 
 /**
@@ -6,44 +19,7 @@ import type { ApiVaultEvent } from "@/lib/api";
  * display values (signed amounts, text labels, colour tones, ordering) without
  * touching React or the DOM. Pinning them keeps the account page's balance
  * reconciliation accurate and colour-independent.
- *
- * The helpers are not exported from "@/lib/chain" in this revision, so they are
- * declared locally to match the behaviour pinned by the tests below.
  */
-
-function vaultEventIsCredit(e: ApiVaultEvent): boolean {
-  return e.type === "deposit";
-}
-
-function vaultEventLabel(e: ApiVaultEvent): string {
-  switch (e.type) {
-    case "deposit":
-      return "Deposit";
-    case "withdraw":
-      return "Withdrawal";
-    case "debit":
-      return "Debit";
-  }
-}
-
-function vaultEventAmount(e: ApiVaultEvent): string {
-  const stroops = BigInt(e.amount);
-  const sign = vaultEventIsCredit(e) ? "+" : "-";
-  const abs = stroops < 0n ? -stroops : stroops;
-  const whole = abs / 10_000_000n;
-  const frac = abs % 10_000_000n;
-  if (frac === 0n) return `${sign}${whole}`;
-  const fracStr = frac.toString().padStart(7, "0").replace(/0+$/, "");
-  return `${sign}${whole}.${fracStr}`;
-}
-
-function vaultEventTone(e: ApiVaultEvent): "ok" | "error" {
-  return vaultEventIsCredit(e) ? "ok" : "error";
-}
-
-function sortVaultEventsNewestFirst(events: ApiVaultEvent[]): ApiVaultEvent[] {
-  return [...events].sort((a, b) => b.ledger - a.ledger);
-}
 
 function event(over: Partial<ApiVaultEvent> = {}): ApiVaultEvent {
   return {
@@ -108,5 +84,30 @@ describe("sortVaultEventsNewestFirst", () => {
   it("handles empty and single-element lists", () => {
     expect(sortVaultEventsNewestFirst([])).toEqual([]);
     expect(sortVaultEventsNewestFirst([event()])).toEqual([event()]);
+  });
+});
+
+describe("parseChargeCapInput", () => {
+  it("parses a whole XL amount into stroops as a bigint", () => {
+    expect(parseChargeCapInput("1")).toBe(10000000n);
+    expect(parseChargeCapInput("12.5")).toBe(125000000n);
+  });
+
+  it("keeps large amounts exact without floating point", () => {
+    expect(parseChargeCapInput("1000000")).toBe(10000000000000n);
+  });
+
+  it("rejects empty, negative, non-numeric and too-precise inputs", () => {
+    expect(parseChargeCapInput("")).toBe(null);
+    expect(parseChargeCapInput("   ")).toBe(null);
+    expect(parseChargeCapInput("-1")).toBe(null);
+    expect(parseChargeCapInput("abc")).toBe(null);
+    expect(parseChargeCapInput("0.12345678")).toBe(null);
+  });
+});
+
+describe("canEditChargeCap", () => {
+  it("allows editing when the new cap is at least the charges made", () => {
+    expect(canEditChargeCap(3, null)).toBe(true);
   });
 });
