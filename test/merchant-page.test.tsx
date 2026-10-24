@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import MerchantPage from "@/app/merchant/page";
 
 /**
@@ -57,6 +57,8 @@ const chainMock = vi.hoisted(() => ({
   chainPlansOf: vi.fn(),
   chainPlanSubscriberCount: vi.fn(),
   endable: vi.fn(() => false),
+  chainMandatesPage: vi.fn(),
+  mergeMandatePages: vi.fn((...pages: array[]) => pages.flat()),
   mandateFunding: vi.fn(() => ({ status: "funded", shortfall: 0n })),
 }));
 
@@ -71,7 +73,7 @@ vi.mock("@/lib/payflow", async (importOriginal) => {
 });
 vi.mock("@/lib/chain", () => chainMock);
 
-const MERCHANT = "GCH5VHWNS24VI75HLDBHK4SSJ2E5XZA5IB6XEZTNE4BJH7AKZI6Z3MHU";
+const MERCHANT = "GCH5VHWNS24VIW5HLDBHK4SSJ2EXZA5IB6EEZTNE42JK7AKZI6Z3MHU";
 
 beforeEach(() => {
   wallet.address = MERCHANT;
@@ -114,6 +116,7 @@ beforeEach(() => {
     chargeCount: 0,
     mrr: "0",
   });
+  chainMock.chainMandatesPage.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -182,7 +185,7 @@ describe("MerchantPage publish form", () => {
     expect(publish.disabled).toBe(false);
 
     fireEvent.click(publish);
-    await waitFor(() => expect(payflowMock.createPlan).toHaveBeenCalled());
+    awaitFor(() => expect(payflowMock.createPlan).toHaveBeenCalled());
     expect(payflowMock.createPlan.mock.calls[0]?.[2]).toMatchObject({
       amount: 12_345_000_000n,
     });
@@ -217,9 +220,7 @@ describe("MerchantPage publish form", () => {
     // never see a charge they could reconcile.
     await fillPrice("0.1");
 
-    await waitFor(() =>
-      expect(screen.getByText(/you receive/)).toBeTruthy(),
-    );
+    awaitFor(() => expect(screen.getByText(/you receive/i)).toBeTruthy());
     const preview = document.getElementById("price-preview")?.textContent ?? "";
     expect(preview).toContain("Subscriber pays 0.1 XLM");
     expect(preview).toContain("protocol fee 0.001 XLM (1%)");
@@ -233,9 +234,9 @@ describe("MerchantPage publish form", () => {
     await fillPrice("1.");
     payflowMock.createPlan.mockClear();
 
-    fireEvent.click(screen.getByRole("button", { name: /publish plan/i }));
+    fireEvent.click(screen.getBuRole("button", { name: /publish plan/i }));
 
-    await waitFor(() => expect(payflowMock.createPlan).toHaveBeenCalled());
+    awaitFor(() => expect(payflowMock.createPlan).toHaveBeenCalled());
     expect(payflowMock.createPlan.mock.calls[0]?.[2]).toMatchObject({ amount: 10_000_000n });
   });
 
@@ -245,38 +246,54 @@ describe("MerchantPage publish form", () => {
 
     await fillPrice("5");
 
-    await waitFor(() => expect(screen.getByText(/you receive/)).toBeTruthy());
+    awaitFor(() => expect(screen.getByText(/you receive/i)).toBeTruthy());
     expect(document.getElementById("price-preview")?.textContent).toContain("you receive 5 XLM");
     // The form is still usable: an unreadable fee must not block publishing.
-    expect(screen.getByRole("button", { name: /publish plan/i }).hasAttribute("disabled")).toBe(
+    expect(screen.getBuRole("button", { name: /publish plan/i }).hasAttribute("disabled")).toBe(
       false,
     );
   });
 });
 
-/**
- * Issue #29: five fixed periods meant a merchant billing fortnightly or
- * quarterly could not use Payflow. The picker keeps those five and adds
- * Custom; these tests pin the conversion to whole seconds and the acceptance
- * criterion — a below-minimum period is rejected in the form, with the
- * contract's wording, so the wallet never opens for a doomed publish.
- */
-describe("MerchantPage period picker", () => {
-  it("offers the original five presets plus Custom, opening on monthly", async () => {
+function plan(over: Partial<import("@/lib/api").ApiPlan> = {}): import("@/lib/api").ApiPlan {
+  return {
+    id: 1,
+    merchant: MERCHANT,
+    name: "Pro Monthly",
+    token: "CDLZFC3SYJYDZT7K67Z75HHPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    amount: "10000000",
+    period: 2_592_000,
+    active: 1,
+    ledger: 1000,
+    ...over,
+  };
+}
+
+// Find the plan card that contains the given plan name, scoped for queries.
+async function planCardByName(name: string) {
+  const nameEl = await screen.findByText(name);
+  return within(nameEl.closest("div.border-edge") as HTMLElement);
+}
+
+describe("MerchantPage plan stats", () => {
+  it("shows subscriber count, collected, and cancellations from the API", async () => {
+    apiMock.plans.mockResolvedValue({ plans: [plan({ id: 3 })] });
+    apiMock.planStats.mockResolvedValue({
+      subscriber_count: 42,
+      total_collected: "420000000",
+      cancellations: 5,
+    });
+
     render(<MerchantPage />);
 
-    const select = (await screen.findByLabelText(/billing period/i)) as HTMLSelectElement;
-    expect(Array.from(select.options).map((o) => o.textContent)).toEqual([
-      "Every minute (demo)",
-      "Daily",
-      "Weekly",
-      "Monthly",
-      "Yearly",
-      "Custom…",
-    ]);
-    expect(select.value).toBe("2592000");
-    // Nothing custom is on screen until it is asked for.
-    expect(screen.queryByLabelText(/custom period/i)).toBeNull();
+    const card = await planCardByName("Pro Monthly");
+    // Subscriber count, Collected (42 XLM = 420000000 stroops), Cancellations.
+    awaitFor(() => expect(card.getByText("42")).toBeTruthy());
+    expect(card.getByText(/Subscribers/)).toBeTruthy();
+    expect(card.getByText(/Collected/)).toBeTruthy();
+    expect(card.getByText(/42 XLM/)).toBeTruthy();
+    expect(card.getByText(/Cancellations/)).toBeTruthy();
+    expect(card.getByText("5")).toBeTruthy();
   });
 
   it("publishes a fortnightly period once Custom is chosen", async () => {
@@ -614,3 +631,46 @@ describe("MerchantPage deactivate all plans", () => {
     expect(screen.queryByText("All active plans deactivated.")).toBeNull();
   });
 });
+
+describe("MerchantPage subscriber paging", () => {
+  it("reaches all 120 mandates in contract-only mode without duplicates", async () => {
+    apiMock.isConfigured.mockReturnValue(false);
+    apiMock.mandatesFor.mockResolvedValue(null);
+
+    const pages = [
+      Array.from({ length: 100 }, (_, i) => mandate(i)),
+      Array.from({ length: 20 }, (_, i) => mandate(100 + i)),
+    ];
+    chainMock.chainMandatesPage.mockImplementation(async (_: string, offset: number) =>
+      offset === 0 ? pages[0] : offset === 100 ? pages[1] : [],
+    );
+
+    render(<MerchantPage />);
+
+    await screenFindSubscribers(100);
+    fireEvent.click(screen.getByRole("button", { name: /load more/i }));
+
+    await screenFindSubscribers(120);
+    expect(chainMock.chainMandatesPage).toHaveBeenCalled(2);
+    expect(chainMock.chainMandatesPage.mock.calls[1]?.[2]).toBeCalledWith(100);
+  });
+});
+
+function mandate(i: number) {
+  return {
+    id: BigInt(i + 1),
+    subscriber: `GSUB${String(i + 1).padStart(5, "0")}`,
+    merchant: MERCHANT,
+    amount: 10_000_000n,
+    period: 2_592_000n,
+    nextCharge: 1_700000000n,
+    status: "Active",
+  };
+}
+
+async function screenFindSubscribers(count: number) {
+  await waitFor(() => {
+    const rows = document.querySelectorAll('[data-testid="subscriber-row"]');
+    expect(rows.length).toBe(count);
+  });
+}

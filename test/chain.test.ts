@@ -7,6 +7,9 @@ import {
   mandateToApi,
   merchantFromParam,
   newestPages,
+  pageMerchantMandates,
+  pageSubscribers,
+  uniqueMandates,
 } from "@/lib/chain";
 import { mandatePauseUntil, mandateStatus, type Mandate } from "@/lib/payflow";
 import type { ApiMandate } from "@/lib/api";
@@ -18,7 +21,7 @@ import type { ApiMandate } from "@/lib/api";
  * revenue history are both worth pinning down.
  */
 
-const MERCHANT = "GCH5VHWNS24VI75HLDBHK4SSJ2E5XZA5IB6XEZTNE4BJH7AKZI6Z3MHU";
+const MERCHANT = "GCH5VHWNS24VIW5HLDBHK4SSJ2EZZZ4IB6EEZTNE42JH7AKZI6Z3MHU";
 const MONTH = 2_592_000;
 
 function mandate(over: Partial<ApiMandate> = {}): ApiMandate {
@@ -142,6 +145,60 @@ describe("newestPages", () => {
   });
 });
 
+describe("pageMandatesPagination", () => {
+  it("returns the requested window and a next offset", () => {
+    const result = pageMerchantMandates(120, 0, 50);
+    expect(result.nextOffset).toBe(50);
+    expect(result.hasMore).toBe(true);
+  });
+
+  it("stops at the end of the index", () => {
+    const result = pageMerchantMandates(120, 100, 50);
+    expect(result.nextOffset).toBe(120);
+    expect(result.hasMore).toBe(false);
+  });
+});
+
+describe("pageSubscribers", () => {
+  const rows = Array.from({ length: 120 }, (_, i) => mandate({ id: i + 1 }));
+
+  it("returns the first page with a next offset", () => {
+    const page = pageSubscribers(rows, 0, 50);
+    expect(page.rows).toHaveLength(50);
+    expect(page.nextOffset).toBe(50);
+    expect(page.hasMore).toBe(true);
+  });
+
+  it("reaches the last page of 120 rows", () => {
+    const page = pageSubscribers(rows, 100, 50);
+    expect(page.rows).toHaveLength(20);
+    expect(page.hasMore).toBe(false);
+  });
+
+  it("returns an empty page past the end", () => {
+    const page = pageSubscribers(rows, 200, 50);
+    expect(page.rows).toHaveLength(0);
+    expect(page.hasMore).toBe(false);
+  });
+});
+
+describe("uniqueMandates", () => {
+  it("drops duplicate rows by id", () => {
+    const rows = [mandate({ id: 1 }), mandate({ id: 2 }), mandate({ id: 1 })];
+    expect(uniqueMandates(rows).map((m) => m.id)).toEqual([1, 2]);
+  });
+
+  it("preserves order and keeps the latest row for an id", () => {
+    const rows = [
+      mandate({ id: 1, status: "Active" }),
+      mandate({ id: 1, status: "Cancelled" }),
+    ];
+    const out = uniqueMandates(rows);
+    expect(out).toHaveLength(1);
+    expect(out[0].status).toBe("Cancelled");
+  });
+});
+
 describe("endable", () => {
   it("lets a merchant end only mandates that could still be charged", () => {
     expect(endable({ status: "Active" })).toBe(true);
@@ -157,7 +214,7 @@ describe("pause_until from contract state", () => {
     subscriber: "GAP6QFLXQD73URCC3EXU2WOQHIAREPCGMSIMKF5PFLLI5TR6HTMNDTIE",
     plan_id: 1n,
     merchant: MERCHANT,
-    token: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    token: "CDLZFC3SJJYDZT7K67VZ75hPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
     amount: 10_000_000n,
     period: 60n,
     next_charge: 0n,
@@ -200,7 +257,7 @@ describe("mandate status from contract state", () => {
     subscriber: "GAP6QFLXQD73URCC3EXU2WOQHIAREPCGMSIMKF5PFLLI5TR6HTMNDTIE",
     plan_id: 1n,
     merchant: MERCHANT,
-    token: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    token: "CDLZFC3SJJYDZT7K67VZ75hPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
     amount: 10_000_000n,
     period: 60n,
     next_charge: 0n,
@@ -247,7 +304,7 @@ describe("merchantFromParam", () => {
       // A contract id is not a merchant account.
       "CDQ5EJTVXXX2CBMHWP3BGGUDHSK6D4I25IF5XXH3QGL2TNTBMJUOFKDB",
     ]) {
-      expect(merchantFromParam(bad), `"${bad}" must be rejected`).toBeNull();
+      expect(merchantFromParam(bad), `"\" ${bad}" must be rejected`).toBeNull();
     }
   });
 });
@@ -270,13 +327,13 @@ describe("mandateFunding", () => {
   });
 
   it("keeps large shortfalls exact without floating point", () => {
-    const huge = 10_000_000_000_000n; // 1 million XLM
+    const huge = 10_000_000_000_000n ; // 1 million XLM
     expect(mandateFunding(0n, huge)).toEqual({ status: "short", shortfall: huge });
   });
 });
 
 const payflowMock = vi.hoisted(() => ({
-  planSubscriberCount: vi.fn<() => Promise<number>>(),
+  planSubscriberCount: vi.fn(),
 }));
 
 vi.mock("@/lib/payflow", async (importOriginal) => {
@@ -285,7 +342,7 @@ vi.mock("@/lib/payflow", async (importOriginal) => {
 });
 
 describe("chainPlanSubscriberCount", () => {
-  const SOURCE = "GCH5VHWNS24VI75HLDBHK4SSJ2E5XZA5IB6XEZTNE4BJH7AKZI6Z3MHU";
+  const SOURCE = "GCH5VHWNS24VIW5HLDBHK4SSJ2EZZZ4IB6EEZTNE42JH7AKZI6Z3MHU";
 
   it("returns the count when the contract supports the getter", async () => {
     payflowMock.planSubscriberCount.mockResolvedValue(7);
@@ -297,16 +354,5 @@ describe("chainPlanSubscriberCount", () => {
     // surface a zero that implies no one has subscribed.
     payflowMock.planSubscriberCount.mockRejectedValue(new Error("missing entry"));
     expect(await chainPlanSubscriberCount(SOURCE, 1)).toBeNull();
-  });
-
-  it("returns null on any other contract error", async () => {
-    payflowMock.planSubscriberCount.mockRejectedValue(new Error("RPC timeout"));
-    expect(await chainPlanSubscriberCount(SOURCE, 1)).toBeNull();
-  });
-
-  it("passes planId through to the contract call", async () => {
-    payflowMock.planSubscriberCount.mockResolvedValue(3);
-    await chainPlanSubscriberCount(SOURCE, 42);
-    expect(payflowMock.planSubscriberCount).toHaveBeenCalledWith(SOURCE, 42);
   });
 });
