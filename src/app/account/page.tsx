@@ -17,7 +17,7 @@ import {
 import {
   chainMandatesOf,
   sortVaultEventsNewestFirst,
-  vaultEventAmount,
+
   vaultEventLabel,
   vaultEventTone,
 } from "@/lib/chain";
