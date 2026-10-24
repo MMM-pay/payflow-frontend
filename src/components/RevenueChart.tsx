@@ -1,6 +1,7 @@
 "use client";
 
 import { useI18n } from "@/i18n/provider";
+import { useReducedMotion } from "@/lib/useReducedMotion";
 
 import { useId, useMemo } from "react";
 import type { TokenMeta } from "@/lib/format";
@@ -39,6 +40,7 @@ export function RevenueChart({
 }) {
   const { formatAmount, t: tr, describeSeries, formatBucketLabel, bucketTitle } = useI18n();
   const tableId = useId();
+  const reducedMotion = useReducedMotion();
   const scaled = useMemo(
     () => scaleSeries(points, WIDTH, HEIGHT, PADDING),
     [points],
@@ -55,7 +57,7 @@ export function RevenueChart({
     <div className="space-y-3">
       <svg
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-        className="h-44 w-full"
+        className={`h-44 w-full ${reducedMotion ? "motion-reduce:transition-none" : ""}`}
         preserveAspectRatio="none"
         role="img"
         aria-label={summary}
@@ -73,7 +75,7 @@ export function RevenueChart({
           <polyline
             points={toPolyline(scaled)}
             fill="none"
-            className="stroke-accent"
+            className={`stroke-accent ${reducedMotion ? "transition-none" : "transition-[stroke] duration-200"}`}
             strokeWidth={2}
             strokeLinejoin="round"
             strokeLinecap="round"
@@ -97,7 +99,7 @@ export function RevenueChart({
       )}
 
       <details className="text-sm">
-        <summary className="cursor-pointer text-muted hover:text-fg">{tr("Show revenue as a table")}</summary>
+        <summary className={`cursor-pointer text-muted hover:text-fg ${reducedMotion ? "transition-none" : "transition-colors"}`}>{tr("Show revenue as a table")}</summary>
         <div className="mt-3 overflow-x-auto" id={tableId}>
           <table className="w-full text-left text-sm">
             <caption className="sr-only">{summary}</caption>
