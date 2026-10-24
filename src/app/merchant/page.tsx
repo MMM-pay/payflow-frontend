@@ -41,7 +41,7 @@ import {
   remainingDiscountCharges,
   supportsDiscounts,
 } from "@/lib/discount";
-import { MAX_NAME_LEN, MAX_PAGE, mandatePauseUntil, mandateRefundableAmount, mandateSupportsRefund, nameByteLength, payflow, server, decodeContractError } from "@/lib/payflow";
+import { MAX_NAME_LEN, MAX_PAGE, mandatePauseUntil, mandateRefundableAmount, mandateSupportsRefund, nameByteLength, validatePlanName, payflow, server, decodeContractError } from "@/lib/payflow";
 import {
   checkProfileName,
   checkProfileUrl,
@@ -1043,6 +1043,11 @@ export default function MerchantPage() {
    */
   const [pauseSupport, setPauseSupport] = useState(false);
 
+  /** Whether the deployed plan registry has set_plan_name; hides Edit name if not. */
+  const [renameSupport, setRenameSupport] = useState(false);
+  const [renameFor, setRenameFor] = useState<number | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   /**
@@ -1443,6 +1448,25 @@ export default function MerchantPage() {
       live = false;
     };
   }, [address, bucketSize]);
+
+  const firstPlan = plans?.[0];
+  const firstPlanId = firstPlan?.id;
+  const firstPlanName = firstPlan?.name;
+  useEffect(() => {
+    if (!address || firstPlanId === undefined) {
+      setRenameSupport(false);
+      return;
+    }
+    let live = true;
+    void payflow
+      .supportsPlanRename(address, { id: firstPlanId, name: firstPlanName ?? "" })
+      .then((ok) => {
+        if (live) setRenameSupport(ok);
+      });
+    return () => {
+      live = false;
+    };
+  }, [address, firstPlanId, firstPlanName]);
 
   async function run(key: string, fn: () => Promise<string>) {
     setBusy(key);
@@ -2037,6 +2061,18 @@ export default function MerchantPage() {
                     </div>
                   ) : (
                     <div className="flex items-center gap-2">
+                      {renameSupport && (
+                        <button
+                          type="button"
+                          className="btn-ghost text-xs"
+                          disabled={busy !== null || networkMismatch}
+                          onClick={() => {
+                            setRenameFor(p.id);
+                            setRenameValue(p.name);
+                          }}
+                          aria-label={tr("Edit name of plan {0}", { "0": p.name || `#${p.id}` })}
+                        >{tr("Edit name")}</button>
+                      )}
                       <button
                         type="button"
                         className="btn-ghost text-xs"
@@ -2063,6 +2099,41 @@ export default function MerchantPage() {
                         {p.active ?tr("Deactivate") :tr("Activate")}
                       </button>
                     </div>
+                  )}
+                  {renameFor === p.id && (
+                    <form
+                      className="w-full mt-3 space-y-2"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        if (validatePlanName(renameValue) !== null) return;
+                        void run(`rename-${p.id}`, () =>
+                          payflow.setPlanName(address, signXdr, p.id, renameValue),
+                        ).then(() => setRenameFor(null));
+                      }}
+                    >
+                      <label className="label" htmlFor={`rename-${p.id}`}>{tr("New plan name")}</label>
+                      <input
+                        id={`rename-${p.id}`}
+                        className="input"
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        aria-invalid={validatePlanName(renameValue) !== null}
+                        aria-describedby={`rename-error-${p.id}`}
+                      />
+                      <p id={`rename-error-${p.id}`} className="text-sm text-danger" role="alert">
+                        {nameByteLength(renameValue.trim()) > MAX_NAME_LEN
+                          ? `${tr("Too long —")} ${MAX_NAME_LEN} ${tr("bytes maximum.")}`
+                          : ""}
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <button type="button" className="btn-ghost text-xs" disabled={busy !== null} onClick={() => setRenameFor(null)}>{tr("Cancel")}</button>
+                        <button
+                          type="submit"
+                          className="btn-primary text-xs"
+                          disabled={busy !== null || networkMismatch || validatePlanName(renameValue) !== null}
+                        >{busy === `rename-${p.id}` ? tr("Saving…") : tr("Save name")}</button>
+                      </div>
+                    </form>
                   )}
                   {embedFor === p.id && (
                     <div className="w-full mt-3 rounded-lg border border-edge bg-surface/50 p-3 text-xs space-y-2">

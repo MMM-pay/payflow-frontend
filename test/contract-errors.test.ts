@@ -227,3 +227,14 @@ describe("nameByteLength", () => {
     expect(nameByteLength("😀")).toBeGreaterThan(1);
   });
 });
+
+import { validatePlanName as _validatePlanName } from "@/lib/payflow";
+describe("validatePlanName", () => {
+  it("accepts a normal name", () => expect(_validatePlanName("Pro")).toBeNull());
+  it("rejects empty", () => expect(_validatePlanName("   ")).not.toBeNull());
+  it("blocks over 64 bytes", () => {
+    expect(_validatePlanName("a".repeat(64))).toBeNull();
+    expect(_validatePlanName("a".repeat(65))).not.toBeNull();
+    expect(_validatePlanName("é".repeat(33))).not.toBeNull();
+  });
+});
