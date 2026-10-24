@@ -96,7 +96,6 @@ vi.mock("@/lib/toml", () => ({ useOrgName: () => null }));
 vi.mock("@/lib/config", () => ({
   config: {
     rpcUrl: "http://localhost:8000/rpc",
-    rpcUrls: ["http://localhost:8000/rpc"],
     networkPassphrase: "Test SDF Network ; September 2015",
     network: "TESTNET",
     apiUrl: "http://localhost:8080",
@@ -142,7 +141,7 @@ const USDC = "token-contract.testnet";
 // Captured from the anchor `downloadCsv` synthesises, so the tests assert the
 // actual filename and file body rather than only that a click happened.
 const downloads: { name: string; blob: Blob }[] = [];
-let lastBlob: Blob | null = null;
+const lastBlob: Blob | null = null;
 
 function mandate(overrides: Partial<ApiMandate> = {}): ApiMandate {
   return {
