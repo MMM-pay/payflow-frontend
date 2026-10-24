@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * First-load JS budget check.
  *
