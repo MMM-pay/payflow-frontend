@@ -3,12 +3,15 @@
 import { useI18n } from "@/i18n/provider";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { LanguagePicker } from "@/i18n/LanguagePicker";
+
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { WalletButton } from "@/components/WalletButton";
 import { NetworkMismatchBanner } from "@/components/ui";
+import { Search } from "@/components/Search";
 import {
   APP_VERSION,
   COMMIT_HASH,
@@ -19,7 +22,8 @@ import {
   buildDebugInfo,
   formatDebugInfo,
 } from "@/lib/build-info";
-import { config } from "@/lib/config";
+import type { NetworkConfig } from "@/lib/config";
+import { useNetwork } from "@/lib/network";
 import { useWallet } from "@/lib/wallet";
 import { copyToClipboard } from "@/lib/clipboard";
 
@@ -36,6 +40,71 @@ function isCurrent(pathname: string, href: string): boolean {
 }
 
 /**
+ * The header's network control: a labelled badge when this build serves one
+ * network, a switcher when it serves several. Switching persists the choice
+ * and reloads, so every page — and the RPC server behind it — comes back on
+ * the selected network.
+ */
+function NetworkSwitcher({
+  network,
+  networks,
+  select,
+}: {
+  network: NetworkConfig;
+  networks: NetworkConfig[];
+  select: (id: string) => void;
+}) {
+  if (networks.length <= 1) {
+    return (
+      <span
+        className="inline-flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-2 text-xs text-muted"
+        title={`Stellar ${network.label.toLowerCase()}`}
+      >
+        <span className="h-2 w-2 rounded-full bg-accent" aria-hidden="true" />
+        {network.label}
+      </span>
+    );
+  }
+
+  return (
+    <span className="relative inline-flex items-center">
+      <span
+        className="pointer-events-none absolute left-2.5 h-2 w-2 rounded-full bg-accent"
+        aria-hidden="true"
+      />
+      <label className="sr-only" htmlFor="network-switcher">
+        Stellar network
+      </label>
+      <select
+        id="network-switcher"
+        className="h-9 appearance-none rounded-lg border border-edge bg-transparent pl-7 pr-7 text-xs text-muted transition hover:border-muted hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        value={network.id}
+        onChange={(event) => select(event.target.value)}
+        title={`Network: ${network.label} — switch and reload`}
+      >
+        {networks.map((option) => (
+          <option key={option.id} value={option.id}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="pointer-events-none absolute right-2 h-3.5 w-3.5 text-muted"
+        aria-hidden="true"
+      >
+        <path d="m6 9 6 6 6-6" />
+      </svg>
+    </span>
+  );
+}
+
+/**
  * The visible app shell: header, nav, footer, and the global network
  * mismatch banner.
  *
@@ -46,7 +115,9 @@ function isCurrent(pathname: string, href: string): boolean {
 export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
   const { t: tr } = useI18n();
   const { networkMismatch, walletNetwork, address } = useWallet();
+  const { network, networks, select } = useNetwork();
   const pathname = usePathname();
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const toggleRef = useRef<HTMLButtonElement>(null);
@@ -63,6 +134,26 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
       walletDisplayName = walletName;
     }
   }
+
+  // "/" focuses the search field from anywhere on the page, unless the user
+  // is already typing into an input, textarea, or contenteditable element.
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target?.isContentEditable) {
+        return;
+      }
+      const input = document.getElementById("global-search") as HTMLInputElement | null;
+      if (!input) return;
+      event.preventDefault();
+      input.focus();
+      input.select();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   const handleCopyDebugInfo = async () => {
     const debugInfo = buildDebugInfo(
@@ -114,7 +205,7 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
   const versionText = formatVersion(APP_VERSION);
   const commitShort = formatCommit(COMMIT_HASH);
   const commitUrl = getCommitUrl(commitShort);
-  const contractLinks = getProtocolContractLinks();
+  const contractLinks = getProtocolContractLinks(network.contracts, network.explorerBase);
 
   return (
     <>
@@ -122,7 +213,7 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
         <div className="mx-auto max-w-5xl px-5 pt-4 print:hidden">
           <NetworkMismatchBanner
             walletNetwork={walletNetwork}
-            expectedNetwork={config.networkPassphrase}
+            expectedNetwork={network.networkPassphrase}
           />
         </div>
       )}
@@ -159,7 +250,12 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
               </nav>
             </div>
 
+            <div className="hidden min-w-0 flex-1 justify-center px-2 md:flex">
+              <Search onNavigate={(href) => router.push(href)} />
+            </div>
+
             <div className="flex shrink-0 items-center gap-2">
+              <NetworkSwitcher network={network} networks={networks} select={select} />
               <ThemeToggle />
               <WalletButton />
               <button
@@ -200,7 +296,15 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
             </div>
           </div>
 
+          <div className="mt-3 md:hidden">
+            <Search onNavigate={(href) => router.push(href)} />
+          </div>
+
           <div className="mt-3 flex justify-end"><LanguagePicker /></div>
+
+          <div className="mt-3 md:hidden">
+            <Search onNavigate={(href) => router.push(href)} />
+          </div>
           <nav
             id="mobile-nav"
             ref={menuRef}
@@ -264,7 +368,10 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-muted">
-              <span>{tr("Stellar testnet · unaudited · do not use with real funds")}</span>
+              {/* Per-network copy from the config; `tr` falls back to the
+                  English string, so a translation can be added later without
+                  changing the config. */}
+              <span>{tr(network.disclaimer)}</span>
               <div className="flex items-center gap-2">
                 {(versionText || commitShort) && (
                   <>

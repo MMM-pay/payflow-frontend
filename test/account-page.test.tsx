@@ -96,6 +96,7 @@ vi.mock("@/lib/toml", () => ({ useOrgName: () => null }));
 vi.mock("@/lib/config", () => ({
   config: {
     rpcUrl: "http://localhost:8000/rpc",
+    rpcUrls: ["http://localhost:8000/rpc"],
     networkPassphrase: "Test SDF Network ; September 2015",
     network: "TESTNET",
     apiUrl: "http://localhost:8080",
@@ -275,6 +276,71 @@ describe("AccountPage", () => {
     expect(deposit.disabled).toBe(true);
     expect(withdraw.disabled).toBe(true);
     expect(pause.disabled).toBe(true);
+  });
+
+  it("refuses to withdraw more than the vault holds, and Max fills the full balance", async () => {
+    // Issue #35: an over-balance amount used to go all the way to the wallet
+    // prompt and only fail in simulation.
+    payflowMock.vaultBalance.mockResolvedValue(50_000_000n); // 5 XLM
+    apiMock.mandatesOf.mockResolvedValue({ mandates: [] });
+
+    render(<AccountPage />);
+
+    const input = await screen.findByLabelText("Amount (XLM)");
+    const withdraw = screen.getByRole("button", { name: "Withdraw" }) as HTMLButtonElement;
+    const max = screen.getByRole("button", {
+      name: "Fill the amount with the full vault balance",
+    }) as HTMLButtonElement;
+
+    // Nothing typed yet: nothing can be withdrawn, so the button waits.
+    expect(withdraw.disabled).toBe(true);
+
+    // One stroop over the balance disables the button and says why.
+    fireEvent.change(input, { target: { value: "5.0000001" } });
+    expect(withdraw.disabled).toBe(true);
+    expect(screen.getByRole("alert").textContent).toContain(
+      "Amount is more than your vault balance of 5.",
+    );
+
+    // Max fills the full balance at the token's own precision; the round-trip
+    // parses back to the same bigint, so withdrawing it is allowed.
+    fireEvent.click(max);
+    expect((input as HTMLInputElement).value).toBe("5");
+    expect(withdraw.disabled).toBe(false);
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    payflowMock.withdraw.mockResolvedValue("c0ffee");
+    fireEvent.click(withdraw);
+    await waitFor(() => expect(payflowMock.withdraw).toHaveBeenCalledTimes(1));
+    expect(payflowMock.withdraw).toHaveBeenCalledWith(
+      SUBSCRIBER,
+      expect.any(Function),
+      expect.any(String),
+      50_000_000n,
+    );
+  });
+
+  it("keeps withdrawing disabled while the balance is still loading", async () => {
+    payflowMock.vaultBalance.mockResolvedValue(new Promise(() => {}));
+    apiMock.mandatesOf.mockResolvedValue({ mandates: [] });
+
+    render(<AccountPage />);
+
+    const input = await screen.findByLabelText("Amount (XLM)");
+    fireEvent.change(input, { target: { value: "1" } });
+
+    // A balance the page does not have yet must not be assumed to cover the
+    // amount; the Max button stays out of reach for the same reason.
+    expect(
+      (screen.getByRole("button", { name: "Withdraw" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Fill the amount with the full vault balance",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
   });
 
   it("labels and scales amounts with the token's own metadata", async () => {

@@ -1,6 +1,6 @@
 # Contributing to the Payflow Frontend
 
-## Setup
+# # Setup
 
 ```bash
 npm install
