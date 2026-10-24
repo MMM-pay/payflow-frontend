@@ -340,6 +340,13 @@ export const config = {
   get rpcUrl() {
     return currentNetwork.rpcUrl;
   },
+  /**
+   * Friendbot is a testnet faucet with no mainnet equivalent, so the button
+   * that uses it is hidden wherever this is null.
+   */
+  get friendbotUrl() {
+    return currentNetwork.network === "TESTNET" ? "https://friendbot.stellar.org" : null;
+  },
   /** Ordered list of RPC endpoints to try in turn. */
   rpcUrls: rpcUrls as readonly string[],
   get horizonUrl() {

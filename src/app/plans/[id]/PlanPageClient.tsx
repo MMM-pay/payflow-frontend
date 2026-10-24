@@ -11,7 +11,7 @@ import { planAvailability } from "@/lib/availability";
 import { config } from "@/lib/config";
 import { payflow } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
-import{ fromStroops } from "@/lib/format";
+
 import { AddressLink, Badge, Empty, Notice, Panel, TxLink } from "@/components/ui";
 
 type ChargeRow = PlanCharge;
