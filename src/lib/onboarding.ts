@@ -34,7 +34,8 @@ export interface OnboardingInput {
 }
 
 /** Minimum balance (in strops) to consider the wallet funded. */
-export const FUNDED_THRESHOLD = 1n * 10_000n * 10_000n ; // 1 XLM
+/** One XLM, in stroops: a lumen is 10^7 stroops, not 10^8. */
+export const FUNDED_THRESHOLD = 10_000_000n;
 
 export function isFunded(balance: bigint | null): boolean {
   if (balance === null) return false;

@@ -8,6 +8,8 @@ import type { ApiPlan } from "@/lib/api";
 const mocks = vi.hoisted(() => ({ plans: vi.fn(), chain: vi.fn(), subscribe: vi.fn(),
   feeBps: vi.fn(),
   wallet: { address: "wallet-a" as string | null, networkMismatch: false, signXdr: vi.fn() } }));
+// The subscribe page reads the `?plan=` parameter of a shared link.
+vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams() }));
 vi.mock("@/lib/api", () => ({ api: { plans: mocks.plans, mandatesFor: async () => ({ mandates: [] }) } }));
 vi.mock("@/lib/chain", () => ({ chainPlans: mocks.chain }));
 vi.mock("@/lib/payflow", () => ({ payflow: { subscribe: mocks.subscribe, feeBps: mocks.feeBps } }));

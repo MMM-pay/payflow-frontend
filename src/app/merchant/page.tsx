@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useI18n } from "@/i18n/provider";
 
+
+
 import Link from "next/link";
 import { api, checkWebhookUrl, type ApiChargeAttempt, type ApiMandate, type ApiPlan, type ApiWebhook, type MerchantSummary, type StreamEvent } from "@/lib/api";
 import { RevenueChart } from "@/components/RevenueChart";
@@ -45,8 +47,11 @@ import { countOpenMandates } from "@/lib/plans";
 import { formatUsdEstimate, formatUsdcEstimate, useXlmUsdPrice } from "@/lib/price";
 import { AmountInput } from "@/components/AmountInput";
 import { CopyButton } from "@/components/CopyButton";
+import { QrCode } from "@/components/QrCode";
+
 import { OnboardingChecklist } from "@/components/OnboardingChecklist";
 import { AddressLink, Badge, Dialog, Empty, Notice, Panel, SkeletonRows, Stat, TimeAgo, TxLink } from "@/components/ui";
+import { subscribeLink } from "@/lib/share";
 
 const PERIOD_OPTIONS = [
   { label: "Every minute (demo)", value: 60 },
@@ -901,6 +906,9 @@ export default function MerchantPage() {
    * and the hydrated one cannot disagree. `null` means "not yet read".
    */
   const [onboardingDismissed, setOnboardingDismissed] = useState<boolean | null>(null);
+  // Set when the merchant copies a plan link or opens its QR code: the
+  // checklist cannot see a link leaving the page any other way.
+  const [sharedLink, setSharedLink] = useState(false);
   useEffect(() => {
     try {
       setOnboardingDismissed(window.localStorage.getItem(ONBOARDING_DISMISSED_KEY) === "1");
@@ -1241,10 +1249,25 @@ export default function MerchantPage() {
   const [publicUrl, setPublicUrl] = useState("");
   useEffect(() => {
     if (!address) return;
-    setPublicUrl(
-      `${window.location.origin}${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/m/?address=${address}`,
-    );
+    setPublicUrl(`${window.location.origin}${config.basePath}/m/?address=${address}`);
   }, [address]);
+
+  /**
+   * The link to each plan, for the same reason: the origin is only known in
+   * the browser, and the link has to carry the base path the site is served
+   * from or it 404s on the deployed demo.
+   */
+  const [planLinks, setPlanLinks] = useState<Record<number, string>>({});
+  useEffect(() => {
+    const origin = window.location.origin;
+    const links: Record<number, string> = {};
+    for (const plan of plans ?? []) links[plan.id] = subscribeLink(origin, plan.id);
+    setPlanLinks(links);
+  }, [plans]);
+
+  // The plan whose QR code is on screen. Only one at a time: the codes are
+  // large, and a list of them is noise.
+  const [qrPlan, setQrPlan] = useState<number | null>(null);
 
   // Read once per wallet, not on every reload: the protocol fee only moves
   // when an admin changes it, and this is a preview rather than a gate — if the
@@ -1994,6 +2017,36 @@ export default function MerchantPage() {
                         >{busy === `rename-${p.id}` ? tr("Saving…") : tr("Save name")}</button>
                       </div>
                     </form>
+                  )}
+                  <div className="flex w-full flex-wrap items-center gap-2 mt-2">
+                    <CopyButton
+                      value={planLinks[p.id] ?? ""}
+                      label={`link to ${p.name || `plan #${p.id}`}`}
+                    />
+                    <button
+                      type="button"
+                      className="btn-ghost text-xs"
+                      aria-expanded={qrPlan === p.id}
+                      onClick={() => {
+                        setQrPlan(qrPlan === p.id ? null : p.id);
+                        setSharedLink(true);
+                      }}
+                    >
+                      {qrPlan === p.id ? tr("Hide QR") : tr("Show QR")}
+                    </button>
+                  </div>
+                  {qrPlan === p.id && planLinks[p.id] && (
+                    <div className="w-full mt-3 flex flex-col items-start gap-2 rounded-lg border border-edge bg-surface/50 p-3">
+                      <QrCode
+                        data={planLinks[p.id] ?? ""}
+                        label={`QR code for the link to ${p.name || `plan #${p.id}`}`}
+                      />
+                      {/* The link in text: a camera reads the code, a screen
+                          reader reads this. */}
+                      <code className="break-all font-mono text-[11px] text-muted">
+                        {planLinks[p.id]}
+                      </code>
+                    </div>
                   )}
                   {embedFor === p.id && (
                     <div className="w-full mt-3 rounded-lg border border-edge bg-surface/50 p-3 text-xs space-y-2">

@@ -408,6 +408,9 @@ export const CALLEE_ERRORS: Record<string, Record<number, string>> = {
   subscribe: {
     3: "That plan does not exist.",
   },
+  set_max_charges: {
+    8: "The new cap cannot be below the number of charges already made.",
+  },
 };
 
 const REGISTRY_METHODS = new Set([
@@ -1100,6 +1103,23 @@ export const payflow = {
     ]),
 
   /**
+   * Subscriber side: change a mandate's charge cap. The contract rejects a cap
+   * below `charges_made`, so callers should validate against the mandate's
+   * current `charges_made` before submitting.
+   */
+  setMaxCharges: (
+    source: string,
+    sign: SignXdr,
+    mandateId: number | bigint,
+    maxCharges: number | bigint,
+  ) =>
+    writeContract(config.contracts.subscription, "set_max_charges", source, sign, [
+      arg.address(source),
+      arg.u64(mandateId),
+      arg.u32(Number(maxCharges)),
+    ]),
+
+  /**
    * Subscriber side: pause billing until a point in time, from the interface
    * proposed in payflow-contract#41. Only callable against a contract that
    * carries `pause_until` — see `mandatePauseUntil`, which is how the UI
@@ -1243,4 +1263,74 @@ export async function addTrustline(
     throw new Error(`changeTrust failed on-chain (${confirmed.status})`);
   }
   return sent.hash;
+}
+
+/** What `validateMaxCharges` needs to judge a proposed cap. */
+export interface MaxChargesCheck {
+  /** The cap the subscriber typed, already parsed. */
+  maxCharges: bigint;
+  /** Charges the mandate has already settled; the cap can never go below it. */
+  chargesMade: bigint;
+  /** The cap currently in force, for context in the message. */
+  currentMaxCharges: bigint;
+  /** Upper bound the contract enforces, when the deployment has one. */
+  maxAllowed?: bigint;
+}
+
+/**
+ * Whether the deployed subscription contract carries `set_max_charges`. The
+ * control is hidden rather than offered and rejected on a contract that
+ * predates it.
+ */
+export function canSetMaxCharges(methods: readonly string[] | null | undefined): boolean {
+  return !!methods && methods.includes("set_max_charges");
+}
+
+/**
+ * Why a proposed charge cap cannot be submitted, or null when it can.
+ *
+ * The contract rejects a cap below `charges_made`, so the same rule is checked
+ * here: a wallet should never open for a transaction the chain will refuse.
+ */
+export function validateMaxCharges({
+  maxCharges,
+  chargesMade,
+  maxAllowed,
+}: MaxChargesCheck): string | null {
+  if (maxCharges < 1n) return "The cap must be at least 1 charge.";
+  if (maxCharges < chargesMade) {
+    return `The cap cannot be below the ${chargesMade} charges made already.`;
+  }
+  if (maxAllowed !== undefined && maxCharges > maxAllowed) {
+    return `The cap can be at most ${maxAllowed}.`;
+  }
+  return null;
+}
+
+/**
+ * Whether a mandate's cap can still be edited at all: a mandate that has
+ * reached its cap is completed, and a completed mandate has nothing to cap.
+ */
+export function canEditChargeCap(
+  chargesMade: number,
+  maxCharges: number | null,
+): boolean {
+  if (chargesMade < 0) return false;
+  if (maxCharges === null || maxCharges === 0) return true;
+  return chargesMade < maxCharges;
+}
+
+/**
+ * Parse a decimal amount into stroops, or null when it is not an amount this
+ * can submit. Integer arithmetic throughout: a cap above ~90 million XLM
+ * would lose its last digits through Number.
+ */
+export function parseChargeCapInput(input: string): bigint | null {
+  const text = input.trim();
+  if (!text || !/^\d+(\.\d{1,7})?$/.test(text)) return null;
+  const parts = text.split(".");
+  const padded = ((parts[1] ?? "") + "0000000").slice(0, 7);
+  const whole = parts[0] ?? "0";
+  const stroops = BigInt(whole) * 10_000_000n + BigInt(padded);
+  return stroops > 0n ? stroops : null;
 }

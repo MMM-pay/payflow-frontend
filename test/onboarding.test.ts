@@ -68,7 +68,7 @@ describe("onboarding checklist", () => {
       ...baseInput,
       balance: 10_000_000n,
     });
-    expect(items[0].done).toBe(true);
+    expect(items[0]?.done).toBe(true);
   });
 
   it("treats a zero balance as not funded", () => {
@@ -82,21 +82,21 @@ describe("onboarding checklist", () => {
       ...baseInput,
       mandates: [mandate(1n)],
     });
-    expect(items[1].done).toBe(true);
+    expect(items[1]?.done).toBe(true);
   });
 
   it("share-link is complete after sharing or once a subscriber exists", () => {
     const notShared = computeOnboardingItems(baseInput);
-    expect(notShared[2].done).toBe(false);
+    expect(notShared[2]?.done).toBe(false);
     const shared = computeOnboardingItems({ ...baseInput, sharedLink: true });
-    expect(shared[2].done).toBe(true);
+    expect(shared[2]?.done).toBe(true);
     const withSub = computeOnboardingItems({ ...baseInput, subscriberCount: 1 });
-    expect(withSub[2].done).toBe(true);
+    expect(withSub[2]?.done).toBe(true);
   });
 
   it("marks see-subscriber complete when subscriberCount >= 1", () => {
     const items = computeOnboardingItems({ ...baseInput, subscriberCount: 1 });
-    expect(items[3].done).toBe(true);
+    expect(items[3]?.done).toBe(true);
   });
 
   it("detects completion and visibility", () => {

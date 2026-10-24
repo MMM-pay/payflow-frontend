@@ -10,8 +10,9 @@ import { api, type ApiPlan } from "@/lib/api";
 import { chainPlans } from "@/lib/chain";
 import { config } from "@/lib/config";
 import { payflow } from "@/lib/payflow";
+import { planParam } from "@/lib/share";
 import { useWallet } from "@/lib/wallet";
-import{ fromStroops, type TokenMeta } from "@/lib/format";
+import { fromStroops, type TokenMeta } from "@/lib/format";
 import { trialSeconds } from "@/lib/trial";
 import { availabilityInteger, planAvailability } from "@/lib/availability";
 import {
@@ -25,6 +26,7 @@ import { filterAndSortPlans, type PlanPeriodOption, type PlanSortOption } from "
 import { formatUsdEstimate, formatUsdcEstimate, useXlmUsdPrice } from "@/lib/price";
 import { checkChargeLimit, confirmationFor } from "@/lib/subscribe-confirmation";
 import { Dialog, Empty, MerchantAccount, Notice, Panel, SkeletonPlanCards, TxLink } from "@/components/ui";
+
 import { SubscriberGuide } from "@/components/SubscriberGuide";
 
 /** Remaining seats in words, without inventing a count the source cannot provide. */
@@ -149,6 +151,8 @@ function SubscribeInner() {
   const { t: tr, formatPeriod, formatDate, formatWhen, translateMessage, formatTrialLength, trialBadge, formatTokenValue, formatUsdString, formatNumber, formatAmount, formatFeeBps } = useI18n();
   const searchParams = useSearchParams();
   const sortParam = (searchParams?.get("sort") as PlanSortOption) || "newest";
+  // A shared link (?plan=12) shows that one plan instead of the catalogue.
+  const shared = planParam(searchParams?.get("plan"));
   const periodParam = (searchParams?.get("period") as PlanPeriodOption) || "all";
 
   const [sort, setSort] = useState<PlanSortOption>(sortParam);
@@ -161,6 +165,8 @@ function SubscribeInner() {
   const [plans, setPlans] = useState<ApiPlan[] | null>(null);
   const [maxCharges, setMaxCharges] = useState<Record<number, string>>({});
   const [busy, setBusy] = useState<number | null>(null);
+  const [depositBusy, setDepositBusy] = useState<number | null>(null);
+  const [vaultBalances, setVaultBalances] = useState<Record<string, bigint>>({});
   const [direct, setDirect] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
@@ -246,6 +252,27 @@ function SubscribeInner() {
   }, [load]);
 
   useEffect(() => {
+    if (!address || !plans) return;
+    let active = true;
+    const tokens = Array.from(new Set(plans.map((p) => p.token)));
+    void (async () => {
+      const map: Record<string, bigint> = {};
+      for (const t of tokens) {
+        try {
+          const bal = await payflow.vaultBalance(address ?? config.readSource, address, t);
+          if (active) map[t] = bal;
+        } catch {
+          // ignore
+        }
+      }
+      if (active) setVaultBalances(map);
+    })();
+    return () => {
+      active = false;
+    };
+  }, [address, plans]);
+
+  useEffect(() => {
     const timer = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
     return () => clearInterval(timer);
   }, []);
@@ -313,6 +340,42 @@ function SubscribeInner() {
     void subscribe(plan, limit);
   }
 
+  async function depositFor(plan: ApiPlan) {
+    if (!address) {
+      setError(tr("Connect a wallet first."));
+      return;
+    }
+    if (networkMismatch) {
+      setError(tr("Switch your wallet to the correct network first."));
+      return;
+    }
+    setDepositBusy(plan.id);
+    setError(null);
+    try {
+      const cap = checkChargeLimit(maxCharges[plan.id]);
+      const periods = cap.ok && cap.limit > 0 ? cap.limit : 3;
+      const amount = BigInt(plan.amount) * BigInt(periods);
+      const hash = await payflow.deposit(
+        address,
+        async (xdr) => {
+          if (walletState.current.address !== address || walletState.current.networkMismatch) {
+            throw new Error(tr("Wallet changed. Check your wallet and try again."));
+          }
+          return signXdr(xdr);
+        },
+        plan.token,
+        amount,
+      );
+      setDone(hash);
+      const bal = await payflow.vaultBalance(address ?? config.readSource, address, plan.token);
+      setVaultBalances((m) => ({ ...m, [plan.token]: bal }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDepositBusy(null);
+    }
+  }
+
   async function subscribe(plan: ApiPlan, limit: number) {
     if (!address) {
       setError(tr("Connect a wallet first."));
@@ -366,9 +429,20 @@ function SubscribeInner() {
   }
 
   const active = useMemo(() => (plans ?? []).filter((p) => p.active === 1), [plans]);
+  // A link to a plan that has been deactivated or removed is not an empty
+  // page: `sharedPlan` stays null and the page says the plan is gone.
+  const sharedPlan = useMemo(
+    () => (shared.kind === "plan" ? active.find((p) => p.id === shared.id) ?? null : null),
+    [active, shared],
+  );
+  const sharedMissing = shared.kind === "plan" && plans !== null && sharedPlan === null;
   const filteredPlans = useMemo(() => {
+    // A link that names a plan shows that plan and nothing else: falling back
+    // to the catalogue would quietly offer a different plan from the one the
+    // link promised.
+    if (shared.kind === "plan") return sharedPlan ? [sharedPlan] : [];
     return filterAndSortPlans(active, { sort, period });
-  }, [active, sort, period]);
+  }, [active, sort, period, shared, sharedPlan]);
   // Compare from the full active list rather than the filtered one: changing
   // the filter must not silently drop a column the subscriber already picked.
   const comparedPlans = useMemo(
@@ -420,13 +494,32 @@ function SubscribeInner() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">{tr("Available plans")}</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">
+          {sharedPlan ? sharedPlan.name || tr("Available plans") : tr("Available plans")}
+        </h1>
         <p className="mt-1 text-sm text-muted">{tr("Subscribing opens a mandate. Fund your vault on the")}{" "}
           <Link href="/account" className="text-accent hover:underline">{tr("account page")}</Link>{" "}{tr("or charges will fail for lack of balance.")}</p>
+        {shared.kind === "plan" && (
+          <p className="mt-2 text-sm">
+            <Link href="/subscribe/" className="text-accent hover:underline">
+              {tr("See all plans")}
+            </Link>
+          </p>
+        )}
       </div>
 
       <SubscriberGuide />
 
+      {sharedMissing && (
+        <Notice tone="info">
+          {tr("That plan is no longer listed. The merchant may have deactivated it.")}
+        </Notice>
+      )}
+      {shared.kind === "invalid" && (
+        <Notice tone="info">
+          {tr("That link does not name a plan, so every plan is listed below.")}
+        </Notice>
+      )}
       {direct && (
         <Notice tone="info">{tr("Reading plans directly from the contract — the indexer is not reachable, so this list is capped at the first 24 plans.")}</Notice>
       )}
@@ -643,26 +736,66 @@ function SubscribeInner() {
                         />
                       </div>
 
-                      <button
-                        type="button"
-                        className="btn-primary w-full"
-                        disabled={
-                          busy !== null || !address || networkMismatch || availability.reason !== null
-                        }
-                        aria-describedby={availability.reason ? `availability-${plan.id}` : undefined}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openConfirmation(plan);
-                        }}
-                      >
-                        {busy === plan.id
-                          ?tr("Confirming…")
-                          : networkMismatch
-                          ?tr("Wrong network")
-                          : address
-                          ?tr("Subscribe")
-                          :tr("Connect wallet")}
-                      </button>
+                      {(() => {
+                        const currentBal = vaultBalances[plan.token] ?? 0n;
+                        const cap = checkChargeLimit(maxCharges[plan.id]);
+                        const periods = cap.ok && cap.limit > 0 ? cap.limit : 3;
+                        const required = BigInt(plan.amount) * BigInt(periods);
+                        const funded = currentBal >= required;
+                        return (
+                          <div className="space-y-2">
+                            <div className="rounded-lg border border-edge bg-surface/40 p-2 text-xs space-y-1">
+                              <div className="flex items-center justify-between font-medium">
+                                <span className="text-muted">{tr("Guided Flow")}</span>
+                                <span className={funded ? "text-emerald-500 font-semibold" : "text-amber-500 font-semibold"}>
+                                  {funded ? tr("Step 2: Ready to Subscribe") : tr("Step 1: Fund Vault First")}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between text-muted">
+                                <span>{tr("Vault balance")}</span>
+                                <span className="tabular-nums font-medium text-fg">{formatTokenValue(currentBal, 4, meta.decimals)} {meta.symbol}</span>
+                              </div>
+                            </div>
+
+                            {!funded && (
+                              <button
+                                type="button"
+                                className="btn-ghost w-full text-xs"
+                                disabled={depositBusy !== null || !address || networkMismatch}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  depositFor(plan);
+                                }}
+                              >
+                                {depositBusy === plan.id
+                                  ? tr("Depositing…")
+                                  : tr("Deposit {0} {1} (approx {2} periods)", { 0: formatTokenValue(required, 4, meta.decimals), 1: meta.symbol, 2: periods })}
+                              </button>
+                            )}
+
+                            <button
+                              type="button"
+                              className="btn-primary w-full"
+                              disabled={
+                                busy !== null || !address || networkMismatch || availability.reason !== null
+                              }
+                              aria-describedby={availability.reason ? `availability-${plan.id}` : undefined}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openConfirmation(plan);
+                              }}
+                            >
+                              {busy === plan.id
+                                ?tr("Confirming…")
+                                : networkMismatch
+                                ?tr("Wrong network")
+                                : address
+                                ?tr("Subscribe")
+                                :tr("Connect wallet")}
+                            </button>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </Panel>
                 );
