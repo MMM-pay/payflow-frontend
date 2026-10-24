@@ -159,7 +159,7 @@ describe("SubscribePage free-trial badges", () => {
     const button = await screen.findByRole("button", { name: "Subscribe" });
     // Issue #139: the signature request now sits behind a confirmation dialog.
     fireEvent.click(button);
-    fireEvent.click(screen.getByRole("button", { name: "Confirm and sign" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm and sign" }));
 
     await vi.waitFor(() => expect(payflowMock.subscribe).toHaveBeenCalled());
     const notice = await screen.findByText(/Subscribed\./);
@@ -173,7 +173,7 @@ describe("SubscribePage free-trial badges", () => {
 
     render(<SubscribePage />);
     fireEvent.click(await screen.findByRole("button", { name: "Subscribe" }));
-    fireEvent.click(screen.getByRole("button", { name: "Confirm and sign" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm and sign" }));
 
     const notice = await screen.findByText(/Subscribed\./);
     expect(notice.parentElement?.textContent).not.toMatch(/free trial/i);

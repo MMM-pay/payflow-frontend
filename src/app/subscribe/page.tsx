@@ -162,7 +162,7 @@ function SubscribeInner() {
   const [plans, setPlans] = useState<ApiPlan[] | null>(null);
   const [maxCharges, setMaxCharges] = useState<Record<number, string>>({});
   const [direct, setDirect] = useState(false);
-  const { busy, error, done, run, setError } = useAction<number, string>();
+  const { busy, error, done, run, setError } = useAction();
   // The plan just subscribed to, so the confirmation can say when the trial it
   // advertised actually ends. The mandate id is not returned by `subscribe`, so
   // this is the only place the trial length is known at signing time.
