@@ -129,6 +129,36 @@ export function checkAmount(input: string, decimals = DECIMALS, locale?: string)
   return { ok: true, stroops };
 }
 
+/**
+ * Validate a withdrawal amount against the vault balance.
+ *
+ * `checkAmount` alone is not enough here: it only knows the amount parses.
+ * The vault is the second constraint — an amount above the balance would be
+ * signed by the wallet and then fail in simulation, which costs the user a
+ * wait and a confusing contract error for something the form could have said
+ * up front. A null balance (read still in flight, or failed) is unknown, so
+ * the amount is refused rather than waved through.
+ */
+export function checkWithdraw(
+  input: string,
+  balance: bigint | null,
+  decimals = DECIMALS,
+  locale?: string,
+): AmountCheck {
+  const check = checkAmount(input, decimals, locale);
+  if (!check.ok) return check;
+  if (balance === null) {
+    return { ok: false, message: "Vault balance is still loading." };
+  }
+  if (check.stroops > balance) {
+    return {
+      ok: false,
+      message: `Amount is more than your vault balance of ${fromStroops(balance, 4, decimals)}.`,
+    };
+  }
+  return check;
+}
+
 /** Basis points in a percent. Mirrors BPS_DENOMINATOR in the subscription contract. */
 export const BPS_DENOMINATOR = 10_000n;
 
