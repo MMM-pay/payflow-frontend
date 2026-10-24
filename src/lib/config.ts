@@ -19,33 +19,6 @@ function required(name: string, value: string | undefined): string {
   return value;
 }
 
-const DEFAULT_RPC_URL = "https://soroban-testnet.stellar.org";
-
-/**
- * Parse a comma-separated list of REC URLs into a trimmed, deduped,
- * non-empty array. Falls back to the single URL and then to the public
- * testnet endpoint so the app always has at least one endpoint.
- */
-export function parseRpcUrls(list: string | undefined, fallback?: string): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const raw of (list ?? "").split(",")) {
-    const url = raw.trim();
-    if (!url || seen.has(url)) continue;
-    seen.add(url);
-    out.push(url);
-  }
-  if (out.length === 0) {
-    out.push(fallback ?? DEFAULT_RPC_URL);
-  }
-  return out;
-}
-
-const rpcUrls = parseRpcUrls(
-  process.env.NEXT_PUBLIC_SOROBAN_RPC_URLS,
-  process.env.NEXT_PUBLIC_SOROBAN_RPC_URL ?? DEFAULT_RPC_URL,
-);
-
 export interface ClassicAsset {
   code: string;
   issuer: string;
@@ -97,29 +70,6 @@ export interface NetworkConfig {
 const DEFAULT_XLM_SAC = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
 const DEFAULT_USDC_SAC = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA";
 
-export const XLM_TOKEN: ConfiguredToken = {
-  id: process.env.NEXT_PUBLIC_TOKEN_ID || DEFAULT_XLM_SAC,
-  symbol: "XLM",
-  name: "Stellar Lumens",
-  decimals: 7,
-};
-
-export const USDC_TESTNET_TOKEN: ConfiguredToken = {
-  id: process.env.NEXT_PUBLIC_USDC_TOKEN_ID || DEFAULT_USDC_SAC,
-  symbol: "USDC",
-  name: "USD Coin",
-  decimals: 6,
-  classicAsset: {
-    code: "USDC",
-    issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
-  },
-};
-
-export const CONFIGURED_TOKENS: readonly ConfiguredToken[] = [
-  XLM_TOKEN,
-  USDC_TESTNET_TOKEN,
-];
-
 /**
  * The built-in network. The pre-existing env vars (NEXT_PUBLIC_SOROBAN_RPC_URL
  * and friends) override it, so a build without any mainnet configuration
@@ -133,7 +83,7 @@ const TESTNET: NetworkConfig = {
   horizonUrl: process.env.NEXT_PUBLIC_HORIZON_URL ?? "https://horizon-testnet.stellar.org",
   networkPassphrase:
     process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015",
-  network: networkName,
+  network: process.env.NEXT_PUBLIC_STELLAR_NETWORK ?? "TESTNET",
   /**
    * Horizon serves the connected account's native balance and whether the
    * account exists on the network at all. Soroban RPC's `getAccount` returns
@@ -346,15 +296,9 @@ export const config = {
    * lives on `config` directly rather than on a `NetworkConfig`.
    */
   walletConnectProjectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? "",
-  /**
-   * Primary REC endpoint. Kept for backward compatibility; prefer
-   * `config.rpcUrls` for fallback-aware code.
-   */
   get rpcUrl() {
     return currentNetwork.rpcUrl;
   },
-  /** Ordered list of RPC endpoints to try in turn. */
-  rpcUrls: rpcUrls as readonly string[],
   get horizonUrl() {
     return currentNetwork.horizonUrl;
   },
