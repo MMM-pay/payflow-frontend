@@ -11,7 +11,7 @@ import { chainPlans } from "@/lib/chain";
 import { config } from "@/lib/config";
 import { payflow } from "@/lib/payflow";
 import { useWallet } from "@/lib/wallet";
-import{ fromStroops, type TokenMeta } from "@/lib/format";
+import { type TokenMeta } from "@/lib/format";
 import { trialSeconds } from "@/lib/trial";
 import { availabilityInteger, planAvailability } from "@/lib/availability";
 import {
