@@ -46,6 +46,7 @@ const payflowMock = vi.hoisted(() => ({
   feeBps: vi.fn(),
   createPlan: vi.fn(),
   setPlanActive: vi.fn(),
+  supportsPlanRename: vi.fn().mockResolvedValue(false),
   charge: vi.fn(),
   endMandate: vi.fn(),
   setDiscount: vi.fn(),

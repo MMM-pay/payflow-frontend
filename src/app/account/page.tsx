@@ -17,7 +17,7 @@ import {
 import {
   chainMandatesOf,
   sortVaultEventsNewestFirst,
-  vaultEventAmount,
+
   vaultEventLabel,
   vaultEventTone,
 } from "@/lib/chain";
@@ -105,7 +105,8 @@ function AccountInner() {
       ? paramAddress.trim()
       : null;
 
-  const { address, networkMismatch, signXdr, connect, connecting } = useWallet();
+  const { address, networkMismatch, signXdr, connect, connecting, refreshAccount } =
+    useWallet();
 
   // The account whose data is displayed on screen
   const viewAddress = targetAddress ?? address;
@@ -126,6 +127,9 @@ function AccountInner() {
   const [pauseDate, setPauseDate] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  const [capFor, setCapFor] = useState<number | null>(null);
+  const [capAmount, setCapAmount] = useState("");
+  const [capError, setCapError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   // Whether the mandate list came from the indexer. Payment history lives only
@@ -513,18 +517,14 @@ function AccountInner() {
   // a contract that predates it cannot service the write, so offering it would
   // only fail at signing time.
   useEffect(() => {
-    if (!address) {
+    if (!address || mandates === null) {
       setTransferSupport(null);
       return;
     }
-    let live = true;
-    void mandateSupportsTransfer(address).then((supported) => {
-      if (live) setTransferSupport(supported);
-    });
-    return () => {
-      live = false;
-    };
-  }, [address]);
+    // The deployed contract either carries `pending_subscriber` on its
+    // mandates or it does not; the loaded mandates already say which.
+    setTransferSupport(mandates.some((m) => mandateSupportsTransfer(m)));
+  }, [address, mandates]);
 
   // Identify classic asset tokens in use by the subscriber's mandates
   const classicTokens = useMemo(() => {
@@ -585,6 +585,9 @@ function AccountInner() {
     try {
       setDone(await fn());
       await load();
+      // Every write here spends the native balance on fees, so the header's
+      // figure is stale the moment the transaction lands.
+      await refreshAccount();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -759,6 +762,33 @@ function AccountInner() {
         err instanceof Error ? err.message : "Could not build the calendar file.",
       );
     }
+  }
+
+  function openCapEditor(m: ApiMandate) {
+    setCapFor(m.id);
+    setCapAmount(m.max_charges > 0 ? String(m.max_charges) : "");
+    setCapError(null);
+  }
+
+  function submitCap(m: ApiMandate) {
+    const raw = capAmount.trim();
+    if (!/^\d+$/.test(raw)) {
+      setCapError("Enter a whole number of charges.");
+      return;
+    }
+    const next = BigInt(raw);
+    if (next < BigInt(m.charges_made)) {
+      setCapError(`Cap cannot be below the ${m.charges_made} charge${m.charges_made === 1 ? "" : "s"} already taken.`);
+      return;
+    }
+    setCapError(null);
+    if (!address) return;
+    const source = address;
+    void run(`cap-${m.id}`, async () => {
+      const hash = await payflow.setMaxCharges(source, signXdr, m.id, next);
+      setCapFor(null);
+      return hash;
+    });
   }
 
   /**
@@ -1484,6 +1514,15 @@ function AccountInner() {
                             }
                           >{tr("Resume")}</button>
                         )}
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          disabled={busy !== null || networkMismatch}
+                          onClick={() => openCapEditor(m)}
+                        >
+                          Edit cap
+                        </button>
+
                         {/* Offered only against a contract that carries the
                             two-step transfer; see `transferAvailable`. */}
                         {transferAvailable &&
@@ -1670,6 +1709,48 @@ function AccountInner() {
                       </section>
                     )}
                   </div>
+                  {capFor === m.id && (
+                    <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-edge pt-3">
+                      <div className="min-w-[10rem] flex-1">
+                        <label
+                          htmlFor={`cap-${m.id}`}
+                          className="block text-xs text-muted"
+                        >
+                          Max charges (0 = unlimited)
+                        </label>
+                        <input
+                          id={`cap-${m.id}`}
+                          type="text"
+                          inputMode="numeric"
+                          className="input mt-1 w-full"
+                          value={capAmount}
+                          onChange={(e) => setCapAmount(e.target.value)}
+                          disabled={busy !== null}
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        disabled={busy !== null || networkMismatch}
+                        onClick={() => submitCap(m)}
+                      >
+                        {busy === `cap-${m.id}` ? "Saving…" : "Save cap"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        disabled={busy !== null}
+                        onClick={() => setCapFor(null)}
+                      >
+                        Close
+                      </button>
+                      {capError && (
+                        <p className="w-full text-xs text-rose-300" role="alert">
+                          {capError}
+                        </p>
+                      )}
+                    </div>
+                  )}
 
                     {schedule.charges.length > 0 && (
                       <section

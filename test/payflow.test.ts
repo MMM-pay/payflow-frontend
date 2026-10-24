@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { scValToNative } from "@stellar/stellar-sdk";
-import { MAX_NAME_LEN, MAX_PAGE, arg } from "@/lib/payflow";
+import {
+  MAX_NAME_LEN,
+  MAX_PAGE,
+  arg,
+  canSetMaxCharges,
+  validateMaxCharges,
+} from "@/lib/payflow";
 
 /**
  * The typed wrappers in `payflow.ts` encode every contract argument through
@@ -17,7 +23,7 @@ describe("contract argument encoding", () => {
   });
 
   it("encodes u64 as a bigint without losing precision", () => {
-    const large = 9_007_199_254_740_993n; // Number.MAX_SAFE_INTEGER + 2
+    const large = 9_007_199_954_740_993n; // Number.MAX_SAFE_INTEGER + 2
     const decoded = scValToNative(arg.u64(large));
 
     expect(decoded).toBe(large);
@@ -52,5 +58,58 @@ describe("contract limits", () => {
 
   it("matches the plan-name byte limit", () => {
     expect(MAX_NAME_LEN).toBe(64);
+  });
+});
+
+describe("canSetMaxCharges", () => {
+  it("returns true when the contract exposes set_max_charges", () => {
+    expect(canSetMaxCharges(["set_max_charges", "charge"])).toBe(true);
+  });
+
+  it("returns false when the function is missing or unknown", () => {
+    expect(canSetMaxCharges([])).toBe(false);
+    expect(canSetMaxCharges(["charge"])).toBe(false);
+    expect(canSetMaxCharges(null)).toBe(false);
+    expect(canSetMaxCharges(undefined)).toBe(false);
+  });
+});
+
+describe("validateMaxCharges", () => {
+  it("accepts a cap at or above the charges already made", () => {
+    expect(validateMaxCharges({
+      maxCharges: 5n,
+      chargesMade: 2n,
+      currentMaxCharges: 10n,
+    })).toBeNull();
+    expect(validateMaxCharges({
+      maxCharges: 2n,
+      chargesMade: 2n,
+      currentMaxCharges: 10n,
+    })).toBeNull();
+  });
+
+  it("rejects a cap below the charges already made", () => {
+    expect(validateMaxCharges({
+      maxCharges: 1n,
+      chargesMade: 2n,
+      currentMaxCharges: 10n,
+    })).toMatch(/charges made/i);
+  });
+
+  it("rejects a cap that is not a positive integer", () => {
+    expect(validateMaxCharges({
+      maxCharges: 0n,
+      chargesMade: 0n,
+      currentMaxCharges: 10n,
+    })).toMatch(/at least 1/i);
+  });
+
+  it("rejects a cap above the contract upper bound", () => {
+    expect(validateMaxCharges({
+      maxCharges: 6n,
+      chargesMade: 0n,
+      currentMaxCharges: 10n,
+      maxAllowed: 5n,
+    })).toMatch(/at most 5/i);
   });
 });

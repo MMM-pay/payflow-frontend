@@ -1,6 +1,7 @@
 node_modules/
 .next/
 out/
+storybook-static/
 build/
 .env
 .env.local
