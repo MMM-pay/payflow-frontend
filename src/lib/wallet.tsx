@@ -15,6 +15,7 @@ import { config } from "./config";
 import { createWalletModules } from "./wallet-modules";
 import type { SignXdr } from "./payflow";
 import { translateSignatureError } from "./signature-error";
+import { fundWithFriendbot, readNativeAccount, type NativeAccount } from "./account";
 
 export const STORAGE_KEY = "payflow.wallet";
 export const ACCOUNT_CHANGED_ERROR =
@@ -66,6 +67,18 @@ export function shouldUpdateAddress(
   if (!currentAddress || !detectedAddress) return false;
   return currentAddress !== detectedAddress;
 }
+
+/**
+ * What the header knows about the connected account's native balance.
+ *
+ * `missing` (the network has no such account) is kept apart from `error` (we
+ * could not ask): only the first means "this needs funding".
+ */
+export type AccountState =
+  | { state: "loading" }
+  | { state: "loaded"; account: NativeAccount }
+  | { state: "missing" }
+  | { state: "error"; message: string };
 
 export interface WalletState {
   address: string | null;
@@ -123,7 +136,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [walletNetwork, setWalletNetwork] = useState<string | null>(null);
-  const [account] = useState<AccountState>({ state: "loading" });
+  const [account, setAccount] = useState<AccountState>({ state: "loading" });
+  const [funding, setFunding] = useState(false);
 
   // Keep a ref of the current address to avoid stale closures in event listeners
   // and async callbacks. Every setter below already writes the ref alongside the
@@ -136,6 +150,52 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   // Track in-flight checks to prevent duplicate concurrent queries.
   const syncingRef = useRef(false);
+
+  /**
+   * Read the native balance of whichever address is connected. Called on
+   * connect and after anything that moves XLM; a disconnected wallet reads
+   * nothing, so no address is ever sent to Horizon without a session.
+   */
+  const refreshAccount = useCallback(async () => {
+    const current = addressRef.current;
+    if (!current) {
+      setAccount({ state: "loading" });
+      return;
+    }
+    const result = await readNativeAccount(current);
+    if (addressRef.current !== current) return; // the wallet switched meanwhile
+    if (result.state === "found") {
+      setAccount({ state: "loaded", account: result.account });
+    } else if (result.state === "missing") {
+      setAccount({ state: "missing" });
+    } else {
+      setAccount({ state: "error", message: result.message });
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshAccount();
+  }, [address, refreshAccount]);
+
+  /**
+   * Ask Friendbot to create the account, then re-read it: the balance only
+   * exists once Friendbot has funded it. A refusal is surfaced through the
+   * usual error channel rather than thrown at the click handler.
+   */
+  const fund = useCallback(async () => {
+    const current = addressRef.current;
+    if (!current || funding) return;
+    setFunding(true);
+    setError(null);
+    try {
+      await fundWithFriendbot(current);
+      await refreshAccount();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setFunding(false);
+    }
+  }, [funding, refreshAccount]);
 
   const networkMismatch = useMemo(
     () => checkNetworkMismatch(walletNetwork),

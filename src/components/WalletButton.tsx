@@ -12,7 +12,8 @@ import { fromStroops, shortAddress, spendableBalance } from "@/lib/format";
  */
 export function WalletButton() {
   const { t: tr } = useI18n();
-  const { address, connecting, connect, disconnect } = useWallet();
+  const { address, connecting, connect, disconnect, account, funding, fund } =
+    useWallet();
 
   if (!address) {
     return (
@@ -22,7 +23,7 @@ export function WalletButton() {
         disabled={connecting}
         className="btn-primary"
       >
-        {connecting ? "Connecting…" : "Connect wallet"}
+        {connecting ? tr("Connecting…") : tr("Connect wallet")}
       </button>
     );
   }
@@ -115,7 +116,7 @@ function BalanceLabel({
       aria-live="polite"
       title={`${fromStroops(balance)} XLM held, ${fromStroops(spendable)} XLM spendable after the ${subentryCount} ledger ${subentryCount === 1 ? "entry" : "entries"} this account keeps`}
     >
-      {connecting ?tr("Connecting…") :tr("Connect wallet")}
-    </button>
+      {fromStroops(spendable)} XLM
+    </span>
   );
 }

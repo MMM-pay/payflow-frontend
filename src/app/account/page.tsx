@@ -103,7 +103,8 @@ function AccountInner() {
       ? paramAddress.trim()
       : null;
 
-  const { address, networkMismatch, signXdr, connect, connecting } = useWallet();
+  const { address, networkMismatch, signXdr, connect, connecting, refreshAccount } =
+    useWallet();
 
   // The account whose data is displayed on screen
   const viewAddress = targetAddress ?? address;
