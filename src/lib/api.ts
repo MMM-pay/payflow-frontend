@@ -187,6 +187,45 @@ export interface ApiVaultEvent {
  * `total_collected` is in smallest units (stroops) as a decimal string so
  * bigint math is always used — never floats.
  */
+/**
+ * The body `GET /health` answers with. Mirrors payflow-backend's own shape:
+ * `indexer` is null before the first pass, and `status` is "starting" until
+ * the lag is known.
+ */
+export interface ApiHealth {
+  /**
+   * "ok", "catching_up" or "starting" today. Left open on purpose: a backend
+   * newer than this build may answer with a status this page has never heard
+   * of, which must read as "down", not as a type error.
+   */
+  status: string;
+  network: string;
+  indexer: {
+    cursor: number;
+    latestLedger: number;
+    lag: number | null;
+    paused: boolean;
+    freshnessSeconds: number | null;
+    lastRunAt: string | null;
+    lastError: string | null;
+  } | null;
+}
+
+/** One settlement pass, as the keeper records it. */
+export interface ApiKeeperPass {
+  /** Unix seconds the pass ran at. */
+  time: number;
+  attempted: number;
+  settled: number;
+  failures: { mandateId: number; error: string }[];
+  backoff: { mandateId: number; failures: number; retryAt: number; retryIn: number }[];
+}
+
+/** `GET /api/keeper`: the recent passes, newest first. */
+export interface ApiKeeperHistory {
+  passes: ApiKeeperPass[];
+}
+
 export interface ApiPlanStats {
   /** Open mandates (active + paused). */
   subscriber_count: number;

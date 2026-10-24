@@ -1,12 +1,18 @@
 {
   "default_branch": "main",
   "branches": [
+    "feat/issue-23-feat-error-boundary-and-not-found-page",
+    "feat/issue-77-feat-merchant-end-several-mandates-at-once",
+    "feat/issue-103-feat-search-plans-merchants-and-mandates",
     "feat/issue-109-test-every-contract-error-code-has-a-message",
     "feat/issue-96-feat-account-move-a-subscription-to-a-new-wallet",
     "main",
     "origin"
   ],
   "parent": {
+    "feat/issue-23-feat-error-boundary-and-not-found-page": "main",
+    "feat/issue-77-feat-merchant-end-several-mandates-at-once": "main",
+    "feat/issue-103-feat-search-plans-merchants-and-mandates": "main",
     "feat/issue-109-test-every-contract-error-code-has-a-message": "main",
     "feat/issue-96-feat-account-move-a-subscription-to-a-new-wallet": "main",
     "main": null,
@@ -14,6 +20,9 @@
   },
   "order": [
     "main",
+    "feat/issue-23-feat-error-boundary-and-not-found-page",
+    "feat/issue-77-feat-merchant-end-several-mandates-at-once",
+    "feat/issue-103-feat-search-plans-merchants-and-mandates",
     "feat/issue-109-test-every-contract-error-code-has-a-message",
     "feat/issue-96-feat-account-move-a-subscription-to-a-new-wallet",
     "origin"

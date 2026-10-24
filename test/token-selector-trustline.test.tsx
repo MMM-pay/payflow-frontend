@@ -41,6 +41,7 @@ const apiMock = vi.hoisted(() => ({
 const payflowMock = vi.hoisted(() => ({
   createPlan: vi.fn(async () => "tx-create-plan"),
   setPlanActive: vi.fn(),
+  supportsPlanRename: vi.fn().mockResolvedValue(false),
   vaultBalance: vi.fn(async () => 100_000_000n),
   feeBps: vi.fn(async () => 100),
   checkTrustline: vi.fn(),

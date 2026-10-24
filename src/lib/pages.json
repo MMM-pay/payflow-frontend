@@ -1,0 +1,38 @@
+{
+  "home": {
+    "title": "Payflow — recurring payments on Stellar",
+    "description": "Pull-based recurring payments for Stellar. Subscribers authorize a bounded, revocable mandate once; anyone can settle it when it falls due.",
+    "path": "/",
+    "image": "home"
+  },
+  "subscribe": {
+    "title": "Subscribe to a plan",
+    "description": "Browse the plans published on Payflow and open a mandate with a single signature. Cancel whenever you like — nothing is locked.",
+    "path": "/subscribe/",
+    "image": "subscribe"
+  },
+  "account": {
+    "title": "My account",
+    "description": "Your Payflow vault balance and subscriptions. Fund the vault, pause or cancel a mandate, and see every charge that has settled.",
+    "path": "/account/",
+    "image": "account"
+  },
+  "merchant": {
+    "title": "Merchant dashboard",
+    "description": "Publish plans, track revenue and settle due mandates from the Payflow merchant dashboard. Every write is signed in your browser.",
+    "path": "/merchant/",
+    "image": "merchant"
+  },
+  "catalogue": {
+    "title": "Merchant catalogue",
+    "description": "The plans a Payflow merchant has published. Subscribe to one and a mandate opens in your wallet.",
+    "path": "/m/",
+    "image": "catalogue"
+  },
+  "plan": {
+    "title": "Plan details",
+    "description": "Price, billing period and availability of a plan published on Payflow.",
+    "path": "/plans/",
+    "image": "plan"
+  }
+}

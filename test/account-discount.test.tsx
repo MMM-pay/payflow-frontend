@@ -65,6 +65,9 @@ vi.mock("@/lib/payflow", () => ({
   vaultSupportsDepositFor: async () => false,
   // payflow-contract#28 not shipped; the spend limit panel stays off.
   mandateSupportsSpendLimit: () => false,
+  // payflow-contract#68 not shipped; the two-step transfer stays off.
+  mandateSupportsTransfer: () => false,
+  mandatePendingTransfer: () => null,
 }));
 vi.mock("@/lib/chain", () => ({ chainMandatesOf: chainMock.chainMandatesOf }));
 vi.mock("@/lib/toml", () => ({ useOrgName: () => null }));
