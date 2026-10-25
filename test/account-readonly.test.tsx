@@ -63,6 +63,12 @@ vi.mock("@/lib/api", async (importOriginal) => {
     checkWebhookUrl: actual.checkWebhookUrl,
   };
 });
+// The page reads these from the SDK-free core, so the stubs stand there too.
+vi.mock("@/lib/payflow-core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/payflow-core")>()),
+  mandateStatus: (s: unknown) => (Array.isArray(s) ? s[0] : s),
+  ...payflowHelpers,
+}));
 vi.mock("@/lib/payflow", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/payflow")>()),
   payflow: payflowMock,

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
 
 /**
@@ -37,7 +37,10 @@ function jsonResponse(body: unknown, status = 200, ok = true): Response {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  // Contract-only tests stub NEXT_PUBLIC_API_URL; without this, the stub
+  // leaks into the next test and every isConfigured() call reads "".
   vi.unstubAllEnvs();
+  vi.resetModules();
 });
 
 describe("api fail-soft behaviour", () => {
@@ -233,3 +236,58 @@ describe("api.planStats", () => {
   });
 });
 
+describe("api.health and api.keeper", () => {
+  // Vitest does not load .env.local, so isConfigured() is false by default;
+  // these tests exercise the configured path and stub the URL explicitly.
+  beforeEach(() => {
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "http://backend.test");
+  });
+
+  it("serves /health at the root, not under /api", async () => {
+    // payflow-backend mounts the liveness probe at the root; /api/health 404s.
+    // config.apiUrl is frozen at import, so only the path is asserted here.
+    let seenUrl = "";
+    mockFetch(async (url) => {
+      seenUrl = String(url);
+      return jsonResponse({ status: "ok", indexer: null });
+    });
+    expect(await api.health()).toEqual({ status: "ok", indexer: null });
+    expect(seenUrl.endsWith("/health")).toBe(true);
+    expect(seenUrl).not.toContain("/api/health");
+  });
+
+  it("queries /api/keeper for pass history", async () => {
+    let seenUrl = "";
+    mockFetch(async (url) => {
+      seenUrl = String(url);
+      return jsonResponse({ passes: [] });
+    });
+    expect(await api.keeper()).toEqual({ passes: [] });
+    expect(seenUrl.endsWith("/api/keeper")).toBe(true);
+  });
+
+  it("returns null for both when the backend is unreachable", async () => {
+    mockFetch(() => Promise.reject(new Error("ENETUNREACH")));
+    expect(await api.health()).toBeNull();
+    expect(await api.keeper()).toBeNull();
+
+    mockFetch(async () => jsonResponse({ error: "down" }, 503, false));
+    expect(await api.health()).toBeNull();
+    expect(await api.keeper()).toBeNull();
+  });
+
+  it("issues no request at all in contract-only mode", async () => {
+    // An empty NEXT_PUBLIC_API_URL must not become a same-origin fetch
+    // against the static host, which could only 404.
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "");
+    vi.resetModules();
+    const { api: unconfiguredApi } = await import("@/lib/api");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(unconfiguredApi.isConfigured()).toBe(false);
+    expect(await unconfiguredApi.health()).toBeNull();
+    expect(await unconfiguredApi.keeper()).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
