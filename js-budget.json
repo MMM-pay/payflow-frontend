@@ -1,0 +1,12 @@
+{
+  "//": "First-load JS budgets in kB (gzip), enforced by scripts/check-js-budget.mjs over out/**/index.html. Re-measured after merging upstream/main (cohort retention, webhooks UI, i18n French, failed-charge attempts, skip-link, WalletConnect) on top of the SDK deferral: / 227.0, /account 238.1, /m 226.8, /mandates 228.2, /merchant 244.2, /plans/* 226.9, /receipt 228.7, /subscribe 232.0. Budgets keep roughly 10% headroom; growth is only ever accepted deliberately, in the PR that causes it.",
+  "default": 240,
+  "routes": {
+    "/": 250,
+    "/account": 265,
+    "/m": 250,
+    "/merchant": 270,
+    "/subscribe": 255,
+    "/plans": 250
+  }
+}

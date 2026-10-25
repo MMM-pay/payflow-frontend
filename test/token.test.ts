@@ -10,7 +10,10 @@ import { XLM } from "@/lib/format";
 
 const readContract = vi.hoisted(() => vi.fn());
 
-vi.mock("@/lib/payflow", () => ({ readContract }));
+vi.mock("@/lib/payflow", () => ({
+  // payflow-contract#68 not shipped; the two-step transfer stays off.
+  mandateSupportsTransfer: () => false,
+  mandatePendingTransfer: () => null, readContract }));
 
 const USDC = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
 const EURC = "CDQ5EJTVXXX2CBMHWP3BGGUDHSK6D4I25IF5XXH3QGL2TNTBMJUOFKDB";

@@ -2,7 +2,9 @@ import { api, type ApiCharge, type ApiMandate } from "@/lib/api";
 import { mandateToApi } from "@/lib/chain";
 import { config } from "@/lib/config";
 import { feeSplit, type TokenMeta } from "@/lib/format";
-import { payflow, server } from "@/lib/payflow";
+// The SDK-backed module loads on demand: a receipt is read after the page
+// has already painted, so the SDK need not ship with it.
+import { payflow, server } from "@/lib/lazy-payflow";
 import { loadTokenMeta } from "@/lib/token";
 
 export interface ParsedReceiptParams {

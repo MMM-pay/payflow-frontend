@@ -4,7 +4,7 @@ All notable changes to payflow-frontend. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [semantic versioning](https://semver.org/).
 
-#  # [Unreleased]
+## [Unreleased]
 
 ### Changed
 
@@ -109,6 +109,15 @@ All notable changes to payflow-frontend. The format follows
 
 ### Changed
 
+- **Wallet pages ship about half the first-load JS they used to.** The Stellar
+  SDK (~570 kB raw) now loads on demand — the first chunk that talks to the
+  chain arrives after first paint instead of before it. Next's own report:
+  `/account` 238 → 121 kB, `/m` 239 → 122 kB, `/subscribe` 240 → 123 kB,
+  `/merchant` 244 → 127 kB, `/plans/*` 239 → 122 kB. The wallet kit was already
+  loaded on first connect. Session restore, contract-only mode and every
+  write path are unchanged; only when the code arrives moved. A new CI step
+  (`npm run budget`) fails any build where a route's first-load JS grows past
+  the budget in `js-budget.json`.
 - **Cancelling a subscription now asks for confirmation.** The account page
   shows Keep and Confirm after the first Cancel click, matches the merchant's
   End flow, and allows only one mandate to be confirming at a time.

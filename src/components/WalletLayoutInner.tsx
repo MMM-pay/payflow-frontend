@@ -32,6 +32,7 @@ const NAV = [
   { href: "/subscribe", label: "Subscribe" },
   { href: "/account", label: "My account" },
   { href: "/merchant", label: "Merchant" },
+  { href: "/status", label: "Status" },
 ];
 
 function isCurrent(pathname: string, href: string): boolean {

@@ -43,7 +43,16 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
+      # `npm test` runs vitest with v8 coverage over src/lib and fails under
+      # the thresholds in vitest.config.ts (issue #56).
       - run: npm test
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 14
 
   build:
     name: build

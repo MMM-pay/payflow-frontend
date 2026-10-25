@@ -1,4 +1,6 @@
-import { StrKey } from "@stellar/stellar-sdk";
+// `/base` is the SDK without the RPC client or transaction builder: StrKey is
+// a self-contained checksum helper, so importing it must not cost a bundle.
+import { StrKey } from "@stellar/stellar-sdk/base";
 
 /**
  * One place the header search can take the user. `label` is a catalog key

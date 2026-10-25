@@ -26,7 +26,7 @@ Four pages:
 | Route | Who it is for | What it does |
 |---|---|---|
 | `/` | everyone | Explains the mandate model, shows protocol counters and live contract IDs |
-| `/subscribe` | subscribers | Browse published plans and open a mandate |
+| `/subscribe` | subscribers | Browse published plans and open a mandate. A shared link (`?plan=12`) opens one plan |
 | `/account` | subscribers | Fund and withdraw from the vault, pause or cancel subscriptions |
 | `/merchant` | merchants | Publish plans, track revenue, settle due mandates manually, discount or end a subscriber's mandate |
 

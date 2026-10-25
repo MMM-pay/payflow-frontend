@@ -6,6 +6,12 @@ import {
   vaultEventLabel,
   vaultEventTone,
 } from "@/lib/chain";
+import {
+  canEditChargeCap,
+  parseChargeCapInput,
+} from "@/lib/payflow";
+
+
 import type { ApiVaultEvent } from "@/lib/api";
 
 /**
@@ -43,25 +49,14 @@ describe("vaultEventLabel", () => {
 
 describe("vaultEventAmount", () => {
   it("signs deposits positive and withdrawals/debits negative as decimal strings", () => {
-    expect(vaultEventAmount(event({ type: "deposit", amount: "10000000" }))).toBe(
-      "+1",
-    );
-    expect(vaultEventAmount(event({ type: "withdraw", amount: "5000000" }))).toBe(
-      "-0.5",
-    );
-    expect(vaultEventAmount(event({ type: "debit", amount: "9900000" }))).toBe(
-      "-0.99",
-    );
+    expect(vaultEventAmount(event({ type: "deposit", amount: "10000000" }))).toBe("+1");
+    expect(vaultEventAmount(event({ type: "withdraw", amount: "5000000" }))).toBe("-0.5");
+    expect(vaultEventAmount(event({ type: "debit", amount: "9900000" }))).toBe("-0.99");
   });
 
   it("keeps large amounts exact without floating point", () => {
-    // 1 million XLM — beyond safe integer range once scaled to stroops.
-    expect(
-      vaultEventAmount(event({ type: "deposit", amount: "10000000000000" })),
-    ).toBe("+1000000");
-    expect(
-      vaultEventAmount(event({ type: "debit", amount: "500000000000" })),
-    ).toBe("-50000");
+    expect(vaultEventAmount(event({ type: "deposit", amount: "10000000000000" }))).toBe("+1000000");
+    expect(vaultEventAmount(event({ type: "debit", amount: "500000000000" }))).toBe("-50000");
   });
 });
 
@@ -83,12 +78,36 @@ describe("sortVaultEventsNewestFirst", () => {
     const sorted = sortVaultEventsNewestFirst(events);
     expect(sorted.map((e) => e.ledger)).toEqual([3, 2, 1]);
     expect(sorted.map((e) => e.tx_hash)).toEqual(["ccc", "bbb", "aaa"]);
-    // Original array is untouched.
     expect(events.map((e) => e.ledger)).toEqual([1, 3, 2]);
   });
 
   it("handles empty and single-element lists", () => {
     expect(sortVaultEventsNewestFirst([])).toEqual([]);
     expect(sortVaultEventsNewestFirst([event()])).toEqual([event()]);
+  });
+});
+
+describe("parseChargeCapInput", () => {
+  it("parses a whole XL amount into stroops as a bigint", () => {
+    expect(parseChargeCapInput("1")).toBe(10000000n);
+    expect(parseChargeCapInput("12.5")).toBe(125000000n);
+  });
+
+  it("keeps large amounts exact without floating point", () => {
+    expect(parseChargeCapInput("1000000")).toBe(10000000000000n);
+  });
+
+  it("rejects empty, negative, non-numeric and too-precise inputs", () => {
+    expect(parseChargeCapInput("")).toBe(null);
+    expect(parseChargeCapInput("   ")).toBe(null);
+    expect(parseChargeCapInput("-1")).toBe(null);
+    expect(parseChargeCapInput("abc")).toBe(null);
+    expect(parseChargeCapInput("0.12345678")).toBe(null);
+  });
+});
+
+describe("canEditChargeCap", () => {
+  it("allows editing when the new cap is at least the charges made", () => {
+    expect(canEditChargeCap(3, null)).toBe(true);
   });
 });

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { config } from "./config";
-import { readContract } from "./payflow";
+import { loadPayflow } from "./lazy-payflow";
 import { XLM, type TokenMeta } from "./format";
 
 /**
@@ -53,6 +53,7 @@ export async function loadTokenMeta(
   try {
     // Settled rather than all: a token that answers only one of the two still
     // gets that half right instead of losing both.
+    const { readContract } = await loadPayflow();
     const [symbol, decimals] = await Promise.allSettled([
       readContract<string>(token, "symbol", source),
       readContract<number>(token, "decimals", source),
