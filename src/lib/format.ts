@@ -443,3 +443,29 @@ export function resumeDate(unixSeconds: number | null, now: number = Date.now())
   if (at <= now) return null;
   return new Date(at).toISOString().slice(0, 10);
 }
+
+/** Stroops in one lumen. */
+const STROOPS_PER_XLM = 10_000_000n;
+
+/**
+ * What an account can actually spend: its native balance less the minimum the
+ * protocol makes it hold. The minimum is the base reserve (0.5 XLM) times two
+ * plus one for every subentry the account keeps, so an account with
+ * trustlines or offers can show a healthy balance and still be unable to pay
+ * a fee. Never negative.
+ */
+export function spendableBalance(balance: bigint, subentryCount: number): bigint {
+  const reserve = (STROOPS_PER_XLM / 2n) * BigInt(2 + Math.max(0, subentryCount));
+  const spendable = balance - reserve;
+  return spendable > 0n ? spendable : 0n;
+}
+
+/**
+ * Calculate the maximum deposit a wallet can make, reserving a minimum balance
+ * for network fees and base reserves.
+ */
+export function maxDeposit(nativeBalance: bigint, subentryCount = 0): bigint {
+  const reserve = (STROOPS_PER_XLM / 2n) * BigInt(2 + Math.max(0, subentryCount)) + STROOPS_PER_XLM;
+  const max = nativeBalance - reserve;
+  return max > 0n ? max : 0n;
+}

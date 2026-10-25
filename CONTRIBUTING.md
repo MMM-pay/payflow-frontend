@@ -1,6 +1,6 @@
 # Contributing to the Payflow Frontend
 
-# # Setup
+## Setup
 
 ```bash
 npm install
@@ -16,11 +16,19 @@ https://friendbot.stellar.org.
 
 | Job | Command |
 |---|---|
+| `lint` | `npm run lint` |
 | `typecheck` | `npm run typecheck` |
-| `build` | `npm run build` |
+| `test` | `npm test` |
+| `build` | `npm run build` + `npm run budget` |
 
-Both must pass. The build job supplies the public env vars; if you add a new
+All must pass. The build job supplies the public env vars; if you add a new
 required variable, add it to the workflow too or the build breaks.
+
+The budget step fails when any exported route's first-load JS exceeds its
+cap in `js-budget.json`. Keep the Stellar SDK and the wallet kit out of
+static import graphs — load them with `import()` where they are first used.
+If a route's budget must grow, raise it in `js-budget.json` in the same PR
+and say why.
 
 ## Code standards
 
