@@ -8,9 +8,14 @@ import type { ApiPlan } from "@/lib/api";
 const mocks = vi.hoisted(() => ({ plans: vi.fn(), chain: vi.fn(), subscribe: vi.fn(),
   feeBps: vi.fn(),
   wallet: { address: "wallet-a" as string | null, networkMismatch: false, signXdr: vi.fn() } }));
+// The subscribe page reads the `?plan=` parameter of a shared link.
+vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams() }));
 vi.mock("@/lib/api", () => ({ api: { plans: mocks.plans, mandatesFor: async () => ({ mandates: [] }) } }));
 vi.mock("@/lib/chain", () => ({ chainPlans: mocks.chain }));
-vi.mock("@/lib/payflow", () => ({ payflow: { subscribe: mocks.subscribe, feeBps: mocks.feeBps } }));
+vi.mock("@/lib/payflow", () => ({
+  // payflow-contract#68 not shipped; the two-step transfer stays off.
+  mandateSupportsTransfer: () => false,
+  mandatePendingTransfer: () => null, payflow: { subscribe: mocks.subscribe, feeBps: mocks.feeBps } }));
 vi.mock("@/lib/wallet", () => ({ useWallet: () => mocks.wallet }));
 vi.mock("@/lib/token", () => ({ useTokenMetas: () => ({}), metaFor: () => ({ symbol: "XLM", decimals: 7 }) }));
 const plan = (extra: Partial<ApiPlan> = {}): ApiPlan => ({ id: 1, merchant: "merchant", name: "Cohort", token: "token", amount: "10000000", period: 86400, active: 1, ledger: 0, ...extra });
@@ -51,7 +56,7 @@ it("leaves legacy/unlimited plans unchanged", async () => {
   expect(screen.queryByText(/seats|Available until/)).toBeNull();
   fireEvent.click(screen.getAllByRole("button", { name: "Subscribe" })[0]!);
   // Issue #139: the signature request now sits behind a confirmation dialog.
-  fireEvent.click(screen.getByRole("button", { name: "Confirm and sign" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Confirm and sign" }));
   await vi.waitFor(() => expect(mocks.subscribe).toHaveBeenCalledTimes(1));
 });
 it("explains missing count support", async () => {
@@ -76,7 +81,7 @@ it("rechecks seats before submitting", async () => {
   fireEvent.click(await screen.findByRole("button", { name: "Subscribe" }));
   // The re-read happens when the confirmation is accepted, so that is what
   // this test has to click through to (issue #139).
-  fireEvent.click(screen.getByRole("button", { name: "Confirm and sign" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Confirm and sign" }));
   await screen.findByText("0 seats left");
   expect(mocks.subscribe).not.toHaveBeenCalled();
 });
@@ -96,7 +101,7 @@ it("does not submit after an account switch during the final read", async () => 
   mocks.plans.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
   const view = render(<SubscribePage />);
   fireEvent.click(await screen.findByRole("button", { name: "Subscribe" }));
-  fireEvent.click(screen.getByRole("button", { name: "Confirm and sign" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Confirm and sign" }));
   const oldFinish = finish;
   mocks.wallet.address = "wallet-b";
   view.rerender(<SubscribePage />);
@@ -134,7 +139,7 @@ it("does not sign when the plan expires during simulation", async () => {
   });
   render(<SubscribePage />);
   fireEvent.click(await screen.findByRole("button", { name: "Subscribe" }));
-  fireEvent.click(screen.getByRole("button", { name: "Confirm and sign" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Confirm and sign" }));
   expect(await screen.findByText(/closed to new subscriptions/)).toBeTruthy();
   expect(mocks.wallet.signXdr).not.toHaveBeenCalled();
   vi.restoreAllMocks();

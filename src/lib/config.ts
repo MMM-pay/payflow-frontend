@@ -130,10 +130,13 @@ const TESTNET: NetworkConfig = {
   label: "Testnet",
   rpcUrl:
     process.env.NEXT_PUBLIC_SOROBAN_RPC_URL ?? "https://soroban-testnet.stellar.org",
-  horizonUrl: process.env.NEXT_PUBLIC_HORIZON_URL ?? "https://horizon-testnet.stellar.org",
+/** Horizon serves account `home_domain`s (stellar.toml names); RPC does not. */
+  horizonUrl:
+    process.env.NEXT_PUBLIC_HORIZON_URL ??
+    "https://horizon-testnet.stellar.org",
   networkPassphrase:
     process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015",
-  network: process.env.NEXT_PUBLIC_STELLAR_NETWORK ?? "TESTNET",
+  network: "TESTNET",
   apiUrl: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080",
   readSource:
     process.env.NEXT_PUBLIC_READ_SOURCE ??
@@ -340,6 +343,19 @@ export const config = {
   get rpcUrl() {
     return currentNetwork.rpcUrl;
   },
+  /**
+   * Friendbot is a testnet faucet with no mainnet equivalent, so the button
+   * that uses it is hidden wherever this is null.
+   */
+  get friendbotUrl() {
+    return currentNetwork.network === "TESTNET" ? "https://friendbot.stellar.org" : null;
+  },
+  /**
+   * Path the site is served under. GitHub Pages serves a project site from
+   * /<repo>, which the Next build injects here, so a link built in the
+   * browser carries it.
+   */
+  basePath: process.env.NEXT_PUBLIC_BASE_PATH ?? "",
   /** Ordered list of RPC endpoints to try in turn. */
   rpcUrls: rpcUrls as readonly string[],
   get horizonUrl() {

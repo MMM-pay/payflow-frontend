@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { Contract, scValToNative, xdr, rpc } from "@stellar/stellar-sdk";
 import { config } from "./config";
 
 /**
@@ -77,12 +76,16 @@ export async function fetchXlmUsdPrice(options?: {
       const passphrase = options?.networkPassphrase ?? config.networkPassphrase;
       const sourceAccount = options?.sourceAccount ?? config.readSource;
 
+      // Loaded on demand: the oracle is only read once a page actually wants
+      // a USD estimate, and the SDK must stay out of every first-load bundle.
+      const { Account, Contract, TransactionBuilder, rpc, scValToNative, xdr } =
+        await import("@stellar/stellar-sdk");
+
       const server = new rpc.Server(rpcUrl);
       const contract = new Contract(oracleId);
 
       // 1. Query decimals()
       const decimalsOp = contract.call("decimals");
-      const { Account, TransactionBuilder } = await import("@stellar/stellar-sdk");
       const account = new Account(sourceAccount, "0");
       const decimalsTx = new TransactionBuilder(account, {
         fee: "100",

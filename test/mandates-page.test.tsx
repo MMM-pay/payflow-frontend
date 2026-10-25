@@ -45,7 +45,16 @@ vi.mock("@/lib/chain", () => ({
   chainMandate: chainMock.chainMandate,
 }));
 
+// The page reads these from the SDK-free core, so the stubs stand there too.
+vi.mock("@/lib/payflow-core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/payflow-core")>()),
+  mandatePendingTransfer: () => null,
+  mandateStatus: (s: unknown) => (Array.isArray(s) ? s[0] : s),
+}));
 vi.mock("@/lib/payflow", () => ({
+  // payflow-contract#68 not shipped; the two-step transfer stays off.
+  mandateSupportsTransfer: () => false,
+  mandatePendingTransfer: () => null,
   payflow: payflowMock,
   mandateStatus: (s: unknown) => (Array.isArray(s) ? s[0] : s),
 }));

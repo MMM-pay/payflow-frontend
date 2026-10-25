@@ -23,6 +23,13 @@ const WALLET_ID = "freighter";
 const TESTNET_PASSPHRASE = "Test SDF Network ; September 2015";
 const PUBLIC_PASSPHRASE = "Public Global Stellar Network ; September 2015";
 
+// The provider reads the native balance whenever the address changes; these
+// cases are about the address, so Horizon is never really asked.
+vi.mock("@/lib/account", () => ({
+  readNativeAccount: vi.fn(async () => ({ state: "missing" as const })),
+  fundWithFriendbot: vi.fn(async () => {}),
+}));
+
 vi.mock("@/lib/config", () => ({
   config: {
     networkPassphrase: "Test SDF Network ; September 2015",

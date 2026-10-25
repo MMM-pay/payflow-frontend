@@ -44,6 +44,8 @@ jobs:
           NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
       # Stop Pages running the output through Jekyll, which drops _next/.
       - run: touch out/.nojekyll
+      # GitHub Pages serves 404.html for unknown paths; use the app's not-found page.
+      - run: cp out/404/index.html out/404.html 2>/dev/null || true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: out

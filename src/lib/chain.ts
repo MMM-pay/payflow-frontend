@@ -1,5 +1,10 @@
-import { StrKey } from "@stellar/stellar-sdk";
-import { MAX_PAGE, mandateStatus, payflow, type Mandate, type Plan } from "./payflow";
+// `/base` is the SDK without the RPC client or transaction builder: StrKey is
+// a self-contained checksum helper, so importing it must not cost a bundle.
+import { StrKey } from "@stellar/stellar-sdk/base";
+import { MAX_PAGE, mandateStatus, type Mandate, type Plan } from "./payflow-core";
+// The SDK-backed contract module loads on demand, so the Stellar SDK
+// stays out of this route's first-load bundle.
+import { payflow } from "./lazy-payflow";
 import type { ApiCharge, ApiMandate, ApiPlan, ApiVaultEvent, MerchantSummary } from "./api";
 import { availabilityInteger } from "./availability";
 import { fromStroops } from "./format";
@@ -33,7 +38,7 @@ function planToApi(plan: Plan): ApiPlan {
     ledger: 0,
     // Left undefined, not 0, when the decoded Plan has no `trial` key: a
     // contract built before payflow-contract#9 cannot say whether the plan has
-    // a trial, and 0 would claim it does not.
+    // a trial, and 0 is would claim it does not.
     ...(plan.trial !== undefined ? { trial: Number(plan.trial) } : {}),
     ...(plan.available_until !== undefined ? { available_until: availabilityInteger(plan.available_until) } : {}),
     ...(plan.max_subscribers !== undefined ? { max_subscribers: availabilityInteger(plan.max_subscribers) } : {}),
@@ -79,7 +84,9 @@ export function mandateToApi(mandate: Mandate): ApiMandate {
     ...(mandate.pause_until !== undefined
       ? { pause_until: Number(mandate.pause_until) }
       : {}),
-    // Only present once payflow-contract#37 mirrors the discount onto the
+    // Only present once payflow-contract#37 adds the discount onto the
+
+    // Only present once payflow-contract#37 adds the discount to the
     // mandate; a contract without the fields cannot say, and a zero would
     // claim there is no discount where there is one.
     ...(mandate.discount_bps !== undefined
@@ -104,6 +111,40 @@ export function mandateToApi(mandate: Mandate): ApiMandate {
   };
 }
 
+/**
+ * Whether the contract exposes `set_max_charges`, so the account page can
+ * show the Edit cap control only when the contract can honour it. Exported for
+ * tests.
+ */
+export function supportsSetMaxCharges(): boolean {
+  return typeof payflow.setMaxCharges === "function";
+}
+
+/**
+ * Validate a new charge cap before signing. Returns the cap as a bigint on
+ * success, or a message explaining why it cannot be used. Amounts stay in
+ * the smallest unit; no floating point is ever involved. Exported for tests.
+ */
+export type CapResult = { ok: true; value: bigint } | { ok: false; error: string };
+
+export function validateMaxCharges(raw: string, chargesMade: number): CapResult {
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    return { ok: false, error: "Enter a whole number of charges." };
+  }
+  const value = BigInt(trimmed);
+  if (value <= 0n) {
+    return { ok: false, error: "The cap must be at least 1." };
+  }
+  if (value < BigInt(chargesMade)) {
+    return {
+      ok: false,
+      error: `The cap cannot be below the ${chargesMade} charges already made.`,
+    };
+  }
+  return { ok: true, value };
+}
+
 async function settledValues<T>(promises: Promise<T>[]): Promise<T[]> {
   const results = await Promise.allSettled(promises);
   return results.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
@@ -111,7 +152,7 @@ async function settledValues<T>(promises: Promise<T>[]): Promise<T[]> {
 
 /**
  * Page positions that cover the newest `want` of `count` index entries, as
- * [start, limit] pairs of at most `pageSize`. Exported for tests.
+ [start, limit] pairs of at most `pageSize`. Exported for tests.
  */
 export function newestPages(count: number, want: number, pageSize = MAX_PAGE): [number, number][] {
   const from = Math.max(0, count - want);
@@ -141,7 +182,7 @@ async function newestIds(
  * the newest few. Bounded deliberately: an unbounded read would hammer RPC.
  *
  * Each record comes from `payflow.getPlan`, which caches it for the session, so
- * a second visit re-reads only `next_plan_id` — the one value that a newly
+ * a second visit re-reads only `next_plan_id` ‒ one value that a newly
  * published plan changes.
  */
 export async function chainPlans(source: string): Promise<ApiPlan[]> {
@@ -163,7 +204,7 @@ export async function chainPlansOf(source: string, merchant: string): Promise<Ap
  * Read the open-mandate count for a single plan from contract state.
  *
  * Returns null when the deployed contract predates `plan_subscriber_count`
- * (payflow-contract#25), so the caller can hide the stat rather than show
+ * (payflow-contract+25), so the caller can hide the stat rather than show
  * a misleading zero.
  *
  * Exported for tests.
@@ -175,7 +216,7 @@ export async function chainPlanSubscriberCount(
   try {
     return await payflow.planSubscriberCount(source, planId);
   } catch {
-    // Old contracts do not expose this getter. Return null so the UI can
+    // Old contracts do not expose this getter. Return null so the UI
     // hide the subscriber count rather than claim it is zero.
     return null;
   }
@@ -233,6 +274,93 @@ export function endable(m: Pick<ApiMandate, "status">): boolean {
   return m.status === "Active" || m.status === "Paused";
 }
 
+/** The result of ending one mandate in a batch. */
+export interface EndOutcome {
+  id: number;
+  ok: boolean;
+  error?: string;
+}
+
+/** Progress of a batch of mandate ends. */
+export interface EndProgress {
+  /** How many have been attempted (including the one in flight). */
+  done: number;
+  /** How many were requested. */
+  total: number;
+  /** The id just attempted, if any. */
+  currentId?: number;
+  /** Results of every attempt so far. */
+  outcomes: EndOutcome[];
+}
+
+/** Summary of a batch of mandate ends. */
+export interface EndSummary {
+  /** How many were requested. */
+  total: number;
+  /** How many succeeded. */
+  succeeded: number;
+  /** How many failed. */
+  failed: number;
+  /** How many were never attempted because an earlier one failed. */
+  skipped: number;
+  /** The first error message, if any one failed. */
+  error?: string;
+  /** Whether the batch stopped early. */
+  stopped: boolean;
+}
+
+/**
+ * Summarise a batch of end outcomes for the UI. Pure, so it can be tested
+ * without rendering React. Exported for tests.
+ */
+export function summarizeEnds(total: number, outcomes: EndOutcome[]): EndSummary {
+  const succeeded = outcomes.filter((o) => o.ok).length;
+  const failed = outcomes.length - succeeded;
+  const firstError = outcomes.find((o) => !o.ok);
+  return {
+    total,
+    succeeded,
+    failed,
+    skipped: Math.max(0, total - outcomes.length),
+    stopped: failed > 0,
+    ...(firstError && firstError.error ? { error: firstError.error } : {}),
+  };
+}
+
+/**
+ * End a list of mandates sequentially, stopping on the first failure.
+ *
+ * Transactions are sent one at a time on purpose: the wallet signs each one
+ * individually, and a sequential loop makes the progress reported to the
+ * caller accurate and lets it stop at the first failure instead of firing
+ * the rest in parallel. Pure apart from the injected `end` callback, so it can
+ * be tested without a wallet or React. Exported for tests.
+ */
+export async function endMandatesSequentially(
+  ids: number[],
+  end: (id: number) => Promise<unknown>,
+  onChange?: (progress: EndProgress) => void,
+): Promise<EndSummary> {
+  const total = ids.length;
+  const outcomes: EndOutcome[] = [];
+  for (const id of ids) {
+    onChange?.({ done: outcomes.length + 1, total, currentId: id, outcomes: [...outcomes] });
+    try {
+      await end(id);
+      outcomes.push({ id: id, ok: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      outcomes.push({ id: id, ok: false, error: message });
+      onChange?.({ done: outcomes.length, total, currentId: id, outcomes: [...outcomes] });
+      // Stop on the first failure: the wallet may be on the wrong
+      // network or out of funds, and firing the rest would just fail too.
+      break;
+    }
+    onChange?.({ done: outcomes.length, total, currentId: id, outcomes: [...outcomes] });
+  }
+  return summarizeEnds(total, outcomes);
+}
+
 /**
  * The merchant address a shareable `/m/?address=G…` link points at, or null
  * when the parameter is missing or is not a valid Stellar account. Exported
@@ -282,7 +410,7 @@ export function planChargeRow(charge: ApiCharge, subscriber: string): PlanCharge
   const fee = BigInt(charge.fee);
   return {
     mandateId: charge.mandate_id,
-    subscriber,
+    subscriber: subscriber,
     amount: fromStroops(amount),
     fee: fromStroops(fee),
     net: fromStroops(amount - fee),
@@ -336,9 +464,10 @@ export function vaultEventLabel(event: ApiVaultEvent): string {
   }
 }
 
-/** Signed decimal-string amount for display: deposits are positive, withdrawals
- * and debits are negative. Amounts stay in smallest units until formatted, so
- * no floating point is ever used for money. */
+/** Signed decimal-string amount for display: deposits are prefixed "+",
+ * withdrawals and debits "-". The sign is written out rather than left to the
+ * number so a credit reads as one at a glance, and the conversion stays in
+ * integers — no floating point is ever used for money. */
 export function vaultEventAmount(event: ApiVaultEvent): string {
   const sign = vaultEventIsCredit(event) ? "+" : "-";
   return `${sign}${fromStroops(event.amount)}`;

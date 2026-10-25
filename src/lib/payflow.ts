@@ -12,8 +12,19 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 import { config } from "./config";
-import { mandateStatus } from "./mandate-status";
-import { MIN_PERIOD_MESSAGE } from "./period";
+import type { Mandate, Plan, SignXdr } from "./payflow-core";
+import {
+  MAX_NAME_LEN,
+  decodeContractError,
+  mandateStatus,
+  nameByteLength,
+} from "./payflow-core";
+
+import {
+  checkProfileName,
+  checkProfileUrl,
+  type MerchantProfile,
+} from "./profile";
 import {
   SIGNATURE_CANCELLED_MESSAGE,
   isSignatureRejection,
@@ -96,7 +107,7 @@ export async function withFallback<T>(
  */
 class Semaphore {
   private permits: number;
-  private waiters: Array<() => void> = [];
+  private waiters: Array< () => void > = [];
 
   constructor(permits: number) {
     this.permits = permits;
@@ -225,8 +236,6 @@ export async function readContract<T>(
   throw lastError;
 }
 
-/** Signs a transaction XDR and returns the signed XDR. Supplied by the wallet. */
-export type SignXdr = (xdrString: string) => Promise<string>;
 
 export const arg = {
   address: (v: string): xdr.ScVal => new Address(v).toScVal(),
@@ -246,8 +255,8 @@ export type WriteContractProgressCallback = (status: TransactionStatus, txHash?:
  * Submit a state-changing call.
  *
  * `prepareTransaction` runs the simulation and attaches the resulting
- * authorization entries and resource footprint — skipping it produces a
- * transaction the network rejects.
+ * authorization entries and resource footprint — skipping it produces
+ * a transaction the network rejects.
  */
 export async function writeContract(
   contractId: string,
@@ -318,158 +327,17 @@ async function pollTransaction(
   return result;
 }
 
-/**
- * Maps the contracterror codes from payflow-contract onto readable text.
- *
- * Every entry mirrors a `#[contracterror]` variant in that repository's
- * `contracts/<name>/src/error.rs` (named in the comment). A code means different
- * things in different contracts, so never reuse a sentence across scopes
- * without checking the variant.
- */
-const ERRORS: Record<string, Record<number, string>> = {
-  plan_registry: {
-    1: "The plan registry is already set up.", // AlreadyInitialized
-    2: "The plan registry has not been set up yet.", // NotInitialized
-    3: "That plan does not exist.", // PlanNotFound
-    4: "You do not own that plan.", // NotPlanOwner
-    5: "Amount must be greater than zero.", // InvalidAmount
-    // Shared with the publish form's pre-flight check: a merchant who is told
-    // "at least 60 seconds" by the form and sees the same words if they
-    // somehow reach the simulation is not being given two different rules.
-    6: MIN_PERIOD_MESSAGE, // InvalidPeriod
-    7: "That plan name is too long.", // NameTooLong
-    8: "That merchant has not set up a profile yet.", // ProfileNotFound
-    9: "That profile name is too long.", // ProfileNameTooLong
-    10: "That profile URL is too long.", // ProfileUrlTooLong
-  },
-  vault: {
-    1: "The vault is already set up.", // AlreadyInitialized
-    2: "The vault has not been set up yet.", // NotInitialized
-    3: "Amount must be greater than zero.", // InvalidAmount
-    4: "Not enough balance in your vault.", // InsufficientBalance
-    5: "The vault is not wired to a subscription contract yet.", // SubscriptionNotSet
-  },
-  subscription: {
-    1: "The subscription contract is already set up.", // AlreadyInitialized
-    2: "The subscription contract has not been set up yet.", // NotInitialized
-    3: "That subscription does not exist.", // MandateNotFound
-    4: "You are not the subscriber on this mandate.", // NotSubscriber
-    5: "This subscription is not active.", // MandateNotActive
-    6: "This subscription is not due yet.", // NotDue
-    7: "That plan is no longer accepting subscribers.", // PlanInactive
-    8: "That protocol fee is above the 10% ceiling.", // FeeTooHigh
-    9: "This subscription has reached its charge limit.", // MaxChargesReached
-    10: "That charge limit is not valid.", // InvalidMaxCharges
-    11: "Only the merchant on this subscription can end it.", // NotMerchant
-  },
-};
 
-/**
- * Every error variant each contract can raise, keyed by contract and code.
- *
- * `ERRORS` above is the subset the UI has copy for; this table is the full
- * set from the docs repo's error reference. The test in
- * `test/contract-errors.test.ts` asserts that every entry here has a
- * non-generic message in `ERRORS` (or `CALLEE_ERRORS`), so a new contract
- * error cannot reach a user as "contract error #N".
- *
- * Codes are the `#[contracterror]` discriminants. Variants that carry no
- * user-facing meaning (e.g. an internal invariant) still need a sentence.
- */
-export const CONTRACT_ERROR_CODES: Record<string, readonly number[]> = {
-  plan_registry: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-  vault: [1, 2, 3, 4, 5],
-  subscription: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
-};
 
-/**
- * Exported for tests: the message `decodeContractError` would produce for a
- * given contract scope and code, without going through the RPC error text.
- * Returns undefined when the code has no entry in `ERRORS`.
- */
-export function contractErrorMessage(
-  scope: keyof typeof CONTRACT_ERROR_CODES,
-  code: number,
-): string | undefined {
-  return ERRORS[scope]?.[code];
-}
 
-/**
- * Codes raised by a contract that the called method invokes. An error in a
- * cross-contract call reaches the caller with the callee's number, so
- * `charge` failing in the vault reports the vault's #4 (not enough balance),
- * which the subscription table would misread as "not the subscriber". These
- * entries cover the codes a method can only get from its callee.
- */
-export const CALLEE_ERRORS: Record<string, Record<number, string>> = {
-  charge: {
-    4: "The subscriber's vault does not hold enough to cover this charge.",
-  },
-  subscribe: {
-    3: "That plan does not exist.",
-  },
-};
 
-const REGISTRY_METHODS = new Set([
-  "create_plan",
-  "set_plan_active",
-  "get_plan",
-  "set_profile",
-  "profile",
-  "deactivate_page",
-]);
-const VAULT_METHODS = new Set(["deposit", "withdraw", "debit", "balance"]);
 
-/**
- * Exported for tests: a wrong code-to-message mapping shows a user the wrong
- * reason their payment failed, which is a correctness bug rather than copy.
- */
-export function decodeContractError(error: unknown, method: string): string {
-  if (isSignatureRejection(error)) return SIGNATURE_CANCELLED_MESSAGE;
-  const text =
-    typeof error === "string" ? error : ((error as Error)?.message ?? String(error));
-  const match = /Error\(Contract, #(\d+)\)/.exec(text);
-  if (match?.[1]) {
-    const code = Number(match[1]);
-    const fromCallee = CALLEE_ERRORS[method]?.[code];
-    if (fromCallee) return fromCallee;
-    const scope = REGISTRY_METHODS.has(method)
-      ? "plan_registry"
-      : VAULT_METHODS.has(method)
-        ? "vault"
-        : "subscription";
-    const known = ERRORS[scope]?.[code];
-    if (known) return known;
-    return `${method} failed with contract error #${code}.`;
-  }
-  if (/account not found/i.test(text)) {
-    return "That account does not exist on testnet yet. Fund it with Friendbot first.";
-  }
-  // An empty or non-descriptive message must never reach the UI: pages render
-  // errors with `{error && ...}`, so returning "" would fail the operation
-  // silently and leave the user with no feedback at all.
-  const trimmed = text.trim();
-  if (!trimmed || trimmed === "[object Object]" || trimmed === "undefined") {
-    return `${method} failed for an unknown reason. Check your wallet and try again.`;
-  }
-  return trimmed;
-}
 
 // ----------------------------------------------------------------------------
- // Typed wrappers. These mirror payflow-contract's public interface exactly.
+// Typed wrappers. These mirror payflow-contract's public interface exactly.
 // ----------------------------------------------------------------------------
 
-/**
- * Mirrors MAX_NAME_LEN in the plan-registry contract, which bounds the name in
- * BYTES. UTF-8 means a name can be under this many characters and still over
- * the limit, so callers must measure encoded length, not `String.length`.
- */
-export const MAX_NAME_LEN = 64;
 
-/** Encoded byte length of a plan name, as the contract counts it. */
-export function nameByteLength(name: string): number {
-  return new TextEncoder().encode(name).length;
-}
 
 /**
  * Validate a new plan name before anything is signed. Returns an error message,
@@ -487,92 +355,29 @@ export function validatePlanName(name: string): string | null {
 
 export { nativeToScVal };
 
-export interface Plan {
-  id: bigint;
-  merchant: string;
-  name: string;
-  token: string;
-  amount: bigint;
-  period: bigint;
-  active: boolean;
-  /**
-   * Free trial in seconds, 0 meaning none — from payflow-contract#9, which has
-   * not shipped. Optional because a contract built before that change decodes
-   * to a map with no `trial` key, and reporting 0 there would claim a trial
-   * does not exist rather than that we cannot tell.
-   */
-  trial?: bigint;
-  /** Proposed payflow-contract#26; absent on older deployments. */
-  available_until?: bigint;
-  /** Proposed payflow-contract#25; 0 means unlimited. */
-  max_subscribers?: number;
-}
 
-/** Mirrors MAX_PAGE in the contracts: the most ids an index call returns. */
-export const MAX_PAGE = 50;
 
-export interface Mandate {
-  id: bigint;
-  subscriber: string;
-  plan_id: bigint;
-  merchant: string;
-  token: string;
-  amount: bigint;
-  period: bigint;
-  next_charge: bigint;
-  last_charge: bigint;
-  charges_made: number;
-  max_charges: number;
-  fee_bps: number;
-  /**
-   * The discount the merchant set on this mandate, in basis points.
-   *
-   * Optional on purpose: payflow-contract#37 has not shipped, so a contract
-   * built before it returns a `Mandate` map without these keys. Absent means
-   * "this contract cannot say", which is not the same as "no discount" — see
-   * `supportsDiscounts` in `lib/discount`.
-   */
-  discount_bps?: number;
-  /** How many charges the discount covers. */
-  discount_charges?: number;
-  /** How many of those charges have been settled. */
-  discount_charges_made?: number;
-  /**
-   * A `#[contracttype]` enum variant without data is encoded as a vector
-   * holding its name, so this decodes as `["Active"]`, not `"Active"`. Use
-   * `mandateStatus` to read it.
-   */
-  status: string | string[];
-  /**
-   * The trial frozen into the mandate at subscribe time, from
-   * payflow-contract#9. Optional for the same reason as `Plan.trial`.
-   */
-  trial?: bigint;
-  /**
-   * When a paused mandate resumes, from payflow-contract#41. Optional because
-   * the deployed contract predates it: a mandate decoded without the key means
-   * that contract cannot service a pause-until, and the UI hides the control
-   * rather than building a transaction the contract would reject.
-   */
-  pause_until?: bigint;
-  /**
-   * When a past-due mandate's grace period ends, from payflow-contract#34.
-   * Optional because the deployed contract predates it.
-   */
-  past_due_until?: bigint;
-  /**
-   * The net amount the merchant received that can be refunded to the subscriber,
-   * from payflow-contract#36. Optional because the deployed contract predates it.
-   */
-  refundable_amount?: bigint;
-}
 
 /**
- * The status name from a decoded `MandateStatus`. Comparing the raw value
- * with `=== "Active"` is always false, which on the contract-only path hid
- * "Charge now" and made Pause send a resume.
+ * The address a transfer is pending to, or null when none is pending.
+ *
+ * Proposed in payflow-contract#68. A contract built before that change
+ * decodes without `pending_subscriber`, so its absence *is* the capability
+ * signal: there is no method to probe and no version to guess at, and
+ * treating null as "no transfer" hides the accept panel exactly when the
+ * contract cannot service it. Read through this helper rather than the raw
+ * field because contract state carries a string while an indexer row may
+ * carry null.
  */
-export { mandateStatus };
+export function mandatePendingSubscriber(mandate: unknown): string | null {
+  const value = (mandate as { pending_subscriber?: unknown } | null | undefined)
+    ?.pending_subscriber;
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+
 
 // ---------------------------------------------------------------------------
 // Session cache for get_plan.
@@ -649,86 +454,15 @@ export function forgetPlan(planId: number | bigint): void {
   planCache.delete(planKey(planId));
 }
 
-/**
- * When a mandate resumes, or null when the contract does not report it.
- *
- * A contract built before payflow-contract#41 decodes without `pause_until`,
- * so its absence *is* the capability signal: there is no method to probe and
- * no version to guess at, and treating null as "no such feature" hides the
- * date picker exactly when the contract cannot service it. Read through this
- * helper rather than the raw field because contract state carries a bigint
- * while an indexer row carries a number.
- */
-export function mandatePauseUntil(mandate: unknown): number | null {
-  const value = (mandate as { pause_until?: unknown } | null | undefined)?.pause_until;
-  const seconds =
-    typeof value === "bigint"
-      ? Number(value)
-      : typeof value === "number"
-        ? value
-        : Number.NaN;
-  return Number.isFinite(seconds) ? seconds : null;
-}
+
+
+
+
 
 /**
- * Whether a mandate is past due (vault could not cover a due charge).
- *
- * Proposed in payflow-contract#34. A contract built before that change decodes
- * without the `PastDue` status variant, so this returns false — the UI hides
- * the past-due badge and notice rather than guessing at support.
+ * Read the current spend limit for a mandate.
+ * Returns `null` when the contract predates payflow-contract#28.
  */
-export function mandateIsPastDue(mandate: unknown): boolean {
-  return mandateStatus(mandate) === "PastDue";
-}
-
-/**
- * When the past-due grace period ends, or null when the contract does not
- * report it or the mandate is not past due.
- *
- * Proposed in payflow-contract#34 as `past_due_until`. Absent means the
- * contract cannot say, which the UI treats as "no grace period visible".
- */
-export function mandatePastDueUntil(mandate: unknown): number | null {
-  const value = (mandate as { past_due_until?: unknown } | null | undefined)?.past_due_until;
-  const seconds =
-    typeof value === "bigint"
-      ? Number(value)
-      : typeof value === "number"
-        ? value
-        : Number.NaN;
-  return Number.isFinite(seconds) ? seconds : null;
-}
-
-/**
- * Whether the deployed contract supports refunds on mandates.
- *
- * Proposed in payflow-contract#36. A contract built before that change does
- * not have the `refund` method, so calling it would fail. The UI hides the
- * refund button rather than building a transaction the contract would reject.
- *
- * Since there's no version probe, we check if the contract's `Mandate` type
- * carries a `refundable_amount` field (proposed as part of the refund feature).
- * If the field is absent, the contract cannot say, and the control stays hidden.
- */
-export function mandateSupportsRefund(mandate: unknown): boolean {
-  const value = (mandate as { refundable_amount?: unknown } | null | undefined)?.refundable_amount;
-  return typeof value === "bigint" || typeof value === "number" || typeof value === "string";
-}
-
-/**
- * Whether the deployed contract supports spend limits on mandates.
- * A contract built before payflow-contract#28 does not have the
- * `set_spend_limit` / `get_spend_limit` methods, so this returns false — the
- * UI hides the control rather than building a transaction the contract would
- * reject.
- */
-export function mandateSupportsSpendLimit(mandate: unknown): boolean {
-  const value = (mandate as { spend_limit?: unknown } | null | undefined)?.spend_limit;
-  return typeof value !== "undefined" && value !== null;
-}/**
-   * Read the current spend limit for a mandate.
-   * Returns `null` when the contract predates payflow-contract#28.
-   */
 export async function getSpendLimit(source: string, mandateId: number | bigint): Promise<number | null> {
   const result = await readContract<number | null>(config.contracts.subscription, "get_spend_limit", source, [
     arg.u64(mandateId),
@@ -738,28 +472,81 @@ export async function getSpendLimit(source: string, mandateId: number | bigint):
 
 
 /**
- * The maximum amount that can be refunded on this mandate, in the token's
- * smallest unit. Returns null when the contract cannot say.
+ * One step of a sequential batch of contract writes.
  *
- * Proposed in payflow-contract#36 as `refundable_amount`. This represents the
- * net amount the merchant received (after fees) that can be refunded to the
- * subscriber.
+ * `id` is the mandate id the step acts on, so a caller can map a failure back
+ * to the row the merchant selected without relying on array position.
  */
-export function mandateRefundableAmount(mandate: unknown): bigint | null {
-  const value = (mandate as { refundable_amount?: unknown } | null | undefined)?.refundable_amount;
-  if (typeof value === "bigint") return value;
-  if (typeof value === "number") return BigInt(value);
-  return null;
+export interface BatchWriteStep<T> {
+  id: bigint;
+  run: () => Promise<T>;
 }
 
-/** A Stellar account a sponsor can pay into: a valid ed25519 public key. */
-export function validateRecipient(recipient: string): string | null {
-  const trimmed = recipient.trim();
-  if (!trimmed) return "Enter a Stellar address.";
-  return StrKey.isValidEd25519PublicKey(trimmed)
-    ? null
-    : "That is not a valid Stellar account address.";
+export interface BatchWriteProgress<T> {
+  /** The step that just finished, 1-based. */
+  completed: number;
+  /** How many steps the batch was asked to run. */
+  total: number;
+  /** The id of the step that just finished. */
+  id: bigint;
+  /** The value the step resolved to. */
+  result: T;
 }
+
+export interface BatchWriteFailure<T> {
+  /** The id of the step that failed. */
+  id: bigint;
+  /** The error the step threw, unchanged. */
+  error: unknown;
+  /** Results of the steps that succeeded before the failure, in order. */
+  completed: Array<{ id: bigint; result: T }>;
+  /** How many steps succeeded before the failure. */
+  completedCount: number;
+  /** How many steps were never attempted. */
+  remainingCount: number;
+}
+
+export type BatchWriteOutcome<T> =
+  | { ok: true; results: Array<{ id: bigint; result: T }> }
+  | { ok: false; failure: BatchWriteFailure<T> };
+
+/**
+ * Run contract writes one at a time, stopping on the first failure.
+ *
+ * Writes are serialized rather than parallel because each one is signed by the
+ * wallet and submitted as its own transaction: firing them together would
+ * stack wallet prompts and race sequence numbers on the same source account.
+ * The outcome reports exactly how far the batch got so the UI can say which
+ * mandates were ended and which were not.
+ *
+ * Pure apart from the `run` callbacks, so it is testable without a wallet.
+ */
+export async function runSequentialWrites<T>(
+  steps: ReadonlyArray<BatchWriteStep<T>>,
+  onProgress?: (progress: BatchWriteProgress<T>) => void,
+): Promise<BatchWriteOutcome<T>> {
+  const results: Array<{ id: bigint; result: T }> = [];
+  for (const [i, step] of steps.entries()) {
+    try {
+      const result = await step.run();
+      results.push({ id: step.id, result });
+      onProgress?.({ completed: i + 1, total: steps.length, id: step.id, result });
+    } catch (error) {
+      return {
+        ok: false,
+        failure: {
+          id: step.id,
+          error,
+          completed: results,
+          completedCount: results.length,
+          remainingCount: steps.length - results.length - 1,
+        },
+      };
+    }
+  }
+  return { ok: true, results };
+}
+
 
 /**
  * Whether the deployed vault contract exposes `deposit_for`.
@@ -862,6 +649,53 @@ export const payflow = {
     );
     forgetPlan(planId);
     return hash;
+  },
+
+  /**
+   * The merchant's profile as the registry holds it, or null when the deployed
+   * contract has no profiles at all. A merchant who has simply not set one
+   * reads as an empty profile, which the UI treats differently: the first
+   * hides the control, the second invites filling it in.
+   */
+  getProfile: async (source: string): Promise<MerchantProfile | null> => {
+    try {
+      const profile = await readContract<{ name?: unknown; url?: unknown }>(
+        config.contracts.planRegistry,
+        "profile",
+        source,
+        [arg.address(source)],
+      );
+      return {
+        name: typeof profile?.name === "string" ? profile.name : "",
+        url: typeof profile?.url === "string" ? profile.url : "",
+      };
+    } catch (err) {
+      // ProfileNotFound means the merchant has none yet; anything else means
+      // this contract cannot answer, so the control stays hidden.
+      // #8 is ProfileNotFound: the contract has profiles, this merchant has
+      // not set one. Any other failure means it cannot answer at all.
+      if (/Error\(Contract, #8\)/.test(String((err as Error)?.message ?? err))) {
+        return { name: "", url: "" };
+      }
+      return null;
+    }
+  },
+
+  /** Set or clear the merchant's own profile. */
+  setProfile: async (
+    source: string,
+    sign: SignXdr,
+    profile: MerchantProfile,
+  ) => {
+    const name = checkProfileName(profile.name);
+    if (!name.ok) throw new Error(name.message);
+    const url = checkProfileUrl(profile.url);
+    if (!url.ok) throw new Error(url.message);
+    return writeContract(config.contracts.planRegistry, "set_profile", source, sign, [
+      arg.address(source),
+      arg.string(profile.name.trim()),
+      arg.string(profile.url.trim()),
+    ]);
   },
 
   setPlanActive: async (
@@ -1100,6 +934,23 @@ export const payflow = {
     ]),
 
   /**
+   * Subscriber side: change a mandate's charge cap. The contract rejects a cap
+   * below `charges_made`, so callers should validate against the mandate's
+   * current `charges_made` before submitting.
+   */
+  setMaxCharges: (
+    source: string,
+    sign: SignXdr,
+    mandateId: number | bigint,
+    maxCharges: number | bigint,
+  ) =>
+    writeContract(config.contracts.subscription, "set_max_charges", source, sign, [
+      arg.address(source),
+      arg.u64(mandateId),
+      arg.u32(Number(maxCharges)),
+    ]),
+
+  /**
    * Subscriber side: pause billing until a point in time, from the interface
    * proposed in payflow-contract#41. Only callable against a contract that
    * carries `pause_until` — see `mandatePauseUntil`, which is how the UI
@@ -1156,6 +1007,47 @@ export const payflow = {
       arg.address(source),
       arg.u64(mandateId),
       arg.i128(amount),
+    ]),
+
+  /**
+   * Subscriber side: propose moving this mandate to a new wallet.
+   *
+   * Built against the interface proposed in payflow-contract#68:
+   * `transfer_mandate(subscriber: Address, mandate_id: u64, new_subscriber:
+   * Address)`. The current subscriber authorizes the proposal by signing;
+   * the mandate keeps billing the old wallet until the new one accepts.
+   *
+   * Only call this when `mandateSupportsTransfer` confirms the deployed
+   * contract carries the field.
+   */
+  transferMandate: (
+    source: string,
+    sign: SignXdr,
+    mandateId: number | bigint,
+    newSubscriber: string,
+  ) =>
+    writeContract(config.contracts.subscription, "transfer_mandate", source, sign, [
+      arg.address(source),
+      arg.u64(mandateId),
+      arg.address(newSubscriber),
+    ]),
+
+  /**
+   * New wallet side: accept a pending transfer of a mandate to the caller.
+   *
+   * Built against the interface proposed in payflow-contract#68:
+   * `accept_mandate_transfer(new_subscriber: Address, mandate_id: u64)`. The
+   * receiving wallet authorizes by signing; the contract only accepts when
+   * `pending_subscriber` on the mandate matches the caller.
+   */
+  acceptMandateTransfer: (
+    source: string,
+    sign: SignXdr,
+    mandateId: number | bigint,
+  ) =>
+    writeContract(config.contracts.subscription, "accept_mandate_transfer", source, sign, [
+      arg.address(source),
+      arg.u64(mandateId),
     ]),
 
   /** Check if an account has established a trustline on Horizon */
@@ -1244,3 +1136,33 @@ export async function addTrustline(
   }
   return sent.hash;
 }
+
+/**
+ * Re-exported from `payflow-core`, which has no SDK dependency, so a page
+ * can import these without the SDK joining its bundle.
+ */
+export {
+  CALLEE_ERRORS,
+  mandatePendingTransfer,
+  mandateSupportsTransfer,
+  CONTRACT_ERROR_CODES,
+  MAX_NAME_LEN,
+  MAX_PAGE,
+  canEditChargeCap,
+  canSetMaxCharges,
+  contractErrorMessage,
+  decodeContractError,
+  mandateIsPastDue,
+  mandatePastDueUntil,
+  mandatePauseUntil,
+  mandateRefundableAmount,
+  mandateStatus,
+  mandateSupportsRefund,
+  mandateSupportsSpendLimit,
+  nameByteLength,
+  parseChargeCapInput,
+  validateMaxCharges,
+  validateRecipient,
+} from "./payflow-core";
+export type { MaxChargesCheck } from "./payflow-core";
+export type { Mandate, Plan, SignXdr } from "./payflow-core";

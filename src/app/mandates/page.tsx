@@ -8,7 +8,10 @@ import { useSearchParams } from "next/navigation";
 import { api, type ApiCharge, type ApiMandate, type ApiPlan } from "@/lib/api";
 import { chainMandate } from "@/lib/chain";
 import { config } from "@/lib/config";
-import { mandateStatus, payflow, type Plan } from "@/lib/payflow";
+import { mandateStatus, type Plan } from "@/lib/payflow-core";
+// The SDK-backed contract module loads on demand, so the Stellar SDK
+// stays out of this route's first-load bundle.
+import { payflow } from "@/lib/lazy-payflow";
 import { useWallet } from "@/lib/wallet";
 import{ fromStroops } from "@/lib/format";
 import { metaFor, useTokenMetas } from "@/lib/token";
