@@ -48,7 +48,7 @@ jobs:
       - run: npm test
       - name: Upload coverage report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage
           path: coverage/
@@ -94,7 +94,7 @@ jobs:
       # resolve, so the build-time plan-id probe falls back to /plans/1/).
       - run: npm run build:visual
       - run: npx playwright test
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: visual-results
