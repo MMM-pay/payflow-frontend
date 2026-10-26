@@ -126,12 +126,17 @@ describe("static import graph", () => {
     );
   }
 
-  it("keeps the heavy SDK and wallet kit out of every module but payflow.ts", () => {
+  it("keeps the heavy SDK and wallet kit out of every module but the contract layer", () => {
+    // payflow.ts supplies the RPC implementation and bindings.ts the typed
+    // argument encoders: they are the SDK-bound contract layer. Everything
+    // else must load them (or the kit) dynamically.
+    const allowed = new Set([
+      join(SRC, "lib", "payflow.ts"),
+      join(SRC, "lib", "bindings.ts"),
+    ]);
     const offenders: string[] = [];
     for (const file of sourceFiles(SRC)) {
-      // payflow.ts is the single SDK-bound module; everything else must load
-      // it (or the kit) dynamically. Its own static import is allowed.
-      if (file === join(SRC, "lib", "payflow.ts")) continue;
+      if (allowed.has(file)) continue;
       for (const specifier of staticImports(readFileSync(file, "utf8"))) {
         if (
           specifier === "@stellar/stellar-sdk" ||

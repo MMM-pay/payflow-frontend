@@ -20,6 +20,7 @@ https://friendbot.stellar.org.
 | `typecheck` | `npm run typecheck` |
 | `test` | `npm test` |
 | `build` | `npm run build` + `npm run budget` |
+| `visual` | `npm run build:visual && npm run test:visual` — see [docs/visual-regression.md](docs/visual-regression.md) |
 
 All must pass. The build job supplies the public env vars; if you add a new
 required variable, add it to the workflow too or the build breaks.
@@ -49,8 +50,10 @@ and say why.
 
 ## Adding a contract call
 
-1. Add the typed wrapper to `payflow` in `src/lib/payflow.ts`, encoding
-   arguments with the `arg` helpers so ScVal types stay explicit.
+1. Add the method to the matching contract table in `src/lib/bindings.ts`,
+   encoding arguments with the `arg` helpers so ScVal types stay explicit.
+   The typed client built there is exposed as `payflow`; only per-session
+   behaviour such as the `get_plan` cache belongs in `src/lib/payflow.ts`.
 2. Add any new error codes to `ERRORS`.
 3. Wire it into a page with the `run()` pattern already used in
    `/account` and `/merchant`: set busy, clear notices, refresh on success.

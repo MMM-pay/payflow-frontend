@@ -9,6 +9,8 @@ coverage/
 *.tsbuildinfo
 next-env.d.ts
 public/embed/
+test-results/
+playwright-report/
 .DS_Store
 
 # Drawn by scripts/generate-og.mjs before every build.
