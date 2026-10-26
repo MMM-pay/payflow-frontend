@@ -45,7 +45,7 @@ jobs:
           # Contract-only mode: previews must work with no payflow-backend,
           # exactly like the public demo, so the indexer URL stays empty.
           NEXT_PUBLIC_API_URL: ""
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: preview-build
           path: out
