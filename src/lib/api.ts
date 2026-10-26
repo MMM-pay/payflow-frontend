@@ -1,4 +1,5 @@
 import { config } from "./config";
+import { parseWebhookDeliveries } from "./webhook-deliveries";
 
 export interface ApiPlan {
   id: number;
@@ -128,6 +129,31 @@ export interface ApiTimelineEvent {
 
 export interface ApiTimelinePage {
   events: ApiTimelineEvent[];
+}
+
+/**
+ * A charge attempt that failed, proposed by payflow-backend#144.
+ *
+ * The backend records every attempt to settle a charge, including failures.
+ * This lets merchants understand why charges are failing and diagnose
+ * subscriber issues (insufficient balance, paused mandate, etc.).
+ */
+export interface ApiChargeAttempt {
+  /** Unique identifier for this attempt. */
+  id: number;
+  /** The mandate the charge was attempted against. */
+  mandate_id: number;
+  /** Unix timestamp when the charge was attempted. */
+  attempted_at: number;
+  /** Result: "success" or "failed". */
+  result: "success" | "failed";
+  /** Contract error code if the attempt failed, null otherwise. */
+  error_code: number | null;
+  /** Plain-language error message if the attempt failed, null otherwise. */
+  error_message: string | null;
+  /** Transaction hash if the charge succeeded, null otherwise. */
+  tx_hash: string | null;
+}
 export interface ApiWebhook {
   id: string;
   url: string;
@@ -187,6 +213,45 @@ export interface ApiVaultEvent {
  * `total_collected` is in smallest units (stroops) as a decimal string so
  * bigint math is always used — never floats.
  */
+/**
+ * The body `GET /health` answers with. Mirrors payflow-backend's own shape:
+ * `indexer` is null before the first pass, and `status` is "starting" until
+ * the lag is known.
+ */
+export interface ApiHealth {
+  /**
+   * "ok", "catching_up" or "starting" today. Left open on purpose: a backend
+   * newer than this build may answer with a status this page has never heard
+   * of, which must read as "down", not as a type error.
+   */
+  status: string;
+  network: string;
+  indexer: {
+    cursor: number;
+    latestLedger: number;
+    lag: number | null;
+    paused: boolean;
+    freshnessSeconds: number | null;
+    lastRunAt: string | null;
+    lastError: string | null;
+  } | null;
+}
+
+/** One settlement pass, as the keeper records it. */
+export interface ApiKeeperPass {
+  /** Unix seconds the pass ran at. */
+  time: number;
+  attempted: number;
+  settled: number;
+  failures: { mandateId: number; error: string }[];
+  backoff: { mandateId: number; failures: number; retryAt: number; retryIn: number }[];
+}
+
+/** `GET /api/keeper`: the recent passes, newest first. */
+export interface ApiKeeperHistory {
+  passes: ApiKeeperPass[];
+}
+
 export interface ApiPlanStats {
   /** Open mandates (active + paused). */
   subscriber_count: number;
@@ -379,6 +444,8 @@ async function timeline(mandateId: number): Promise<ApiTimelinePage | null> {
     validEvents.push(event);
   }
   return { events: validEvents };
+}
+
 async function post<T>(path: string, body: unknown): Promise<T | null> {
   try {
     const res = await fetch(`${config.apiUrl}${path}`, {
@@ -464,6 +531,27 @@ export const api = {
   },
   due: () => get<{ now: number; due: ApiMandate[] }>("/api/due"),
   /**
+   * Backend liveness probe, served at the root (`/health`, not `/api/health`).
+   *
+   * Like every call here it resolves to null when the backend is unreachable.
+   * It also short-circuits to null when the build has no backend URL at all —
+   * the public demo is contract-only, and a bare fetch("/health") there would
+   * be a same-origin request against GitHub Pages that can only 404.
+   */
+  health: () => {
+    if (!api.isConfigured()) return Promise.resolve(null);
+    return get<ApiHealth>("/health");
+  },
+  /**
+   * Keeper pass history, served only when the backend runs with the keeper
+   * enabled (`KEEPER_ENABLED=true`). Null therefore means either "backend
+   * down" or "keeper off"; the status page says so rather than guessing.
+   */
+  keeper: () => {
+    if (!api.isConfigured()) return Promise.resolve(null);
+    return get<ApiKeeperHistory>("/api/keeper");
+  },
+  /**
    * Per-plan stats, proposed by payflow-backend#29.
    *
    * Returns null when the backend is unreachable or does not yet serve this
@@ -474,6 +562,29 @@ export const api = {
     get<{ webhooks: ApiWebhook[] }>(`/api/merchants/${merchant}/webhooks`).then(
       (body) => body?.webhooks ?? null,
     ),
+  /** Proposed authenticated read for payflow-backend#140. Never cache proofs. */
+  webhookDeliveries: async (
+    id: string,
+    proof: { merchant: string; timestamp: number; signature: string },
+    signal?: AbortSignal,
+  ) => {
+    if (!api.isConfigured()) return null;
+    try {
+      const response = await fetch(`${config.apiUrl}/api/webhooks/${encodeURIComponent(id)}/deliveries`, {
+        cache: "no-store",
+        redirect: "error",
+        signal,
+        headers: {
+          "X-Payflow-Merchant": proof.merchant,
+          "X-Payflow-Timestamp": String(proof.timestamp),
+          "X-Payflow-Signature": proof.signature,
+        },
+      });
+      return response.ok ? parseWebhookDeliveries(await response.json()) : null;
+    } catch {
+      return null;
+    }
+  },
   /**
    * Proposed by payflow-backend#5. Returns the created webhook including the
    * signing secret, which the merchant must copy immediately — it is shown
@@ -486,6 +597,16 @@ export const api = {
   testWebhook: (merchant: string, id: string) =>
     post<{ ok: boolean }>(`/api/merchants/${merchant}/webhooks/${id}/test`, {}),
   /**
+   * Rotate a webhook's signing secret, proposed by payflow-backend#139.
+   *
+   * Returns the new secret, which the merchant must copy immediately — it is
+   * shown once and never returned again. The old secret remains valid for a
+   * brief overlap period so the merchant can update their system without
+   * missing events.
+   */
+  rotateWebhookSecret: (merchant: string, id: string) =>
+    post<{ secret: string }>(`/api/merchants/${merchant}/webhooks/${id}/rotate-secret`, {}),
+  /**
    * Recent charges across the protocol, proposed by payflow-backend#30.
    *
    * Returns null when the backend is unreachable or does not yet serve this
@@ -493,6 +614,41 @@ export const api = {
    */
   recentCharges: (limit = 10) =>
     get<{ charges: RecentCharge[] }>(`/api/recent?limit=${limit}`),
+  /**
+   * Charge attempts for a mandate, proposed by payflow-backend#144.
+   *
+   * Returns null when the backend is unreachable or does not yet serve this
+   * endpoint. Contract-only mode cannot reconstruct attempt history — only
+   * successful charges are recorded on-chain.
+   */
+  chargeAttempts: (mandateId: number) =>
+    get<{ attempts: ApiChargeAttempt[] }>(`/api/mandates/${mandateId}/attempts`).then(
+      (body) => body?.attempts ?? null,
+    ),
+
+  /**
+   * Unpaid subscribers for a merchant, proposed by payflow-backend#146.
+   *
+   * Returns active mandates where the subscriber's vault balance cannot cover
+   * the next charge. Returns null when the backend is unreachable or does not
+   * yet serve this endpoint — the UI falls back to checking vault balances
+   * from contract state.
+   */
+  unpaidMandates: (merchant: string) =>
+    get<{ unpaid: ApiMandate[] }>(`/api/merchants/${merchant}/unpaid`),
+
+  /**
+   * Cohort retention analysis by signup month, proposed by payflow-backend#142.
+   *
+   * Returns a grid showing what percentage of each month's signups remained
+   * subscribed in subsequent months. The endpoint is optional until deployed.
+   * An empty API URL must not turn this into a same-origin request or a
+   * contract-only approximation.
+   */
+  merchantCohortRetention: (address: string) => {
+    if (!api.isConfigured()) return Promise.resolve(null);
+    return get<unknown>(`/api/merchants/${address}/cohort-retention?bucket=month`);
+  },
 
   /**
    * Open an SSE stream for live updates scoped to the given address.

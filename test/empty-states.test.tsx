@@ -38,6 +38,9 @@ const apiMock = vi.hoisted(() => ({
   merchantSummary: vi.fn(),
   merchantRevenue: vi.fn(),
   merchantChurn: vi.fn(),
+  merchantCohortRetention: vi.fn(),
+  planStats: vi.fn(),
+  webhooks: vi.fn(),
 }));
 
 const chainMock = vi.hoisted(() => ({
@@ -76,6 +79,7 @@ vi.mock("@/lib/chain", async (importOriginal) => ({
 vi.mock("@/lib/config", () => ({
   config: {
     rpcUrl: "http://localhost:8000/rpc",
+    rpcUrls: ["http://localhost:8000/rpc"],
     networkPassphrase: "Test SDF Network ; September 2015",
     network: "TESTNET",
     apiUrl: "",
@@ -130,6 +134,10 @@ beforeEach(() => {
   apiMock.merchantSummary.mockReset().mockResolvedValue(null);
   apiMock.merchantRevenue.mockReset().mockResolvedValue(null);
   apiMock.merchantChurn.mockReset().mockResolvedValue(null);
+  apiMock.merchantCohortRetention.mockReset().mockResolvedValue(null);
+  apiMock.planStats.mockReset().mockResolvedValue(null);
+  apiMock.webhooks.mockReset().mockResolvedValue([]);
+  apiMock.merchantCohortRetention.mockReset().mockResolvedValue(null);
   chainMock.chainPlans.mockReset().mockResolvedValue([]);
   chainMock.chainPlansOf.mockReset().mockResolvedValue([]);
   chainMock.chainMandatesOf.mockReset().mockResolvedValue([]);

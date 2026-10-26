@@ -152,7 +152,7 @@ describe("endable", () => {
 });
 
 describe("pause_until from contract state", () => {
-  const raw: Mandate = {
+  const raw = {
     id: 1n,
     subscriber: "GAP6QFLXQD73URCC3EXU2WOQHIAREPCGMSIMKF5PFLLI5TR6HTMNDTIE",
     plan_id: 1n,
@@ -166,11 +166,11 @@ describe("pause_until from contract state", () => {
     max_charges: 0,
     fee_bps: 100,
     status: ["Paused"],
-  };
+  } as unknown as Mandate;
 
   it("maps the contract's bigint onto an indexer-style number", () => {
     const until = Date.UTC(2026, 9, 25) / 1000;
-    const m = mandateToApi({ ...raw, pause_until: BigInt(until) });
+    const m = mandateToApi({ ...raw, pause_until: BigInt(until) } as Mandate);
 
     expect(m.pause_until).toBe(until);
     expect(mandatePauseUntil(m)).toBe(until);
@@ -187,7 +187,7 @@ describe("pause_until from contract state", () => {
   it("treats a reported zero as support, not absence", () => {
     // A contract that ships the field reports 0 for "no dated pause". That is
     // still proof the contract can service one, so the control must be shown.
-    const m = mandateToApi({ ...raw, pause_until: 0n });
+    const m = mandateToApi({ ...raw, pause_until: 0n } as Mandate);
     expect(m.pause_until).toBe(0);
     expect(mandatePauseUntil(m)).toBe(0);
   });
@@ -195,7 +195,7 @@ describe("pause_until from contract state", () => {
 
 describe("mandate status from contract state", () => {
   // What scValToNative returns for a MandateStatus read from the contract.
-  const raw: Mandate = {
+  const raw = {
     id: 1n,
     subscriber: "GAP6QFLXQD73URCC3EXU2WOQHIAREPCGMSIMKF5PFLLI5TR6HTMNDTIE",
     plan_id: 1n,
@@ -209,7 +209,7 @@ describe("mandate status from contract state", () => {
     max_charges: 0,
     fee_bps: 100,
     status: ["Active"],
-  };
+  } as unknown as Mandate;
 
   it("unwraps the enum vector into a plain name", () => {
     expect(mandateStatus(["Paused"])).toBe("Paused");

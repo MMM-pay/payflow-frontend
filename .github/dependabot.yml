@@ -1,0 +1,25 @@
+version: 2
+updates:
+  # Dependencies were previously bumped by hand; this keeps them moving and
+  # lands security fixes without waiting for a human.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    # Minor and patch bumps are low-risk and are grouped into one PR so the
+    # queue stays reviewable; majors stay individual for a real look.
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+  # The workflows pin actions by tag; keep those current too.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch

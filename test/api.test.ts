@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
 
 /**
@@ -37,7 +37,10 @@ function jsonResponse(body: unknown, status = 200, ok = true): Response {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  // Contract-only tests stub NEXT_PUBLIC_API_URL; without this, the stub
+  // leaks into the next test and every isConfigured() call reads "".
   vi.unstubAllEnvs();
+  vi.resetModules();
 });
 
 describe("api fail-soft behaviour", () => {
@@ -100,6 +103,65 @@ describe("api fail-soft behaviour", () => {
     await api.plans("GABC");
     expect(seenUrl).toContain("/api/plans?merchant=GABC");
     expect(seenCache).toBe("no-store");
+  });
+
+  it("api.charge returns matching charge or null", async () => {
+    mockFetch(async (url) => {
+      expect(String(url)).toContain("/api/mandates/5/charges");
+      return jsonResponse({
+        charges: [
+          {
+            tx_hash: "target_hash",
+            mandate_id: 5,
+            amount: "1000",
+            fee: "10",
+            charges_made: 1,
+            ledger: 100,
+          },
+        ],
+      });
+    });
+
+    const found = await api.charge(5, "target_hash");
+    expect(found?.tx_hash).toBe("target_hash");
+
+    const notFound = await api.charge(5, "different_hash");
+    expect(notFound).toBeNull();
+  });
+
+  it("api.mandate returns parsed mandate or null on failure", async () => {
+    mockFetch(async (url) => {
+      expect(String(url)).toContain("/api/mandates/5");
+      return jsonResponse({
+        id: 5,
+        subscriber: "GSUB",
+        merchant: "GMER",
+        status: "Active",
+      });
+    });
+
+    const mandate = await api.mandate(5);
+    expect(mandate?.id).toBe(5);
+    expect(mandate?.subscriber).toBe("GSUB");
+
+    mockFetch(() => Promise.reject(new Error("offline")));
+    expect(await api.mandate(5)).toBeNull();
+  });
+
+  it("queries the revenue endpoint with bucket, from and to", async () => {
+    let seenUrl = "";
+    mockFetch(async (url) => {
+      seenUrl = String(url);
+      return jsonResponse({ buckets: [] });
+    });
+    await api.merchantRevenue("GABC", { bucket: "week", from: 1000, to: 2000 });
+    expect(seenUrl).toContain("/api/merchants/GABC/revenue?bucket=week&from=1000&to=2000");
+    expect(seenUrl).not.toContain("NaN");
+  });
+
+  it("returns null for revenue when the backend cannot serve it", async () => {
+    mockFetch(async () => jsonResponse({ error: "not found" }, 404, false));
+    expect(await api.merchantRevenue("GABC")).toBeNull();
   });
 
   it("parses timeline events and rejects malformed timeline responses", async () => {
@@ -186,63 +248,6 @@ describe("api fail-soft behaviour", () => {
       }),
     );
     expect(await api.timeline(7)).not.toBeNull();
-  it("api.charge returns matching charge or null", async () => {
-    mockFetch(async (url) => {
-      expect(String(url)).toContain("/api/mandates/5/charges");
-      return jsonResponse({
-        charges: [
-          {
-            tx_hash: "target_hash",
-            mandate_id: 5,
-            amount: "1000",
-            fee: "10",
-            charges_made: 1,
-            ledger: 100,
-          },
-        ],
-      });
-    });
-
-    const found = await api.charge(5, "target_hash");
-    expect(found?.tx_hash).toBe("target_hash");
-
-    const notFound = await api.charge(5, "different_hash");
-    expect(notFound).toBeNull();
-  });
-
-  it("api.mandate returns parsed mandate or null on failure", async () => {
-    mockFetch(async (url) => {
-      expect(String(url)).toContain("/api/mandates/5");
-      return jsonResponse({
-        id: 5,
-        subscriber: "GSUB",
-        merchant: "GMER",
-        status: "Active",
-      });
-    });
-
-    const mandate = await api.mandate(5);
-    expect(mandate?.id).toBe(5);
-    expect(mandate?.subscriber).toBe("GSUB");
-
-    mockFetch(() => Promise.reject(new Error("offline")));
-    expect(await api.mandate(5)).toBeNull();
-  });
-
-  it("queries the revenue endpoint with bucket, from and to", async () => {
-    let seenUrl = "";
-    mockFetch(async (url) => {
-      seenUrl = String(url);
-      return jsonResponse({ buckets: [] });
-    });
-    await api.merchantRevenue("GABC", { bucket: "week", from: 1000, to: 2000 });
-    expect(seenUrl).toContain("/api/merchants/GABC/revenue?bucket=week&from=1000&to=2000");
-    expect(seenUrl).not.toContain("NaN");
-  });
-
-  it("returns null for revenue when the backend cannot serve it", async () => {
-    mockFetch(async () => jsonResponse({ error: "not found" }, 404, false));
-    expect(await api.merchantRevenue("GABC")).toBeNull();
   });
 });
 
@@ -317,3 +322,58 @@ describe("api.planStats", () => {
   });
 });
 
+describe("api.health and api.keeper", () => {
+  // Vitest does not load .env.local, so isConfigured() is false by default;
+  // these tests exercise the configured path and stub the URL explicitly.
+  beforeEach(() => {
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "http://backend.test");
+  });
+
+  it("serves /health at the root, not under /api", async () => {
+    // payflow-backend mounts the liveness probe at the root; /api/health 404s.
+    // config.apiUrl is frozen at import, so only the path is asserted here.
+    let seenUrl = "";
+    mockFetch(async (url) => {
+      seenUrl = String(url);
+      return jsonResponse({ status: "ok", indexer: null });
+    });
+    expect(await api.health()).toEqual({ status: "ok", indexer: null });
+    expect(seenUrl.endsWith("/health")).toBe(true);
+    expect(seenUrl).not.toContain("/api/health");
+  });
+
+  it("queries /api/keeper for pass history", async () => {
+    let seenUrl = "";
+    mockFetch(async (url) => {
+      seenUrl = String(url);
+      return jsonResponse({ passes: [] });
+    });
+    expect(await api.keeper()).toEqual({ passes: [] });
+    expect(seenUrl.endsWith("/api/keeper")).toBe(true);
+  });
+
+  it("returns null for both when the backend is unreachable", async () => {
+    mockFetch(() => Promise.reject(new Error("ENETUNREACH")));
+    expect(await api.health()).toBeNull();
+    expect(await api.keeper()).toBeNull();
+
+    mockFetch(async () => jsonResponse({ error: "down" }, 503, false));
+    expect(await api.health()).toBeNull();
+    expect(await api.keeper()).toBeNull();
+  });
+
+  it("issues no request at all in contract-only mode", async () => {
+    // An empty NEXT_PUBLIC_API_URL must not become a same-origin fetch
+    // against the static host, which could only 404.
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "");
+    vi.resetModules();
+    const { api: unconfiguredApi } = await import("@/lib/api");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(unconfiguredApi.isConfigured()).toBe(false);
+    expect(await unconfiguredApi.health()).toBeNull();
+    expect(await unconfiguredApi.keeper()).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

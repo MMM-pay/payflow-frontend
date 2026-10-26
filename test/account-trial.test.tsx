@@ -50,7 +50,15 @@ vi.mock("@/lib/api", () => ({
   },
   checkWebhookUrl: vi.fn(),
 }));
+// The page reads these from the SDK-free core, so the stubs stand there too.
+vi.mock("@/lib/payflow-core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/payflow-core")>()),
+  mandatePastDueUntil: () => null,
+  mandatePendingTransfer: () => null,
+}));
 vi.mock("@/lib/payflow", () => ({
+  // The account page reads the trustline check as a module export.
+  checkTrustline: async () => true,
   payflow: payflowMock,
   // This page's tests predate payflow-contract#41; the dated pause stays off.
   mandatePauseUntil: () => null,
@@ -59,6 +67,11 @@ vi.mock("@/lib/payflow", () => ({
   mandatePastDueUntil: () => null,
   // payflow-contract#29 not shipped; the sponsor panel stays off.
   vaultSupportsDepositFor: async () => false,
+  // payflow-contract#28 not shipped; the spend limit panel stays off.
+  mandateSupportsSpendLimit: () => false,
+  // payflow-contract#68 not shipped; the two-step transfer stays off.
+  mandateSupportsTransfer: () => false,
+  mandatePendingTransfer: () => null,
 }));
 vi.mock("@/lib/chain", () => ({ chainMandatesOf: chainMock.chainMandatesOf }));
 

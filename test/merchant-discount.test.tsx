@@ -34,6 +34,7 @@ const apiMock = vi.hoisted(() => ({
   merchantSummary: vi.fn(),
   merchantRevenue: vi.fn(),
   merchantChurn: vi.fn(),
+  merchantCohortRetention: vi.fn(),
   stream: vi.fn(),
   webhooks: vi.fn(),
   addWebhook: vi.fn(),
@@ -45,6 +46,7 @@ const payflowMock = vi.hoisted(() => ({
   feeBps: vi.fn(),
   createPlan: vi.fn(),
   setPlanActive: vi.fn(),
+  supportsPlanRename: vi.fn().mockResolvedValue(false),
   charge: vi.fn(),
   endMandate: vi.fn(),
   setDiscount: vi.fn(),
@@ -64,6 +66,14 @@ vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return { api: apiMock, checkWebhookUrl: actual.checkWebhookUrl };
 });
+// The page reads these from the SDK-free core, so the stubs stand there too.
+vi.mock("@/lib/payflow-core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/payflow-core")>()),
+  MAX_NAME_LEN: 64,
+  nameByteLength: (n: string) => n.length,
+  mandateSupportsRefund: () => false,
+  mandateRefundableAmount: () => null,
+}));
 vi.mock("@/lib/payflow", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/payflow")>()),
   payflow: payflowMock,
@@ -112,6 +122,7 @@ beforeEach(() => {
   apiMock.merchantSummary.mockResolvedValue(null);
   apiMock.merchantRevenue.mockResolvedValue(null);
   apiMock.merchantChurn.mockResolvedValue(null);
+  apiMock.merchantCohortRetention.mockResolvedValue(null);
   apiMock.webhooks.mockResolvedValue([]);
   payflowMock.feeBps.mockResolvedValue(100);
   payflowMock.vaultBalance.mockResolvedValue(10_000_000n);

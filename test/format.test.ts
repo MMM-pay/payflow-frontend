@@ -4,6 +4,7 @@ import {
   BPS_DENOMINATOR,
   canonicalAmount,
   checkAmount,
+  checkWithdraw,
   DECIMALS,
   feeSplit,
   formatAmount,
@@ -270,6 +271,55 @@ describe("checkAmount", () => {
   });
 });
 
+describe("checkWithdraw", () => {
+  // The vault balance is the second constraint on a withdrawal: the amount
+  // can parse perfectly and still be more than the vault holds, which would
+  // only surface as a failed simulation after the user has signed.
+  const ONE_XLM = 10_000_000n;
+
+  it("accepts an amount within the vault balance", () => {
+    expect(checkWithdraw("1", ONE_XLM)).toEqual({ ok: true, stroops: ONE_XLM });
+    expect(checkWithdraw("0.5", ONE_XLM)).toEqual({ ok: true, stroops: 5_000_000n });
+  });
+
+  it("accepts the full balance — the Max button must not be blocked", () => {
+    expect(checkWithdraw("1", ONE_XLM)).toEqual({ ok: true, stroops: ONE_XLM });
+    // And the exact round-trip the Max button produces: a full-precision
+    // display string that parses back to the same bigint.
+    expect(checkWithdraw(fromStroops(ONE_XLM, 7), ONE_XLM)).toEqual({
+      ok: true,
+      stroops: ONE_XLM,
+    });
+  });
+
+  it("rejects an amount above the balance, naming the balance", () => {
+    const over = checkWithdraw("2", ONE_XLM);
+    expect(over.ok).toBe(false);
+    if (!over.ok) expect(over.message).toBe("Amount is more than your vault balance of 1.");
+    // One stroop over is still over.
+    expect(checkWithdraw("1.0000001", ONE_XLM).ok).toBe(false);
+  });
+
+  it("refuses while the balance is still loading rather than waving it through", () => {
+    const unknown = checkWithdraw("1", null);
+    expect(unknown.ok).toBe(false);
+    if (!unknown.ok) expect(unknown.message).toMatch(/balance is still loading/i);
+  });
+
+  it("still applies the amount rules before the balance ones", () => {
+    for (const bad of ["", "abc", "0", "-1"]) {
+      expect(checkWithdraw(bad, ONE_XLM).ok, `"${bad}"`).toBe(false);
+    }
+  });
+
+  it("validates against the token's decimals, not a hardcoded 7", () => {
+    // 1.5 USDC is 1_500_000 smallest units; the balance must be read at the
+    // same scale or the comparison is off by 10×.
+    expect(checkWithdraw("1.5", 1_500_000n, 6)).toEqual({ ok: true, stroops: 1_500_000n });
+    expect(checkWithdraw("2", 1_500_000n, 6).ok).toBe(false);
+  });
+});
+
 describe("feeSplit", () => {
   it("matches the contract: fee is amount × bps ÷ 10 000, net is the remainder", () => {
     const s = feeSplit(10_000_000n, 100); // 1% of 1 XLM
@@ -364,6 +414,17 @@ describe("formatPeriod", () => {
   it("picks the largest unit that divides evenly", () => {
     // 2 weeks divides by week, not by day.
     expect(formatPeriod(1_209_600)).toBe("every 2 weeks");
+    // A custom quarterly period (3 × 30-day months) reads as quarters of the
+    // same scale the monthly preset uses, on plan cards everywhere.
+    expect(formatPeriod(7_776_000)).toBe("every 3 months");
+  });
+
+  it("names the custom lengths the merchant form now offers", () => {
+    expect(formatPeriod(10 * 86_400)).toBe("every 10 days");
+    // 14 days is a fortnight, and reads as one.
+    expect(formatPeriod(14 * 86_400)).toBe("every 2 weeks");
+    expect(formatPeriod(5 * 604_800)).toBe("every 5 weeks");
+    expect(formatPeriod(6 * 2_592_000)).toBe("every 6 months");
   });
 
   it("falls back to seconds when no unit divides evenly", () => {

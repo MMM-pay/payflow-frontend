@@ -208,7 +208,7 @@ export function Activity() {
     setPartial(false);
     setSeen(address ? readSeen(address) : new Set());
     setSeenAddress(address);
-    if (address && config.apiConfigured) void refresh(address);
+    if (address && api.isConfigured()) void refresh(address);
     return () => {
       mounted.current = false;
       generation.current += 1;
@@ -237,7 +237,7 @@ export function Activity() {
     writeSeen(address, next);
   };
 
-  if (!config.apiConfigured || !address) return null;
+  if (!api.isConfigured() || !address) return null;
 
   return (
     <Panel

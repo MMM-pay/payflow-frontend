@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import AccountPage from "@/app/account/page";
 import type { ApiMandate } from "@/lib/api";
-import { minPauseDate, resumeDate } from "@/lib/format";
+import { formatDate } from "@/i18n/format";
+import { minPauseDate } from "@/lib/format";
 
 /**
  * The account page is the first page rendered in tests because it exercises
@@ -18,8 +19,16 @@ const wallet = vi.hoisted(() => ({
   error: null as string | null,
   networkMismatch: false,
   walletNetwork: null as string | null,
+  account: { state: "loading" } as
+    | { state: "loading" }
+    | { state: "loaded"; account: { balance: bigint; subentryCount: number } }
+    | { state: "missing" }
+    | { state: "error"; message: string },
+  funding: false,
   connect: vi.fn(),
   disconnect: vi.fn(),
+  refreshAccount: vi.fn(),
+  fund: vi.fn(),
   signXdr: vi.fn(),
 }));
 
@@ -67,11 +76,26 @@ vi.mock("@/lib/api", () => ({
   },
   checkWebhookUrl: vi.fn(),
 }));
+// The page reads these from the SDK-free core, so the stubs stand there too.
+vi.mock("@/lib/payflow-core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/payflow-core")>()),
+  mandatePendingTransfer: () => null,
+  mandateSupportsSpendLimit: vi.fn(() => false),
+  mandateStatus: (raw: unknown) =>
+    Array.isArray(raw) ? String(raw[0] ?? "") : String(raw ?? ""),
+  ...payflowHelpers,
+}));
 vi.mock("@/lib/payflow", () => ({
+  // The account page reads the trustline check as a module export.
+  checkTrustline: async () => true,
+  // payflow-contract#68 not shipped; the two-step transfer stays off.
+  mandateSupportsTransfer: () => false,
+  mandatePendingTransfer: () => null,
   payflow: payflowMock,
   readContract: payflowMock.readContract,
   server: payflowMock.server,
   ...payflowHelpers,
+  mandateSupportsSpendLimit: vi.fn(() => false),
   // `lib/chain` imports these at module scope; the partial chain mock below
   // loads the real module for its pure vault helpers.
   MAX_PAGE: 50,
@@ -88,6 +112,27 @@ vi.mock("@/lib/chain", async (importOriginal) => {
 // Merchant names come from Horizon + stellar.toml; the page must render
 // without either, so the resolver is pinned to "no name published".
 vi.mock("@/lib/toml", () => ({ useOrgName: () => null }));
+
+// Pinned so the page has a token contract to ask about. Without it the token
+// id is "" in tests and every amount falls back to native XLM.
+vi.mock("@/lib/config", () => ({
+  config: {
+    rpcUrl: "http://localhost:8000/rpc",
+    rpcUrls: ["http://localhost:8000/rpc"],
+    networkPassphrase: "Test SDF Network ; September 2015",
+    network: "TESTNET",
+    apiUrl: "http://localhost:8080",
+    readSource: "GAP6QFLXQD73URCC3EXU2WOQHIAREPCGMSIMKF5PFLLI5TR6HTMNDTIE",
+    contracts: {
+      planRegistry: "CDQ5EJTVXXX2CBMHWP3BGGUDHSK6D4I25IF5XXH3QGL2TNTBMJUOFKDB",
+      vault: "CBNQEWSYYQOKNX5KB62OFT6ID5TCVSWN4PS4AXAJK6IWUEXOLVN6DXII",
+      subscription: "CD5YZUJU6WLFIHGAV4J2BV42GCVZE5ZGDUGSW5CBRIA47TQHSZZW3XMM",
+      token: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    },
+  },
+  explorerBase: "https://stellar.expert/explorer/testnet",
+  requireContracts: () => {},
+}));
 
 // Pinned so the page has a token contract to ask about. Without it the token
 // id is "" in tests and every amount falls back to native XLM.
@@ -146,6 +191,10 @@ beforeEach(async () => {
   wallet.error = null;
   wallet.networkMismatch = false;
   wallet.walletNetwork = null;
+  wallet.funding = false;
+  wallet.account = { state: "loading" };
+  wallet.refreshAccount.mockClear();
+  wallet.fund.mockClear();
   apiMock.mandatesOf.mockReset();
   apiMock.vaultHistory.mockReset();
   apiMock.charges.mockReset();
@@ -273,6 +322,71 @@ describe("AccountPage", () => {
     expect(deposit.disabled).toBe(true);
     expect(withdraw.disabled).toBe(true);
     expect(pause.disabled).toBe(true);
+  });
+
+  it("refuses to withdraw more than the vault holds, and Max fills the full balance", async () => {
+    // Issue #35: an over-balance amount used to go all the way to the wallet
+    // prompt and only fail in simulation.
+    payflowMock.vaultBalance.mockResolvedValue(50_000_000n); // 5 XLM
+    apiMock.mandatesOf.mockResolvedValue({ mandates: [] });
+
+    render(<AccountPage />);
+
+    const input = await screen.findByLabelText("Amount (XLM)");
+    const withdraw = screen.getByRole("button", { name: "Withdraw" }) as HTMLButtonElement;
+    const max = screen.getByRole("button", {
+      name: "Fill the amount with the full vault balance",
+    }) as HTMLButtonElement;
+
+    // Nothing typed yet: nothing can be withdrawn, so the button waits.
+    expect(withdraw.disabled).toBe(true);
+
+    // One stroop over the balance disables the button and says why.
+    fireEvent.change(input, { target: { value: "5.0000001" } });
+    expect(withdraw.disabled).toBe(true);
+    expect(screen.getByRole("alert").textContent).toContain(
+      "Amount is more than your vault balance of 5.",
+    );
+
+    // Max fills the full balance at the token's own precision; the round-trip
+    // parses back to the same bigint, so withdrawing it is allowed.
+    fireEvent.click(max);
+    expect((input as HTMLInputElement).value).toBe("5");
+    expect(withdraw.disabled).toBe(false);
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    payflowMock.withdraw.mockResolvedValue("c0ffee");
+    fireEvent.click(withdraw);
+    await waitFor(() => expect(payflowMock.withdraw).toHaveBeenCalledTimes(1));
+    expect(payflowMock.withdraw).toHaveBeenCalledWith(
+      SUBSCRIBER,
+      expect.any(Function),
+      expect.any(String),
+      50_000_000n,
+    );
+  });
+
+  it("keeps withdrawing disabled while the balance is still loading", async () => {
+    payflowMock.vaultBalance.mockResolvedValue(new Promise(() => {}));
+    apiMock.mandatesOf.mockResolvedValue({ mandates: [] });
+
+    render(<AccountPage />);
+
+    const input = await screen.findByLabelText("Amount (XLM)");
+    fireEvent.change(input, { target: { value: "1" } });
+
+    // A balance the page does not have yet must not be assumed to cover the
+    // amount; the Max button stays out of reach for the same reason.
+    expect(
+      (screen.getByRole("button", { name: "Withdraw" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Fill the amount with the full vault balance",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
   });
 
   it("labels and scales amounts with the token's own metadata", async () => {
@@ -554,7 +668,7 @@ describe("AccountPage pause until", () => {
 
     render(<AccountPage />);
 
-    expect(await screen.findByText(`resumes ${resumeDate(until)}`)).toBeTruthy();
+    expect(await screen.findByText(`resumes ${formatDate(until, "en")}`)).toBeTruthy();
   });
 
   it("shows no resume date once it has passed", async () => {
@@ -566,7 +680,7 @@ describe("AccountPage pause until", () => {
     render(<AccountPage />);
     await screen.findByText("Mandate #7");
 
-    expect(screen.queryByText(/resumes \d{4}-/)).toBeNull();
+    expect(screen.queryByText(/resumes /)).toBeNull();
   });
 
   it("does not offer a picker on a cancelled mandate", async () => {
@@ -801,5 +915,70 @@ describe("AccountPage pause until", () => {
     // The stale result must not replace the new account's mandates.
     expect(screen.queryByText("Mandate #7")).toBeNull();
     expect(screen.getByText("Mandate #99")).toBeTruthy();
+  });
+});
+
+describe("AccountPage charge reminders (#174)", () => {
+  it("never asks for notification permission on page load", async () => {
+    const requestPermission = vi.fn().mockResolvedValue("granted");
+    class FakeNotification {
+      static permission: NotificationPermission = "default";
+      static requestPermission = requestPermission;
+    }
+    Object.defineProperty(globalThis, "Notification", {
+      configurable: true,
+      writable: true,
+      value: FakeNotification,
+    });
+    payflowMock.vaultBalance.mockResolvedValue(0n);
+    apiMock.vaultHistory.mockResolvedValue({ events: [] });
+    apiMock.mandatesOf.mockResolvedValue({
+      mandates: [mandate({ next_charge: Math.floor(Date.now() / 1000) + 86_400 })],
+    });
+
+    render(<AccountPage />);
+    await screen.findByText("Mandate #7");
+
+    expect(requestPermission).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Remind me" })).toBeTruthy();
+  });
+
+  it("asks only on the opt-in click and stores the preference per address", async () => {
+    const requestPermission = vi.fn().mockResolvedValue("granted");
+    class FakeNotification {
+      static permission: NotificationPermission = "default";
+      static requestPermission = requestPermission;
+    }
+    Object.defineProperty(globalThis, "Notification", {
+      configurable: true,
+      writable: true,
+      value: FakeNotification,
+    });
+    window.localStorage.clear();
+    payflowMock.vaultBalance.mockResolvedValue(0n);
+    apiMock.vaultHistory.mockResolvedValue({ events: [] });
+    apiMock.mandatesOf.mockResolvedValue({
+      mandates: [mandate({ next_charge: Math.floor(Date.now() / 1000) + 86_400 })],
+    });
+
+    render(<AccountPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Remind me" }));
+
+    await waitFor(() => expect(requestPermission).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole("button", { name: "Reminder on" })).toBeTruthy();
+    expect(
+      JSON.parse(window.localStorage.getItem(`payflow.reminders.${SUBSCRIBER}`) ?? "{}"),
+    ).toEqual({ "7": true });
+  });
+
+  it("does not offer a reminder on an ended mandate", async () => {
+    payflowMock.vaultBalance.mockResolvedValue(0n);
+    apiMock.vaultHistory.mockResolvedValue({ events: [] });
+    apiMock.mandatesOf.mockResolvedValue({ mandates: [mandate({ status: "Cancelled" })] });
+
+    render(<AccountPage />);
+    await screen.findByText("Mandate #7");
+
+    expect(screen.queryByRole("button", { name: "Remind me" })).toBeNull();
   });
 });

@@ -29,6 +29,7 @@ const apiMock = vi.hoisted(() => ({
   merchantSummary: vi.fn(),
   merchantRevenue: vi.fn(async () => ({ points: [] })),
   merchantChurn: vi.fn(async () => ({ months: [] })),
+  merchantCohortRetention: vi.fn(async () => null),
   planStats: vi.fn(),
   stream: vi.fn(() => null),
   webhooks: vi.fn(async () => []),
@@ -40,6 +41,7 @@ const apiMock = vi.hoisted(() => ({
 const payflowMock = vi.hoisted(() => ({
   createPlan: vi.fn(async () => "tx-create-plan"),
   setPlanActive: vi.fn(),
+  supportsPlanRename: vi.fn().mockResolvedValue(false),
   vaultBalance: vi.fn(async () => 100_000_000n),
   feeBps: vi.fn(async () => 100),
   checkTrustline: vi.fn(),
@@ -68,6 +70,8 @@ vi.mock("@/lib/payflow", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/payflow")>()),
   payflow: payflowMock,
   readContract: payflowMock.readContract,
+  // The page reads the trustline check as a module export, not off the client.
+  checkTrustline: payflowMock.checkTrustline,
 }));
 vi.mock("@/lib/toml", () => ({ useOrgName: () => null }));
 vi.mock("@/lib/chain", async (importOriginal) => ({
@@ -118,6 +122,7 @@ describe("Multi-token plans & trustline prompt (#31)", () => {
     apiMock.planStats.mockResolvedValue({});
     apiMock.merchantRevenue.mockResolvedValue({ points: [] });
     apiMock.merchantChurn.mockResolvedValue({ months: [] });
+    apiMock.merchantCohortRetention.mockResolvedValue(null);
     payflowMock.createPlan.mockReset();
     payflowMock.checkTrustline.mockReset();
     payflowMock.addTrustline.mockReset();
@@ -148,14 +153,16 @@ describe("Multi-token plans & trustline prompt (#31)", () => {
     expect(publishBtn.disabled).toBe(false);
     fireEvent.click(publishBtn);
 
-    expect(payflowMock.createPlan).toHaveBeenCalledWith(
-      MERCHANT,
-      wallet.signXdr,
-      expect.objectContaining({
-        token: USDC_SAC_CONTRACT,
-        name: "Pro USDC",
-        amount: 10_000_000n, // 10 USDC (6 decimals)
-      }),
+    await vi.waitFor(() =>
+      expect(payflowMock.createPlan).toHaveBeenCalledWith(
+        MERCHANT,
+        wallet.signXdr,
+        expect.objectContaining({
+          token: USDC_SAC_CONTRACT,
+          name: "Pro USDC",
+          amount: 10_000_000n, // 10 USDC (6 decimals)
+        }),
+      ),
     );
   });
 
@@ -176,11 +183,13 @@ describe("Multi-token plans & trustline prompt (#31)", () => {
 
     fireEvent.click(addBtn);
 
-    expect(payflowMock.addTrustline).toHaveBeenCalledWith(
-      SUBSCRIBER,
-      wallet.signXdr,
-      "USDC",
-      "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+    await vi.waitFor(() =>
+      expect(payflowMock.addTrustline).toHaveBeenCalledWith(
+        SUBSCRIBER,
+        wallet.signXdr,
+        "USDC",
+        "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      ),
     );
   });
 });

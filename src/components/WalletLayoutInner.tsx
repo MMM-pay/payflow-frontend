@@ -1,12 +1,18 @@
 "use client";
 
+import { useI18n } from "@/i18n/provider";
+
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { LanguagePicker } from "@/i18n/LanguagePicker";
+
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { WalletButton } from "@/components/WalletButton";
 import { Activity } from "@/components/Activity";
 import { NetworkMismatchBanner } from "@/components/ui";
+import { Search } from "@/components/Search";
 import {
   APP_VERSION,
   COMMIT_HASH,
@@ -17,7 +23,8 @@ import {
   buildDebugInfo,
   formatDebugInfo,
 } from "@/lib/build-info";
-import { config } from "@/lib/config";
+import type { NetworkConfig } from "@/lib/config";
+import { useNetwork } from "@/lib/network";
 import { useWallet } from "@/lib/wallet";
 import { copyToClipboard } from "@/lib/clipboard";
 
@@ -26,11 +33,77 @@ const NAV = [
   { href: "/subscribe", label: "Subscribe" },
   { href: "/account", label: "My account" },
   { href: "/merchant", label: "Merchant" },
+  { href: "/status", label: "Status" },
 ];
 
 function isCurrent(pathname: string, href: string): boolean {
   if (href === "/") return pathname === "/";
   return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+/**
+ * The header's network control: a labelled badge when this build serves one
+ * network, a switcher when it serves several. Switching persists the choice
+ * and reloads, so every page — and the RPC server behind it — comes back on
+ * the selected network.
+ */
+function NetworkSwitcher({
+  network,
+  networks,
+  select,
+}: {
+  network: NetworkConfig;
+  networks: NetworkConfig[];
+  select: (id: string) => void;
+}) {
+  if (networks.length <= 1) {
+    return (
+      <span
+        className="inline-flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-2 text-xs text-muted"
+        title={`Stellar ${network.label.toLowerCase()}`}
+      >
+        <span className="h-2 w-2 rounded-full bg-accent" aria-hidden="true" />
+        {network.label}
+      </span>
+    );
+  }
+
+  return (
+    <span className="relative inline-flex items-center">
+      <span
+        className="pointer-events-none absolute left-2.5 h-2 w-2 rounded-full bg-accent"
+        aria-hidden="true"
+      />
+      <label className="sr-only" htmlFor="network-switcher">
+        Stellar network
+      </label>
+      <select
+        id="network-switcher"
+        className="h-9 appearance-none rounded-lg border border-edge bg-transparent pl-7 pr-7 text-xs text-muted transition hover:border-muted hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        value={network.id}
+        onChange={(event) => select(event.target.value)}
+        title={`Network: ${network.label} — switch and reload`}
+      >
+        {networks.map((option) => (
+          <option key={option.id} value={option.id}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="pointer-events-none absolute right-2 h-3.5 w-3.5 text-muted"
+        aria-hidden="true"
+      >
+        <path d="m6 9 6 6 6-6" />
+      </svg>
+    </span>
+  );
 }
 
 /**
@@ -42,14 +115,18 @@ function isCurrent(pathname: string, href: string): boolean {
  * component so it can keep exporting `metadata`.
  */
 export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
+  const { t: tr } = useI18n();
   const { networkMismatch, walletNetwork, address } = useWallet();
+  const { network, networks, select } = useNetwork();
   const pathname = usePathname();
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLElement>(null);
 
-  const walletName = typeof window !== "undefined" ? window.localStorage.getItem("payflow.wallet") : null;
+  let walletName: string | null = null;
+  try { walletName = typeof window !== "undefined" ? window.localStorage.getItem("payflow.wallet") : null; } catch { /* Storage is optional. */ }
   let walletDisplayName = "Unknown";
   if (walletName) {
     try {
@@ -59,6 +136,26 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
       walletDisplayName = walletName;
     }
   }
+
+  // "/" focuses the search field from anywhere on the page, unless the user
+  // is already typing into an input, textarea, or contenteditable element.
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target?.isContentEditable) {
+        return;
+      }
+      const input = document.getElementById("global-search") as HTMLInputElement | null;
+      if (!input) return;
+      event.preventDefault();
+      input.focus();
+      input.select();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   const handleCopyDebugInfo = async () => {
     const debugInfo = buildDebugInfo(
@@ -110,7 +207,7 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
   const versionText = formatVersion(APP_VERSION);
   const commitShort = formatCommit(COMMIT_HASH);
   const commitUrl = getCommitUrl(commitShort);
-  const contractLinks = getProtocolContractLinks();
+  const contractLinks = getProtocolContractLinks(network.contracts, network.explorerBase);
 
   return (
     <>
@@ -118,18 +215,28 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
         <div className="mx-auto max-w-5xl px-5 pt-4 print:hidden">
           <NetworkMismatchBanner
             walletNetwork={walletNetwork}
-            expectedNetwork={config.networkPassphrase}
+            expectedNetwork={network.networkPassphrase}
           />
         </div>
       )}
       <div className="mx-auto flex min-h-screen max-w-5xl flex-col px-5 print:block print:max-w-none print:px-0">
+        {/*
+          Skip-navigation link: invisible until focused via keyboard. Lets
+          screen-reader and keyboard users jump straight to the page content
+          without tabbing through the header on every navigation. The href
+          matches the id on <main> below. A Next.js <Link> would prefetch
+          the current page unnecessarily, so a plain anchor is correct here.
+        */}
+        <a
+          href="#main-content"
+          className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:m-2 focus:rounded-lg focus:bg-panel focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-fg focus:outline focus:outline-2 focus:outline-offset-2 focus:outline-accent"
+        >{tr("Skip to content")}</a>
         <header className="border-b border-edge py-4 sm:py-5 print:hidden">
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-6">
-              <Link href="/" className="shrink-0 text-lg font-semibold tracking-tight">
-                Pay<span className="text-accent">flow</span>
+              <Link href="/" className="shrink-0 text-lg font-semibold tracking-tight">{tr("Pay")}<span className="text-accent">{tr("flow")}</span>
               </Link>
-              <nav className="hidden gap-4 text-sm text-muted md:flex" aria-label="Main navigation">
+              <nav className="hidden gap-4 text-sm text-muted md:flex" aria-label={tr("Main navigation")}>
                 {NAV.map((item) => (
                   <Link
                     key={item.href}
@@ -139,13 +246,18 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
                       isCurrent(pathname, item.href) ? "text-fg" : ""
                     }`}
                   >
-                    {item.label}
+                    {tr(item.label)}
                   </Link>
                 ))}
               </nav>
             </div>
 
+            <div className="hidden min-w-0 flex-1 justify-center px-2 md:flex">
+              <Search onNavigate={(href) => router.push(href)} />
+            </div>
+
             <div className="flex shrink-0 items-center gap-2">
+              <NetworkSwitcher network={network} networks={networks} select={select} />
               <ThemeToggle />
               <WalletButton />
               <button
@@ -154,7 +266,7 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
                 onClick={() => setOpen((value) => !value)}
                 aria-expanded={open}
                 aria-controls="mobile-nav"
-                aria-label={open ? "Close menu" : "Open menu"}
+                aria-label={open ?tr("Close menu") :tr("Open menu")}
                 className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-edge text-muted transition hover:border-muted hover:bg-fg/5 hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent md:hidden"
               >
                 {open ? (
@@ -186,10 +298,19 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
             </div>
           </div>
 
+          <div className="mt-3 md:hidden">
+            <Search onNavigate={(href) => router.push(href)} />
+          </div>
+
+          <div className="mt-3 flex justify-end"><LanguagePicker /></div>
+
+          <div className="mt-3 md:hidden">
+            <Search onNavigate={(href) => router.push(href)} />
+          </div>
           <nav
             id="mobile-nav"
             ref={menuRef}
-            aria-label="Main navigation"
+            aria-label={tr("Main navigation")}
             hidden={!open}
             className="mt-3 border-t border-edge pt-3 md:hidden"
           >
@@ -203,7 +324,7 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
                       isCurrent(pathname, item.href) ? "bg-fg/5 text-fg" : ""
                     }`}
                   >
-                    {item.label}
+                    {tr(item.label)}
                   </Link>
                 </li>
               ))}
@@ -211,11 +332,11 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
           </nav>
         </header>
 
-        <main className="flex-1 space-y-8 py-8">
+        {/* One landmark only: the skip link targets this id. */}
+        <main id="main-content" className="flex-1 space-y-8 py-8 print:py-0">
           <Activity />
           {children}
         </main>
-        <main className="flex-1 py-8 print:py-0">{children}</main>
 
         {/*
           Footer displays the build version and short commit hash (injected
@@ -228,12 +349,12 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
           <div className="flex flex-col gap-3">
             <div
               className="flex flex-wrap items-center gap-x-4 gap-y-1.5"
-              aria-label="Deployed protocol contracts"
+              aria-label={tr("Deployed protocol contracts")}
             >
-              <span className="font-medium text-soft">Contracts:</span>
+              <span className="font-medium text-soft">{tr("Contracts:")}</span>
               {contractLinks.map((contract) => (
                 <span key={contract.name} className="inline-flex items-center gap-1">
-                  <span>{contract.name}:</span>
+                  <span>{tr(contract.name)}:</span>
                   {contract.url ? (
                     <a
                       href={contract.url}
@@ -241,19 +362,22 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
                       rel="noreferrer"
                       className="mono text-muted underline-offset-2 hover:text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
                       title={contract.id}
-                      aria-label={`${contract.name} contract on Stellar Expert: ${contract.id}`}
+                      aria-label={tr("{0} contract on Stellar Expert: {1}", { "0": contract.name, "1": contract.id })}
                     >
                       {contract.shortId}
                     </a>
                   ) : (
-                    <span className="text-muted">not configured</span>
+                    <span className="text-muted">{tr("not configured")}</span>
                   )}
                 </span>
               ))}
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-muted">
-              <span>Stellar testnet · unaudited · do not use with real funds</span>
+              {/* Per-network copy from the config; `tr` falls back to the
+                  English string, so a translation can be added later without
+                  changing the config. */}
+              <span>{tr(network.disclaimer)}</span>
               <div className="flex items-center gap-2">
                 {(versionText || commitShort) && (
                   <>
@@ -268,8 +392,8 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
                               target="_blank"
                               rel="noreferrer"
                               className="mono underline-offset-2 hover:text-soft hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
-                              title={`Git commit ${commitShort}`}
-                              aria-label={`Git commit ${commitShort}`}
+                              title={tr("Git commit {0}", { "0": commitShort })}
+                              aria-label={tr("Git commit {0}", { "0": commitShort })}
                             >
                               {commitShort}
                             </a>
@@ -287,7 +411,7 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
                   type="button"
                   onClick={handleCopyDebugInfo}
                   className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs text-muted border border-edge hover:bg-fg/5 hover:text-fg hover:border-muted transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                  aria-label="Copy debug information for bug reports"
+                  aria-label={tr("Copy debug information for bug reports")}
                 >
                   <svg
                     viewBox="0 0 24 24"
@@ -302,16 +426,14 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
                     <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
                     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
                   </svg>
-                  {copied ? "Copied!" : "Copy debug info"}
+                  {copied ?tr("Copied!") :tr("Copy debug info")}
                 </button>
                 <a
                   href="https://github.com/MMM-pay"
                   target="_blank"
                   rel="noreferrer"
                   className="hover:text-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
-                >
-                  GitHub
-                </a>
+                >{tr("GitHub")}</a>
               </div>
             </div>
           </div>

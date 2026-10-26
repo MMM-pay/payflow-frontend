@@ -108,6 +108,7 @@ const SOURCE = "GAKOHW5FUKSF3SXQQWLD647RQJPOR5RZOS4ITSMWC5NPC67DEXXYU43H";
 vi.mock("@/lib/config", () => ({
   config: {
     rpcUrl: "https://soroban-testnet.stellar.org",
+    rpcUrls: ["https://soroban-testnet.stellar.org"],
     networkPassphrase: "Test SDF Network ; September 2015",
     network: "TESTNET",
     apiUrl: "",

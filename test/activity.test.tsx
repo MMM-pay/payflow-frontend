@@ -8,6 +8,8 @@ const wallet = vi.hoisted(() => ({
   setAddress: null as ((address: string | null) => void) | null,
 }));
 const apiMock = vi.hoisted(() => ({
+  // The feed asks whether an indexer is configured before reading.
+  isConfigured: () => true,
   mandatesOf: vi.fn(),
   mandatesFor: vi.fn(),
   timeline: vi.fn(),
