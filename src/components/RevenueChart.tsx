@@ -57,7 +57,7 @@ export function RevenueChart({
     <div className="space-y-3">
       <svg
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-        className={`h-44 w-full ${reducedMotion ? "motion-reduce:transition-none" : ""}`}
+        className={`h-44 w-full ${reducedMotion ? "transition-none" : ""}`}
         preserveAspectRatio="none"
         role="img"
         aria-label={summary}
