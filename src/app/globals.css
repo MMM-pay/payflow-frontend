@@ -97,10 +97,31 @@ body {
   }
 }
 
+/*
+ * Respect the reader's reduced-motion preference.
+ *
+ * Skeletons already honour this, but charts and other transitions were
+ * still animating. Collapsing animation and transition durations to near-zero
+ * disables them effectively without having to audit every component.
+ * Chart libraries that animate via JS/SVG attributes also need their own
+ * animation flag disabled; see the reduced-motion handling in chart components.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 @media print {
   body {
     background-color: #ffffff !important;
     color: #000000 !important;
   }
 }
-
