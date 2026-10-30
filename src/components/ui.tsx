@@ -2,11 +2,12 @@
 
 import { useI18n } from "@/i18n/provider";
 
-import { useEffect, useId, useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { CopyButton } from "@/components/CopyButton";
 import { explorerBase } from "@/lib/config";
-import{ shortAddress } from "@/lib/format";
+import { formatExactTime, formatWhen, shortAddress } from "@/lib/format";
+import { getLabel, setLabel, subscribeLabels } from "@/lib/labels";
 import { useOrgName } from "@/lib/toml";
 
 export function Panel({
@@ -145,6 +146,76 @@ export function Badge({ status }: { status: string }) {
   );
 }
 
+/**
+ * A local, user-chosen label for an address, stored in localStorage. Labels
+ * are purely cosmetic and never leave the browser, so they work the same with
+ * or without `NEXT_PUBLIC_API_URL` and with no wallet connected. When storage
+ * is blocked the hook simply reports no label and edits are dropped silently.
+ */
+function useAddressLabel(value: string): string | null {
+  const [label, setLocalLabel] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLocalLabel(getLabel(value));
+    return subscribeLabels(() => setLocalLabel(getLabel(value)));
+  }, [value]);
+
+  return label;
+}
+
+/**
+ * The inline editor for an address label. Kept as a small form so it is
+ * keyboard-operable and announced to screen readers; saving an empty value
+ * removes the label.
+ */
+function LabelEditor({
+  value,
+  label,
+  onDone,
+}: {
+  value: string;
+  label: string | null;
+  onDone: () => void;
+}) {
+  const inputId = useId();
+  const [draft, setDraft] = useState(label ?? "");
+
+  return (
+    <form
+      className="inline-flex max-w-full items-center gap-1"
+      onSubmit={(event) => {
+        event.preventDefault();
+        setLabel(value, draft);
+        onDone();
+      }}
+    >
+      <label htmlFor={inputId} className="sr-only">
+        Label for {value}
+      </label>
+      <input
+        id={inputId}
+        className="input w-32 py-0.5 text-xs"
+        value={draft}
+        maxLength={40}
+        autoFocus
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            onDone();
+          }
+        }}
+      />
+      <button type="submit" className="btn-ghost px-2 py-0.5 text-xs">
+        Save
+      </button>
+      <button type="button" className="btn-ghost px-2 py-0.5 text-xs" onClick={onDone}>
+        Cancel
+      </button>
+    </form>
+  );
+}
+
 export function AddressLink({
   value,
   kind = "account",
@@ -160,8 +231,21 @@ export function AddressLink({
   base?: string;
 }) {
   const { t: tr } = useI18n();
+  const label = useAddressLabel(value);
+  const [editing, setEditing] = useState(false);
+
+  if (editing) {
+    return <LabelEditor value={value} label={label} onDone={() => setEditing(false)} />;
+  }
+
   return (
     <span className="inline-flex max-w-full items-center gap-1 align-middle">
+      {label && (
+        <span className="max-w-full truncate font-medium" title={`Local label for ${value}`}>
+          {label}
+          <span className="sr-only"> (local label)</span>
+        </span>
+      )}
       <a
         href={`${base}/${kind}/${value}`}
         target="_blank"
@@ -171,7 +255,15 @@ export function AddressLink({
       >
         {shortAddress(value, 6)}
       </a>
-      <CopyButton value={value} label={kind === "contract" ?tr("contract address") :tr("address")} />
+      <button
+        type="button"
+        className="rounded px-1 text-xs text-muted underline-offset-2 hover:text-accent hover:underline"
+        aria-label={label ? `Edit label for ${value}` : `Add label for ${value}`}
+        onClick={() => setEditing(true)}
+      >
+        {label ? "✎" : "+ label"}
+      </button>
+      <CopyButton value={value} label={kind === "contract" ? tr("contract address") : tr("address")} />
     </span>
   );
 }
