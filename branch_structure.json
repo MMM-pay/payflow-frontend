@@ -1,6 +1,7 @@
 {
   "default_branch": "main",
   "branches": [
+    "feat/issue-27-feat-merchant-page-through-all-subscribers",
     "feat/issue-23-feat-error-boundary-and-not-found-page",
     "feat/issue-77-feat-merchant-end-several-mandates-at-once",
     "feat/issue-103-feat-search-plans-merchants-and-mandates",
@@ -10,6 +11,7 @@
     "origin"
   ],
   "parent": {
+    "feat/issue-27-feat-merchant-page-through-all-subscribers": "main",
     "feat/issue-23-feat-error-boundary-and-not-found-page": "main",
     "feat/issue-77-feat-merchant-end-several-mandates-at-once": "main",
     "feat/issue-103-feat-search-plans-merchants-and-mandates": "main",
@@ -20,6 +22,7 @@
   },
   "order": [
     "main",
+    "feat/issue-27-feat-merchant-page-through-all-subscribers",
     "feat/issue-23-feat-error-boundary-and-not-found-page",
     "feat/issue-77-feat-merchant-end-several-mandates-at-once",
     "feat/issue-103-feat-search-plans-merchants-and-mandates",
