@@ -70,6 +70,8 @@ vi.mock("@/lib/payflow", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/payflow")>()),
   payflow: payflowMock,
   readContract: payflowMock.readContract,
+  // The page reads the trustline check as a module export, not off the client.
+  checkTrustline: payflowMock.checkTrustline,
 }));
 vi.mock("@/lib/toml", () => ({ useOrgName: () => null }));
 vi.mock("@/lib/chain", async (importOriginal) => ({

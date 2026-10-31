@@ -116,7 +116,9 @@ export async function getKit(): Promise<StellarWalletsKit> {
       const modules = await createWalletModules(mod.allowAllModules, {
         projectId: config.walletConnectProjectId,
         network,
-        appUrl: `${window.location.origin}${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/`,
+        appUrl: typeof window !== "undefined"
+        ? `${window.location.origin}${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/`
+        : process.env.NEXT_PUBLIC_BASE_PATH ?? "/",
       });
       return new mod.StellarWalletsKit({ network, modules });
     })();

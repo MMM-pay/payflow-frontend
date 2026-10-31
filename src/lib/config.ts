@@ -138,6 +138,11 @@ const TESTNET: NetworkConfig = {
     process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015",
   network: "TESTNET",
   apiUrl: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080",
+  /**
+   * Source account used for read-only contract simulation before a wallet is
+   * connected. Simulation never touches this account — it only has to exist on
+   * the network. Defaults to the deployer of the public testnet suite.
+   */
   readSource:
     process.env.NEXT_PUBLIC_READ_SOURCE ??
     "GAKOHW5FUKSF3SXQQWLD647RQJPOR5RZOS4ITSMWC5NPC67DEXXYU43H",

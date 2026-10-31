@@ -255,11 +255,12 @@ function AccountInner() {
     }
 
     // Check classic asset trustlines for mandates in other tokens
-    if (who && configuredTokens.length > 0 && typeof payflow.checkTrustline === "function") {
+    if (who && configuredTokens.length > 0) {
+      const { checkTrustline } = await loadPayflow();
       const missing: ConfiguredToken[] = [];
       for (const tok of configuredTokens) {
         if (tok.classicAsset) {
-          const hasTrust = await payflow.checkTrustline(
+          const hasTrust = await checkTrustline(
             who,
             tok.classicAsset.code,
             tok.classicAsset.issuer,
@@ -542,10 +543,11 @@ function AccountInner() {
       setMissingTrustlines([]);
       return;
     }
+    const { checkTrustline } = await loadPayflow();
     const missing: ConfiguredToken[] = [];
     for (const t of classicTokens) {
       if (t.classicAsset) {
-        const has = await payflow.checkTrustline(
+        const has = await checkTrustline(
           viewAddress,
           t.classicAsset.code,
           t.classicAsset.issuer,

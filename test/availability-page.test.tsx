@@ -13,6 +13,8 @@ vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams()
 vi.mock("@/lib/api", () => ({ api: { plans: mocks.plans, mandatesFor: async () => ({ mandates: [] }) } }));
 vi.mock("@/lib/chain", () => ({ chainPlans: mocks.chain }));
 vi.mock("@/lib/payflow", () => ({
+  // The account page reads the trustline check as a module export.
+  checkTrustline: async () => true,
   // payflow-contract#68 not shipped; the two-step transfer stays off.
   mandateSupportsTransfer: () => false,
   mandatePendingTransfer: () => null, payflow: { subscribe: mocks.subscribe, feeBps: mocks.feeBps } }));

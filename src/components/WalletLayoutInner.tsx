@@ -10,6 +10,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { WalletButton } from "@/components/WalletButton";
+import { Activity } from "@/components/Activity";
 import { NetworkMismatchBanner } from "@/components/ui";
 import { Search } from "@/components/Search";
 import {
@@ -331,7 +332,11 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
           </nav>
         </header>
 
-        <main id="main-content" className="flex-1 py-8 print:py-0">{children}</main>
+        {/* One landmark only: the skip link targets this id. */}
+        <main id="main-content" className="flex-1 space-y-8 py-8 print:py-0">
+          <Activity />
+          {children}
+        </main>
 
         {/*
           Footer displays the build version and short commit hash (injected

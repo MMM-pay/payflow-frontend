@@ -57,6 +57,8 @@ vi.mock("@/lib/payflow-core", async (importOriginal) => ({
   mandatePendingTransfer: () => null,
 }));
 vi.mock("@/lib/payflow", () => ({
+  // The account page reads the trustline check as a module export.
+  checkTrustline: async () => true,
   payflow: payflowMock,
   // This page's tests predate payflow-contract#41; the dated pause stays off.
   mandatePauseUntil: () => null,

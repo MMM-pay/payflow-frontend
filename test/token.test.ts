@@ -11,6 +11,8 @@ import { XLM } from "@/lib/format";
 const readContract = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/payflow", () => ({
+  // The account page reads the trustline check as a module export.
+  checkTrustline: async () => true,
   // payflow-contract#68 not shipped; the two-step transfer stays off.
   mandateSupportsTransfer: () => false,
   mandatePendingTransfer: () => null, readContract }));

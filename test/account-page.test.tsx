@@ -86,6 +86,8 @@ vi.mock("@/lib/payflow-core", async (importOriginal) => ({
   ...payflowHelpers,
 }));
 vi.mock("@/lib/payflow", () => ({
+  // The account page reads the trustline check as a module export.
+  checkTrustline: async () => true,
   // payflow-contract#68 not shipped; the two-step transfer stays off.
   mandateSupportsTransfer: () => false,
   mandatePendingTransfer: () => null,

@@ -21,7 +21,11 @@ describe("header search", () => {
   });
 
   it("does not take a malformed G address for an address", () => {
-    expect(parseQuery(`${address.slice(0, -1)}A`).kind).not.toBe("address");
+    // Change the last character to a *different* one: `Keypair.random()`
+    // sometimes ends in `A`, and rebuilding the same string would leave the
+    // checksum intact and assert nothing.
+    const other = address.endsWith("A") ? "B" : "A";
+    expect(parseQuery(`${address.slice(0, -1)}${other}`).kind).not.toBe("address");
   });
 
   it("links an address to the merchant page and the account", () => {

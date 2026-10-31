@@ -13,8 +13,8 @@ jobs:
     name: lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -25,8 +25,8 @@ jobs:
     name: typecheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -37,8 +37,8 @@ jobs:
     name: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -48,7 +48,7 @@ jobs:
       - run: npm test
       - name: Upload coverage report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage
           path: coverage/
@@ -58,8 +58,8 @@ jobs:
     name: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -74,3 +74,31 @@ jobs:
           NEXT_PUBLIC_TOKEN_ID: CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC
           NEXT_PUBLIC_API_URL: http://localhost:8080
           NEXT_PUBLIC_SITE_URL: https://mmm-pay.github.io
+
+  visual:
+    name: visual
+    # Runs in the Playwright image so fonts, and therefore rendered pixels,
+    # match the committed baselines however the runner is provisioned.
+    container: mcr.microsoft.com/playwright:v1.64.1-jammy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      # `build:visual` pins the version/commit so the footer is stable, and
+      # points the RPC URL at the host the e2e mock intercepts (it does not
+      # resolve, so the build-time plan-id probe falls back to /plans/1/).
+      - run: npm run build:visual
+      - run: npx playwright test
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: visual-results
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 7

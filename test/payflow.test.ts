@@ -4,13 +4,20 @@ import {
   MAX_NAME_LEN,
   MAX_PAGE,
   arg,
+  canEditChargeCap,
   canSetMaxCharges,
+  mandatePastDueUntil,
+  mandatePauseUntil,
+  mandatePendingTransfer,
+  mandateSupportsSpendLimit,
+  mandateSupportsTransfer,
+  parseChargeCapInput,
   validateMaxCharges,
 } from "@/lib/payflow";
 
 /**
- * The typed wrappers in `payflow.ts` encode every contract argument through
- * `arg`. A wrong ScVal type is only caught by the network at submission time,
+ * The generated bindings in `bindings.ts` encode every contract argument
+ * through `arg`. A wrong ScVal type is only caught by the network at submission time,
  * so these tests decode the encoded values back and check the SDK types the
  * contract expects — especially u64/i128, where a Number would lose precision.
  */
@@ -111,5 +118,52 @@ describe("validateMaxCharges", () => {
       currentMaxCharges: 10n,
       maxAllowed: 5n,
     })).toMatch(/at most 5/i);
+  });
+});
+
+/**
+ * The mandate readers decode contract state that may carry a `bigint` (contract
+ * state) or a `number` (an indexer row), so both shapes are exercised here.
+ */
+describe("mandate readers", () => {
+  it("reads a pause date from a bigint or a number", () => {
+    expect(mandatePauseUntil({ pause_until: 1_700_000_000n })).toBe(1_700_000_000);
+    expect(mandatePauseUntil({ pause_until: 1_700_000_000 })).toBe(1_700_000_000);
+    expect(mandatePauseUntil({ pause_until: "soon" })).toBeNull();
+    expect(mandatePauseUntil(null)).toBeNull();
+  });
+
+  it("reads a past-due date from a bigint or a number", () => {
+    expect(mandatePastDueUntil({ past_due_until: 10n })).toBe(10);
+    expect(mandatePastDueUntil({ past_due_until: 10 })).toBe(10);
+    expect(mandatePastDueUntil({})).toBeNull();
+  });
+
+  it("only reports a spend limit the contract actually carries", () => {
+    expect(mandateSupportsSpendLimit({ spend_limit: 5n })).toBe(true);
+    expect(mandateSupportsSpendLimit({ spend_limit: null })).toBe(false);
+    expect(mandateSupportsSpendLimit({})).toBe(false);
+  });
+
+  it("judges whether a charge cap can still be edited", () => {
+    expect(canEditChargeCap(0, null)).toBe(true);
+    expect(canEditChargeCap(0, 0)).toBe(true);
+    expect(canEditChargeCap(0, 12)).toBe(true);
+    expect(canEditChargeCap(12, 12)).toBe(false);
+    expect(canEditChargeCap(-1, 12)).toBe(false);
+  });
+
+  it("rejects a cap of nothing", () => {
+    expect(parseChargeCapInput("0")).toBeNull();
+  });
+
+  it("only reports transfer support when the mandate carries the field", () => {
+    expect(mandateSupportsTransfer({ pending_subscriber: null })).toBe(true);
+    expect(mandateSupportsTransfer({})).toBe(false);
+    expect(mandateSupportsTransfer(null)).toBe(false);
+
+    expect(mandatePendingTransfer({ pending_subscriber: "GABC" })).toBe("GABC");
+    expect(mandatePendingTransfer({ pending_subscriber: "" })).toBeNull();
+    expect(mandatePendingTransfer({})).toBeNull();
   });
 });

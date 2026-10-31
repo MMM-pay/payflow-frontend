@@ -163,6 +163,92 @@ describe("api fail-soft behaviour", () => {
     mockFetch(async () => jsonResponse({ error: "not found" }, 404, false));
     expect(await api.merchantRevenue("GABC")).toBeNull();
   });
+
+  it("parses timeline events and rejects malformed timeline responses", async () => {
+    mockFetch(async (url) => {
+      expect(String(url)).toContain("/api/mandates/7/timeline");
+      return jsonResponse({
+        events: [
+          {
+            event_id: "evt-1",
+            mandate_id: 7,
+            type: "charged",
+            ledger: 42,
+            amount: "1000000",
+            token: "C_TOKEN",
+            token_symbol: "USDC",
+            token_decimals: 6,
+          },
+        ],
+      });
+    });
+    expect(await api.timeline(7)).toEqual({
+      events: [
+        {
+          event_id: "evt-1",
+          mandate_id: 7,
+          type: "charged",
+          ledger: 42,
+          amount: "1000000",
+          token: "C_TOKEN",
+          token_symbol: "USDC",
+          token_decimals: 6,
+        },
+      ],
+    });
+
+    const invalidEvents = [
+      { type: "charged", mandate_id: 7, ledger: 42 },
+      { event_id: "x", mandate_id: 7, type: "unknown", ledger: 42 },
+      { event_id: "x", mandate_id: 7, type: "charged", ledger: 0 },
+      { event_id: "x", mandate_id: 8, type: "charged", ledger: 42 },
+      { event_id: "x", mandate_id: 7, type: "charged", ledger: 42, amount: "1.5" },
+      { event_id: "x", mandate_id: 7, type: "charged", ledger: 42, token_decimals: 19 },
+      { event_id: "x", mandate_id: 7, type: "charged", ledger: 42, token: "C_TOKEN" },
+      { event_id: "x", mandate_id: 7, type: "charged", ledger: 42, token_symbol: "USDC" },
+      { event_id: "x", mandate_id: 7, type: "charged", ledger: 42, token_decimals: 6 },
+      {
+        event_id: "x",
+        mandate_id: 7,
+        type: "charged",
+        ledger: 42,
+        token: "C_TOKEN",
+        token_symbol: null,
+        token_decimals: 6,
+      },
+    ];
+    for (const event of invalidEvents) {
+      mockFetch(async () => jsonResponse({ events: [event] }));
+      expect(await api.timeline(7)).toBeNull();
+    }
+
+    mockFetch(async () => jsonResponse({ data: [] }));
+    expect(await api.timeline(7)).toBeNull();
+
+    mockFetch(async () =>
+      jsonResponse({
+        events: [
+          {
+            event_id: "raw",
+            mandate_id: 7,
+            type: "charged",
+            ledger: 42,
+            amount: "1000000",
+          },
+          {
+            event_id: "raw-null",
+            mandate_id: 7,
+            type: "charged",
+            ledger: 41,
+            token: null,
+            token_symbol: null,
+            token_decimals: null,
+          },
+        ],
+      }),
+    );
+    expect(await api.timeline(7)).not.toBeNull();
+  });
 });
 
 describe("api.planStats", () => {

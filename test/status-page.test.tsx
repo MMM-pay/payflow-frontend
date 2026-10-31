@@ -28,6 +28,8 @@ vi.mock("@/lib/api", () => ({
 }));
 
 vi.mock("@/lib/payflow", () => ({
+  // The account page reads the trustline check as a module export.
+  checkTrustline: async () => true,
   server: { getHealth: () => mocks.getHealth() },
 }));
 
