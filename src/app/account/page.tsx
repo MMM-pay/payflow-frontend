@@ -1586,6 +1586,25 @@ function AccountInner() {
                               Transfer…
                             </button>
                           ))}
+                        {nextAmount !== undefined && !isPastDue && (
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            disabled={busy !== null || networkMismatch || shortfall !== null}
+                            onClick={() =>
+                              void run(`deposit-quick-${m.id}`, () =>
+                                payflow.deposit(
+                                  address!,
+                                  signXdr,
+                                  config.contracts.token,
+                                  nextAmount!,
+                                ),
+                              )
+                            }
+                          >
+                            {tr("Top up")}
+                          </button>
+                        )}
                         {/* Offered only against a contract that carries
                             pause_until; see `pauseSupported`. */}
                         {pauseSupported &&

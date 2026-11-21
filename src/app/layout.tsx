@@ -4,6 +4,7 @@ import { I18nProvider } from "@/i18n/provider";
 import { WalletProvider } from "@/lib/wallet";
 import { WalletLayoutInner } from "@/components/WalletLayoutInner";
 import { THEME_INIT_SCRIPT } from "@/lib/theme";
+import { ToastProvider } from "@/components/Toast";
 
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 // The visual regression build leaves CSP off: its inline-flight payload embeds
@@ -54,11 +55,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
       <body>
+        <ToastProvider>
         <I18nProvider>
         <WalletProvider>
           <WalletLayoutInner>{children}</WalletLayoutInner>
         </WalletProvider>
         </I18nProvider>
+        </ToastProvider>
       </body>
     </html>
   );
