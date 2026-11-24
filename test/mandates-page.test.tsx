@@ -117,7 +117,7 @@ describe("Mandate details page (/mandates/?id=N) (#10)", () => {
           subscriber: "GSUBSCRIBER1234567890",
           merchant: "GMERCHANT9876543210",
           plan_id: 42,
-          amount: "10000000",
+          amount: "20000000",
           fee: "100000",
           charges_made: 1,
           ledger: 12345,
@@ -147,6 +147,27 @@ describe("Mandate details page (/mandates/?id=N) (#10)", () => {
     // Subscriber action visible
     expect(screen.getByRole("button", { name: /Pause subscription/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Cancel subscription/i })).toBeTruthy();
+
+    // Monetary columns are right-aligned and monospace; non-monetary columns are not.
+    const monetaryCell = (text: string): HTMLElement => {
+      for (const el of screen.getAllByText(text)) {
+        const cell = el.closest("td");
+        if (cell && cell.className.includes("font-mono")) return cell as HTMLElement;
+      }
+      throw new Error(`No monospaced cell for ${text}`);
+    };
+    const amountCell = monetaryCell("2 XLM");
+    const feeCell = monetaryCell("0.01 XLM");
+    expect(amountCell.className).toContain("text-right");
+    expect(amountCell.className).toContain("font-mono");
+    expect(amountCell.className).toContain("tabular-nums");
+    expect(feeCell.className).toContain("text-right");
+    expect(feeCell.className).toContain("font-mono");
+    expect(feeCell.className).toContain("tabular-nums");
+    expect(screen.getByText("Amount").closest("th")?.className).toContain("text-right");
+    expect(screen.getByText("Fee").closest("th")?.className).toContain("text-right");
+    const ledgerCell = screen.getByText("#12345").closest("td");
+    expect(ledgerCell?.className).not.toContain("font-mono");
   });
 
   it("falls back to contract state when indexer is not configured (contract-only mode)", async () => {
