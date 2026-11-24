@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { InfoTip, Tooltip } from "@/components/Tooltip";
+import { TimeAgo } from "@/components/ui";
 
 /**
  * The inline help tooltip (issue #385): it opens on hover and on keyboard
@@ -100,3 +101,25 @@ describe("InfoTip", () => {
   });
 });
 
+describe("TimeAgo", () => {
+  it("shows relative time with the exact time on focus, and reads both out once", () => {
+    const now = Date.UTC(2026, 9, 16, 12, 0) / 1000;
+    render(<TimeAgo value={now + 3 * 86_400} now={now * 1000} />);
+    const time = screen.getByText((_, element) => element?.tagName === "TIME");
+    expect(time.textContent).toContain("in 3 days");
+    expect(time.getAttribute("dateTime")).toBe(new Date((now + 3 * 86_400) * 1000).toISOString());
+
+    const trigger = time.parentElement as HTMLElement;
+    fireEvent.focus(trigger);
+    expect(tooltip().hidden).toBe(false);
+    expect(tooltip().textContent).toContain("2026");
+    // The exact time is in the sr-only text, so the tooltip is not announced too.
+    expect(tooltip().getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("shows a dash for a missing time", () => {
+    render(<TimeAgo value={0} />);
+    expect(screen.getByText("—")).toBeTruthy();
+    expect(screen.queryByRole("tooltip", { hidden: true })).toBeNull();
+  });
+});

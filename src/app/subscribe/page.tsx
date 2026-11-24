@@ -28,7 +28,7 @@ import { filterAndSortPlans, type PlanPeriodOption, type PlanSortOption } from "
 import { formatUsdEstimate, formatUsdcEstimate, useXlmUsdPrice } from "@/lib/price";
 import { checkChargeLimit, confirmationFor } from "@/lib/subscribe-confirmation";
 import { observeContractRecord } from "@/lib/contract-compat";
-import { Empty, MerchantAccount, Notice, Panel, SkeletonPlanCards, TxLink } from "@/components/ui";
+import { Empty, MerchantAccount, Notice, Panel, SkeletonPlanCards, TimeAgo, TxLink } from "@/components/ui";
 import { useAction } from "@/lib/useAction";
 import { SubscriberGuide } from "@/components/SubscriberGuide";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -722,9 +722,7 @@ function SubscribeInner() {
 
                       {availability.until !== null && (
                         <p className="text-sm text-muted">{tr("Available until")}{" "}
-                          <time dateTime={new Date(availability.until * 1000).toISOString()}>
-                            {formatDate(availability.until)} ({formatWhen(availability.until, now * 1000)})
-                          </time>
+                          <TimeAgo value={availability.until} now={now * 1000} />
                         </p>
                       )}
                       {availability.seats !== null && (

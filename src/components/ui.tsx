@@ -5,6 +5,7 @@ import { useI18n } from "@/i18n/provider";
 import { useEffect, useId, useRef } from "react";
 import type { ReactNode } from "react";
 import { CopyButton } from "@/components/CopyButton";
+import { Tooltip } from "@/components/Tooltip";
 import { explorerBase } from "@/lib/config";
 import{ shortAddress } from "@/lib/format";
 import { useOrgName } from "@/lib/toml";
@@ -177,18 +178,23 @@ export function AddressLink({
 }
 
 /**
- * A timestamp as relative text ("in 3 days") with the exact local time in the
- * tooltip — and, unlike a bare `title`, in text a screen reader reads out too.
+ * A timestamp as relative text ("in 3 days") with the exact time in a tooltip
+ * that opens on hover and on keyboard focus, and in text a screen reader reads
+ * out too. Use it wherever a single moment is shown, so every page reads the
+ * same way. `now` (milliseconds) lets a caller that already holds a reference
+ * time keep this text consistent with its own.
  */
-export function TimeAgo({ value }: { value: number }) {
+export function TimeAgo({ value, now }: { value: number; now?: number }) {
   const { formatExactTime, formatWhen } = useI18n();
   if (!value) return <span className="text-muted">—</span>;
   const exact = formatExactTime(value);
   return (
-    <time dateTime={new Date(value * 1000).toISOString()} title={exact}>
-      {formatWhen(value)}
-      <span className="sr-only"> ({exact})</span>
-    </time>
+    <Tooltip content={exact} announce={false}>
+      <time dateTime={new Date(value * 1000).toISOString()}>
+        {formatWhen(value, now)}
+        <span className="sr-only"> ({exact})</span>
+      </time>
+    </Tooltip>
   );
 }
 

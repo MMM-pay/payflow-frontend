@@ -300,7 +300,7 @@ function ChargeAttemptsHistory({
   mandateId: number;
   apiConfigured: boolean;
 }) {
-  const { t: tr, formatDate, translateMessage } = useI18n();
+  const { t: tr, translateMessage } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const [attempts, setAttempts] = useState<ApiChargeAttempt[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -369,7 +369,7 @@ function ChargeAttemptsHistory({
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-muted">
-                        {formatDate(attempt.attempted_at)}
+                        <TimeAgo value={attempt.attempted_at} />
                       </span>
                       {attempt.result === "success" ? (
                         <Badge status="Active" />
@@ -525,7 +525,7 @@ function WebhooksPanel({
   merchant: string;
   apiConfigured: boolean;
 }) {
-  const { t: tr, formatDate, translateMessage } = useI18n();
+  const { t: tr, translateMessage } = useI18n();
   const [webhooks, setWebhooks] = useState<ApiWebhook[] | null>(null);
   const [url, setUrl] = useState("");
   const [events, setEvents] = useState<string[]>([]);
@@ -741,7 +741,7 @@ function WebhooksPanel({
                         {w.url}
                       </div>
                       <div className="mt-1 text-xs text-muted">
-                        {w.events.join(", ")} · {formatDate(w.created_at)}
+                        {w.events.join(", ")} · <TimeAgo value={w.created_at} />
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">

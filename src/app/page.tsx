@@ -8,13 +8,13 @@ import { api, type ProtocolStats, type RecentCharge } from "@/lib/api";
 import { chainProtocolStats } from "@/lib/chain";
 import { config } from "@/lib/config";
 import { useNetwork } from "@/lib/network";
-import { AddressLink, Panel, Stat, TxLink } from "@/components/ui";
+import { AddressLink, Panel, Stat, TimeAgo, TxLink } from "@/components/ui";
 import { SubscriberGuide } from "@/components/SubscriberGuide";
 import{ shortAddress } from "@/lib/format";
 import { metaFor, useTokenMetas } from "@/lib/token";
 
 export default function HomePage() {
-  const { t: tr, formatAmount, formatDate } = useI18n();
+  const { t: tr, formatAmount } = useI18n();
   const [stats, setStats] = useState<ProtocolStats | null>(null);
   const [contractPlanCount, setContractPlanCount] = useState<number | null>(null);
   const [recentCharges, setRecentCharges] = useState<RecentCharge[] | null>(null);
@@ -103,9 +103,7 @@ export default function HomePage() {
                   <span className="tabular-nums font-medium text-fg">
                     {formatAmount(charge.amount, tokenMeta)}
                   </span>
-                  <time dateTime={new Date(charge.timestamp * 1000).toISOString()}>
-                    {formatDate(charge.timestamp)}
-                  </time>
+                  <TimeAgo value={charge.timestamp} />
                   <span className="mono truncate max-w-[10rem]">
                     {shortAddress(charge.tx_hash, 6)}
                   </span>

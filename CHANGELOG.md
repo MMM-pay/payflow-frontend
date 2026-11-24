@@ -14,6 +14,12 @@ All notable changes to payflow-frontend. The format follows
   `aria-describedby`. `InfoTip` is a labelled "?" button, pressed to toggle on
   touch screens. They explain the protocol fee on the publish form and the
   charge cap on the account page.
+- **Relative and absolute time together everywhere a moment is shown (#393).**
+  `TimeAgo` shows "in 3 days" with the exact time in a tooltip that also opens
+  on keyboard focus, and now covers the upcoming charges and final charge on
+  the account page, the mandate page's next and last charge, webhook creation
+  and delivery attempts, the keeper's last pass, recent charges on the home
+  page and a plan's availability end.
 
 ### Changed
 

@@ -24,12 +24,13 @@ import {
   Panel,
   SkeletonRows,
   Stat,
+  TimeAgo,
   TxLink,
 } from "@/components/ui";
 import { ConfirmDialog, confirmTitle } from "@/components/ConfirmDialog";
 
 function MandateDetailsInner() {
-  const { t: tr, formatPeriod, formatDate, formatAmount, translateMessage, formatTokenValue, formatNumber } = useI18n();
+  const { t: tr, formatPeriod, formatAmount, translateMessage, formatTokenValue, formatNumber } = useI18n();
   const searchParams = useSearchParams();
   const idParam = searchParams?.get("id");
   const mandateId =
@@ -248,7 +249,7 @@ function MandateDetailsInner() {
         />
         <Stat
           label={tr("Next charge")}
-          value={!isTerminal && mandate.next_charge > 0 ? formatDate(mandate.next_charge) : tr("None")}
+          value={!isTerminal && mandate.next_charge > 0 ? <TimeAgo value={mandate.next_charge} /> : tr("None")}
           hint={isDue ?tr("Due now") : !isTerminal ?tr("Scheduled") :tr("Terminal")}
         />
         <Stat
@@ -296,7 +297,7 @@ function MandateDetailsInner() {
           {mandate.last_charge > 0 && (
             <div className="flex flex-wrap items-center justify-between py-2.5">
               <span className="text-muted">{tr("Last charge settled")}</span>
-              <span>{formatDate(mandate.last_charge)}</span>
+              <span><TimeAgo value={mandate.last_charge} /></span>
             </div>
           )}
         </div>

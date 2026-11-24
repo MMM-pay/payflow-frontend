@@ -1861,12 +1861,9 @@ function AccountInner() {
                               key={charge.due}
                               className="flex items-baseline justify-between gap-3 text-sm"
                             >
-                              <time
-                                dateTime={new Date(charge.due * 1000).toISOString()}
-                                className="text-muted"
-                              >
-                                {formatDate(charge.due)}
-                              </time>
+                              <span className="text-muted">
+                                <TimeAgo value={charge.due} />
+                              </span>
                               <span className="tabular-nums">
                                 {formatAmount(charge.amount, meta)}
                               </span>
@@ -1880,7 +1877,7 @@ function AccountInner() {
                             </strong>
                           </span>
                           {schedule.finalDate !== null && (
-                            <span>{tr("Final charge")}{" "}{formatDate(schedule.finalDate)}</span>
+                            <span>{tr("Final charge")}{" "}<TimeAgo value={schedule.finalDate} /></span>
                           )}
                         </div>
                         {shortfall !== null && (
