@@ -130,19 +130,15 @@ export function SkeletonPlanCards({ cards = 4, label = "Loading plans" }: { card
   );
 }
 
-const BADGE_TONES: Record<string, string> = {
-  Active: "bg-accent/15 text-accent",
-  Paused: "bg-warn/15 text-warn",
-  Cancelled: "bg-danger/15 text-danger",
-  Completed: "bg-info/15 text-info",
-};
+import { StatusBadge } from "./StatusBadge";
 
+/**
+ * A mandate or plan state badge. Kept as a thin alias of `StatusBadge` so
+ * existing callers keep working while all state-to-tone mapping lives in one
+ * place.
+ */
 export function Badge({ status }: { status: string }) {
-  const { t: tr } = useI18n();
-  const tone = BADGE_TONES[status] ?? "bg-fg/10 text-soft";
-  return (
-    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${tone}`}>{tr(status)}</span>
-  );
+  return <StatusBadge status={status} />;
 }
 
 export function AddressLink({
