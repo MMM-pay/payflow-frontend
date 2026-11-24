@@ -23,6 +23,11 @@ All notable changes to payflow-frontend. The format follows
 - **Grace-period badge on past-due mandates (#392).** "Grace period ends in
   3 days" turns to the danger tone in the last day and reads "Grace period
   ended 2 hours ago" once it passes, with the exact end in the tooltip.
+- **Subscriber impact before a discount that can end a mandate (#396).** The
+  discount form, now `src/components/DiscountForm.tsx`, warns when the rate
+  rounds the charge to zero (the charge fails and the mandate can end after its
+  grace period) or when it covers more charges than the mandate's charge cap
+  leaves, and asks for confirmation in a dialog before applying it.
 
 ### Changed
 

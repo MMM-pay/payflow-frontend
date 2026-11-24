@@ -748,10 +748,18 @@
   "Every active or paused subscription listed below stops billing immediately. This cannot be undone.": "Chaque abonnement actif ou en pause ci-dessous cesse immédiatement d’être facturé. Cette action est irréversible.",
   "This subscription stops billing immediately. This cannot be undone.": "Cet abonnement cesse immédiatement d’être facturé. Cette action est irréversible.",
   "Deactivate plan {0}": "Désactiver l’offre {0}",
+  "Grace period ends": "Le délai de grâce prend fin",
+  "Grace period ended": "Le délai de grâce a pris fin",
+  "The charge will fail, the mandate goes past due, and it can end when the grace period runs out.": "Le prélèvement échouera, le mandat passera en retard de paiement et pourra prendre fin à l’expiration du délai de grâce.",
+  "This mandate's charge cap ends it after {0} more charges, so only {0} of the {1} discounted charges will apply.": "Le plafond de prélèvements de ce mandat y met fin après {0} prélèvements de plus : seuls {0} des {1} prélèvements réduits s’appliqueront.",
+  "Check the subscriber impact before applying:": "Vérifiez l’effet sur l’abonné avant d’appliquer :",
+  "Apply this discount anyway": "Appliquer quand même cette réduction",
+  "Confirm: apply discount": "Confirmer : appliquer la réduction",
+  "Change the discount": "Modifier la réduction",
   "About the protocol fee": "À propos des frais du protocole",
-  "The protocol takes {0} of every charge. The subscriber always pays the plan price; the fee is deducted from your payout.": "Le protocole prélève {0} sur chaque prélèvement. L’abonné paie toujours le prix de l’offre ; les frais sont déduits de votre versement.",
   "About the charge cap": "À propos du plafond de prélèvements",
   "The mandate ends by itself once this many charges have been made. It cannot be set below the charges already made.": "Le mandat prend fin de lui-même une fois ce nombre de prélèvements effectué. Il ne peut pas être fixé en dessous des prélèvements déjà effectués.",
-  "Grace period ends": "Le délai de grâce prend fin",
-  "Grace period ended": "Le délai de grâce a pris fin"
+  "How many of the next charges get the discount. After that the subscriber pays the full plan price.": "Nombre de prochains prélèvements qui bénéficient de la réduction. Ensuite, l’abonné paie le prix plein de l’offre.",
+  "The protocol takes {0} of every charge. The subscriber always pays the plan price; the fee is deducted from your payout.": "Le protocole prélève {0} sur chaque prélèvement. L’abonné paie toujours le prix de l’offre ; les frais sont déduits de votre versement.",
+  "About the number of discounted charges": "À propos du nombre de prélèvements réduits"
 }

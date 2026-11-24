@@ -37,8 +37,6 @@ const DEFAULT_TOKENS: readonly ConfiguredToken[] = [
   },
 ];
 import {
-  checkDiscountBps,
-  checkDiscountCharges,
   discountedAmount,
   discountBadge,
   remainingDiscountCharges,
@@ -83,6 +81,7 @@ function validatePlanNameLocal(name: string): string | null {
 import { OnboardingChecklist } from "@/components/OnboardingChecklist";
 import { AddressLink, Badge, Empty, Notice, Panel, SkeletonRows, Stat, TimeAgo, TxLink } from "@/components/ui";
 import { ConfirmDialog, confirmTitle } from "@/components/ConfirmDialog";
+import { DiscountForm } from "@/components/DiscountForm";
 import { InfoTip } from "@/components/Tooltip";
 import { observeContractRecord } from "@/lib/contract-compat";
 import { ContractVersionNotice } from "@/components/ContractVersionNotice";
@@ -818,101 +817,6 @@ function WebhooksPanel({
   );
 }
 
-/**
- * The discount a merchant can attach to one mandate.
- *
- * The rate is a percentage the merchant types; it is converted to basis
- * points in integer arithmetic, and the preview says what the subscriber pays
- * while the discount runs and what they pay after it. The discount can only
- * lower the price, so the preview never shows more than the plan's price.
- */
-function DiscountForm({
-  amount,
-  meta,
-  busy,
-  onCancel,
-  onApply,
-}: {
-  amount: bigint;
-  meta: TokenMeta;
-  busy: boolean;
-  onCancel: () => void;
-  onApply: (bps: number, charges: number) => void;
-}) {
-  const { t: tr, formatAmount, translateMessage } = useI18n();
-  const [percent, setPercent] = useState("10");
-  const [charges, setCharges] = useState("3");
-  const bpsCheck = checkDiscountBps(percent);
-  const chargesCheck = checkDiscountCharges(charges);
-  const usable = bpsCheck.ok && chargesCheck.ok;
-
-  return (
-    <div className="mt-3 rounded-lg border border-edge p-3">
-      <p className="text-sm font-medium">{tr("Discount this mandate")}</p>
-      <div className="mt-2 flex flex-wrap items-end gap-3">
-        <div className="min-w-[7rem] flex-1">
-          <label className="label" htmlFor="discount-percent">{tr("Discount (%)")}</label>
-          <input
-            id="discount-percent"
-            className="input"
-            inputMode="decimal"
-            placeholder="10"
-            value={percent}
-            onChange={(e) => setPercent(e.target.value)}
-            aria-invalid={!bpsCheck.ok}
-            aria-describedby={bpsCheck.ok ? undefined : "discount-percent-error"}
-            disabled={busy}
-          />
-        </div>
-        <div className="min-w-[9rem] flex-1">
-          <label className="label" htmlFor="discount-charges">{tr("Charges to cover")}</label>
-          <input
-            id="discount-charges"
-            className="input"
-            inputMode="numeric"
-            placeholder="3"
-            value={charges}
-            onChange={(e) => setCharges(e.target.value)}
-            aria-invalid={!chargesCheck.ok}
-            aria-describedby={chargesCheck.ok ? undefined : "discount-charges-error"}
-            disabled={busy}
-          />
-        </div>
-        <button
-          type="button"
-          className="btn-primary"
-          disabled={busy || !usable}
-          onClick={() => {
-            if (!bpsCheck.ok || !chargesCheck.ok) return;
-            onApply(bpsCheck.bps, chargesCheck.charges);
-          }}
-        >
-          {busy ?tr("Applying…") :tr("Apply discount")}
-        </button>
-        <button type="button" className="btn-ghost" disabled={busy} onClick={onCancel}>{tr("Cancel")}</button>
-      </div>
-
-      {!bpsCheck.ok && (
-        <p id="discount-percent-error" className="mt-2 text-sm text-danger">
-          {translateMessage(bpsCheck.message)}
-        </p>
-      )}
-      {!chargesCheck.ok && (
-        <p id="discount-charges-error" className="mt-2 text-sm text-danger">
-          {translateMessage(chargesCheck.message)}
-        </p>
-      )}
-
-      {bpsCheck.ok && chargesCheck.ok && (
-        <p className="mt-2 text-sm text-muted">{tr("Subscriber pays")}{" "}{formatAmount(discountedAmount(amount, bpsCheck.bps), meta)}{" "}{tr("for the next")}{" "}{chargesCheck.charges === 1 ?tr("charge") :tr("{0} charges", { "0": chargesCheck.charges })},{" "}{tr("then")}{" "}{formatAmount(amount, meta)}.
-          {discountedAmount(amount, bpsCheck.bps) === 0n && (
-            <>{" "}{tr("This discount rounds the charge down to zero, which the vault cannot debit.")}</>
-          )}
-        </p>
-      )}
-    </div>
-  );
-}
 
 /**
  * The refund a merchant can issue on one mandate.
@@ -2854,6 +2758,8 @@ export default function MerchantPage() {
                       amount={BigInt(m.amount)}
                       meta={meta}
                       busy={busy === `discount-${m.id}`}
+                      maxCharges={Number(m.max_charges ?? 0)}
+                      chargesMade={Number(m.charges_made ?? 0)}
                       onCancel={() => setDiscountFor(null)}
                       onApply={(bps, charges) =>
                         void run(`discount-${m.id}`, () =>
