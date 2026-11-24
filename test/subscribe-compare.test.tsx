@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SubscribePage from "@/app/subscribe/page";
 import type { ApiPlan } from "@/lib/api";
 
-const apiMock = vi.hoisted(() => ({ plans: vi.fn() }));
+const apiMock = vi.hoisted(() => ({ plans: vi.fn(), planStats: vi.fn() }));
 const chainMock = vi.hoisted(() => ({ chainPlans: vi.fn() }));
 
 const walletMock = vi.hoisted(() => ({

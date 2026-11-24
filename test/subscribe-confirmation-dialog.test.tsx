@@ -30,7 +30,7 @@ const mocks = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("@/lib/api", () => ({ api: { plans: mocks.plans } }));
+vi.mock("@/lib/api", () => ({ api: { plans: mocks.plans, planStats: async () => null } }));
 vi.mock("@/lib/chain", () => ({ chainPlans: mocks.chainPlans }));
 // The page reads these from the SDK-free core, so the stubs stand there too.
 vi.mock("@/lib/payflow-core", async (importOriginal) => ({

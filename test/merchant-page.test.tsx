@@ -731,4 +731,41 @@ describe("MerchantPage deactivate all plans", () => {
     await waitFor(() => expect(payflowMock.setPlanActive).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
+
+describe("MerchantPage plan stats", () => {
+  it("shows the subscriber count on each plan card when stats are readable", async () => {
+    setupActivePlans();
+    apiMock.planStats
+      .mockResolvedValueOnce({ subscriber_count: 7, total_collected: "10000000", cancellations: 0 })
+      .mockResolvedValueOnce({ subscriber_count: 0, total_collected: "0", cancellations: 0 })
+      .mockResolvedValueOnce(null);
+
+    render(<MerchantPage />);
+
+    await waitForPlans();
+    // Plan 1 has 7 subscribers, plan 2 has zero, plan 3 has no stats source.
+    await waitFor(() => {
+      const contents = screen
+        .getAllByText("Subscribers")
+        .map((label) => label.parentElement?.textContent ?? "");
+      expect(contents.some((c) => c.includes("7"))).toBe(true);
+      expect(contents.some((c) => c.includes("0"))).toBe(true);
+    });
+    const contents = screen
+      .getAllByText("Subscribers")
+      .map((label) => label.parentElement?.textContent ?? "");
+    expect(contents).toEqual(expect.arrayContaining(["Subscribers7", "Subscribers0"]));
+  });
+
+  it("shows a loading placeholder rather than a zero while plan stats are in flight", async () => {
+    setupActivePlans();
+    // planStats never settles, so the cards stay in the loading state.
+    apiMock.planStats.mockImplementation(() => new Promise(() => {}));
+
+    render(<MerchantPage />);
+
+    await waitForPlans();
+    expect(screen.getAllByText(/Loading plan stats/i).length).toBeGreaterThan(0);
+  });
+});
 });

@@ -176,6 +176,17 @@ function SubscribeInner() {
 
   const { address, networkMismatch, signXdr } = useWallet();
   const [plans, setPlans] = useState<ApiPlan[] | null>(null);
+  /**
+   * Per-plan stats keyed by plan id, populated from the stats API.
+   *
+   * A missing key means the fetch for that plan has not returned yet — the
+   * card shows a loading placeholder rather than a misleading zero.
+   * `null` means neither the API nor any source could supply the data — the
+   * count is hidden entirely rather than fabricated.
+   */
+  const [planStats, setPlanStats] = useState<
+    Record<number, { subscriber_count: number } | null>
+  >({});
   const [maxCharges, setMaxCharges] = useState<Record<number, string>>({});
   const [depositBusy, setDepositBusy] = useState<number | null>(null);
   const [vaultBalances, setVaultBalances] = useState<Record<string, bigint>>({});
@@ -294,6 +305,28 @@ function SubscribeInner() {
       setPlans(loaded);
       setDirect(!res);
       setLoadFailed(failed);
+
+      // Popularity signal: fetch each plan's subscriber count from the stats
+      // API. Every call fails soft, so a backend that does not serve the
+      // endpoint simply leaves the count hidden.
+      if (loaded.length > 0) {
+        void Promise.all(
+          loaded.map(async (plan) => {
+            // The backend fails soft and the stat source may be unable to
+            // supply a count; treat anything but a real object as absent.
+            const stats = await api.planStats(plan.id);
+            if (generation === request.current) {
+              setPlanStats((prev) => ({
+                ...prev,
+                [plan.id]:
+                  stats !== null && stats !== undefined && typeof stats.subscriber_count === "number"
+                    ? { subscriber_count: stats.subscriber_count }
+                    : null,
+              }));
+            }
+          }),
+        );
+      }
     }
     return loaded;
   }, [address]);
@@ -760,6 +793,8 @@ function SubscribeInner() {
                       ? formatUsdString(formatUsdcEstimate(plan.amount, meta.decimals))
                       : null;
                 const selectedForCompare = compareIds.includes(plan.id);
+                const stats = planStats[plan.id];
+                const statsLoading = !(plan.id in planStats);
                 return (
                   <Panel
                     key={plan.id}
@@ -804,6 +839,27 @@ function SubscribeInner() {
                         {badge && (
                           <p className="mt-1 text-xs text-muted">{tr("Nothing is charged for")}{" "}{formatTrialLength(trialSeconds(plan))}{tr(". You can cancel any time before the first charge and pay nothing.")}</p>
                         )}
+                        {/* Per-plan subscriber count from the stats API. While the
+                            fetch is in flight nothing is shown (never a
+                            misleading zero); when no source can supply it the
+                            block is hidden entirely. */}
+                        {statsLoading ? (
+                          <div
+                            className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted"
+                            aria-busy="true"
+                            role="status"
+                          >
+                            <span className="sr-only">{tr("Loading subscribers")}</span>
+                            <span className="h-3 w-12 rounded bg-fg/10 motion-safe:animate-pulse" aria-hidden="true" />
+                          </div>
+                        ) : stats ? (
+                          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
+                            <span className="text-muted">{tr("Subscribers")}</span>
+                            <span className="font-medium tabular-nums">
+                              {formatNumber(stats.subscriber_count)}
+                            </span>
+                          </div>
+                        ) : null}
                       </div>
 
                       {availability.until !== null && (
