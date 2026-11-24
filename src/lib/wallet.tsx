@@ -15,6 +15,7 @@ import { config } from "./config";
 import { createWalletModules } from "./wallet-modules";
 import type { SignXdr } from "./payflow";
 import { translateSignatureError } from "./signature-error";
+import { detectMissingWallet } from "./wallet-detect";
 import { fundWithFriendbot, readNativeAccount, type NativeAccount } from "./account";
 import {
   clearMerchantSession,
@@ -90,6 +91,8 @@ export interface WalletState {
   address: string | null;
   connecting: boolean;
   error: string | null;
+  /** True when no wallet extension was found the last time we looked. */
+  noWallet: boolean;
   networkMismatch: boolean;
   walletNetwork: string | null;
   /** Native balance and entry count, or why they are not known. */
@@ -143,6 +146,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [address, setAddress] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [noWallet, setNoWallet] = useState(false);
   const [walletNetwork, setWalletNetwork] = useState<string | null>(null);
   const [account, setAccount] = useState<AccountState>({ state: "loading" });
   const [funding, setFunding] = useState(false);
@@ -330,6 +334,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setError(null);
     try {
       const kit = await getKit();
+      // Tell the visitor up front when there is nothing to connect to. The
+      // modal still opens: it lists web wallets that need no install.
+      setNoWallet(await detectMissingWallet(kit));
       await kit.openModal({
         onWalletSelected: async (option) => {
           try {
@@ -337,6 +344,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
             const { address: selected } = await kit.getAddress();
             addressRef.current = selected;
             setAddress(selected);
+            setNoWallet(false);
             // Detect network mismatch after connection
             try {
               const { networkPassphrase } = await kit.getNetwork();
@@ -451,6 +459,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       address,
       connecting,
       error,
+      noWallet,
       networkMismatch,
       walletNetwork,
       account,
@@ -465,6 +474,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       address,
       connecting,
       error,
+      noWallet,
       networkMismatch,
       walletNetwork,
       account,

@@ -775,5 +775,11 @@
   "Section {0} of {1}: {2}": "Section {0} of {1}: {2}",
   "Press": "Press",
   "or": "or",
-  "to jump between sections.": "to jump between sections."
+  "to jump between sections.": "to jump between sections.",
+  "No Stellar wallet found.": "No Stellar wallet found.",
+  "Payflow needs a wallet to sign payments. Install one, then reload this page.": "Payflow needs a wallet to sign payments. Install one, then reload this page.",
+  "Get {0}": "Get {0}",
+  "(opens in a new tab)": "(opens in a new tab)",
+  "Dismiss wallet notice": "Dismiss wallet notice",
+  "Dismiss": "Dismiss"
 }

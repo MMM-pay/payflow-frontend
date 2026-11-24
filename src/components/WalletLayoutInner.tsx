@@ -13,6 +13,7 @@ import { WalletButton } from "@/components/WalletButton";
 import { Activity } from "@/components/Activity";
 import { NetworkMismatchBanner } from "@/components/ui";
 import { HeaderSearch } from "@/components/HeaderSearch";
+import { NoWalletNotice } from "@/components/NoWalletNotice";
 import {
   APP_VERSION,
   COMMIT_HASH,
@@ -116,7 +117,8 @@ function NetworkSwitcher({
  */
 export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
   const { t: tr } = useI18n();
-  const { networkMismatch, walletNetwork, address } = useWallet();
+  const { networkMismatch, walletNetwork, address, noWallet } = useWallet();
+  const [noWalletDismissed, setNoWalletDismissed] = useState(false);
   const { network, networks, select } = useNetwork();
   const pathname = usePathname();
   const router = useRouter();
@@ -211,6 +213,11 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
 
   return (
     <>
+      {noWallet && !address && !noWalletDismissed && (
+        <div className="mx-auto max-w-5xl px-5 pt-4 print:hidden">
+          <NoWalletNotice onDismiss={() => setNoWalletDismissed(true)} />
+        </div>
+      )}
       {networkMismatch && (
         <div className="mx-auto max-w-5xl px-5 pt-4 print:hidden">
           <NetworkMismatchBanner

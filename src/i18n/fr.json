@@ -775,5 +775,11 @@
   "Section {0} of {1}: {2}": "Section {0} sur {1} : {2}",
   "Press": "Appuyez sur",
   "or": "ou",
-  "to jump between sections.": "pour passer d’une section à l’autre."
+  "to jump between sections.": "pour passer d’une section à l’autre.",
+  "No Stellar wallet found.": "Aucun portefeuille Stellar trouvé.",
+  "Payflow needs a wallet to sign payments. Install one, then reload this page.": "Payflow a besoin d’un portefeuille pour signer les paiements. Installez-en un, puis rechargez cette page.",
+  "Get {0}": "Obtenir {0}",
+  "(opens in a new tab)": "(s’ouvre dans un nouvel onglet)",
+  "Dismiss wallet notice": "Fermer l’avis sur le portefeuille",
+  "Dismiss": "Fermer"
 }
