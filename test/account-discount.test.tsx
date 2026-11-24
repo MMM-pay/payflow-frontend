@@ -132,8 +132,9 @@ describe("AccountPage discount", () => {
 
     render(<AccountPage />);
 
-    // 1 XLM at 20% off is 0.8 XLM.
-    expect(await screen.findByText("0.8 XLM")).toBeTruthy();
+    // 1 XLM at 20% off is 0.8 XLM. It also appears in the vault commitment
+    // summary, so match every occurrence rather than assuming only the card.
+    expect((await screen.findAllByText("0.8 XLM")).length).toBeGreaterThan(0);
     expect(screen.getByText("20% off for 3 charges")).toBeTruthy();
     expect(screen.getByText(/2 discounted charges left/)).toBeTruthy();
   });

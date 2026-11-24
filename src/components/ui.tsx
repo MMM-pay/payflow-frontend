@@ -240,12 +240,13 @@ export function TxLink({ hash }: { hash: string }) {
   );
 }
 
-export function Notice({ tone, children }: { tone: "error" | "ok" | "info"; children: ReactNode }) {
+export function Notice({ tone, children }: { tone: "error" | "ok" | "info" | "warn"; children: ReactNode }) {
   const { translateMessage } = useI18n();
   const tones = {
     error: "border-danger/40 bg-danger/10 text-danger",
     ok: "border-accent/40 bg-accent/10 text-accent",
     info: "border-edge bg-fg/5 text-muted",
+    warn: "border-warn/40 bg-warn/10 text-warn",
   } as const;
   return (
     <div className={`rounded-lg border px-3 py-2 text-sm ${tones[tone]}`}>
@@ -455,3 +456,8 @@ export function Dialog({
     </div>
   );
 }
+
+export { SyncLagIndicator } from "./SyncLagIndicator";
+export { Money } from "./Money";
+export { NotificationCentre } from "./NotificationCentre";
+

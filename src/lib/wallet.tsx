@@ -156,6 +156,16 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     addressRef.current = address;
   }, [address]);
 
+  // False once the provider has unmounted, so a lookup that resolves later
+  // does not set state on a provider that is gone.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   // Track in-flight checks to prevent duplicate concurrent queries.
   const syncingRef = useRef(false);
 
@@ -171,6 +181,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       return;
     }
     const result = await readNativeAccount(current);
+    if (!mountedRef.current) return; // the provider unmounted meanwhile
     if (addressRef.current !== current) return; // the wallet switched meanwhile
     if (result.state === "found") {
       setAccount({ state: "loaded", account: result.account });

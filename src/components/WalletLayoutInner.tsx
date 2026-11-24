@@ -12,7 +12,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { WalletButton } from "@/components/WalletButton";
 import { Activity } from "@/components/Activity";
 import { NetworkMismatchBanner } from "@/components/ui";
-import { Search } from "@/components/Search";
+import { HeaderSearch } from "@/components/HeaderSearch";
 import {
   APP_VERSION,
   COMMIT_HASH,
@@ -253,7 +253,7 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
             </div>
 
             <div className="hidden min-w-0 flex-1 justify-center px-2 md:flex">
-              <Search onNavigate={(href) => router.push(href)} />
+              <HeaderSearch onNavigate={(href) => router.push(href)} />
             </div>
 
             <div className="flex shrink-0 items-center gap-2">
@@ -299,13 +299,13 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="mt-3 md:hidden">
-            <Search onNavigate={(href) => router.push(href)} />
+            <HeaderSearch onNavigate={(href) => router.push(href)} />
           </div>
 
           <div className="mt-3 flex justify-end"><LanguagePicker /></div>
 
           <div className="mt-3 md:hidden">
-            <Search onNavigate={(href) => router.push(href)} />
+            <HeaderSearch onNavigate={(href) => router.push(href)} />
           </div>
           <nav
             id="mobile-nav"

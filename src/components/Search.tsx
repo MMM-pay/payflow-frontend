@@ -1,133 +1,83 @@
 "use client";
 
+import { useId } from "react";
 import { useI18n } from "@/i18n/provider";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { api } from "@/lib/api";
-import { config } from "@/lib/config";
-import { directTargets, parseQuery, planTargets, type SearchTarget } from "@/lib/search";
-
 /**
- * Header search: an address opens the merchant page or that account's
- * subscriptions, a number opens the mandate or plan with that id, and text
- * matches plan names. Plans are loaded once, on the first text query, from
- * the indexer when one is configured and from the contract otherwise.
+ * A labelled search field used by the plan listings.
+ *
+ * The label is visually hidden but present for screen readers (and as the
+ * accessible name in tests). Typing is reported through `onChange`; the clear
+ * button appears only when there is text and is reachable by keyboard. Colours
+ * come from the app's token classes so it follows both themes.
  */
-export function Search({ onNavigate }: { onNavigate: (href: string) => void }) {
+export function Search({
+  id,
+  label = "Search plans",
+  placeholder = "Search by name",
+  value,
+  onChange,
+  className = "",
+}: {
+  /** Optional DOM id; one is generated when omitted. */
+  id?: string;
+  label?: string;
+  placeholder?: string;
+  value: string;
+  onChange: (value: string) => void;
+  className?: string;
+}) {
   const { t: tr } = useI18n();
-  const listId = useId();
-  const [query, setQuery] = useState("");
-  const [open, setOpen] = useState(false);
-  const [active, setActive] = useState(0);
-  const [plans, setPlans] = useState<{ id: number; name: string }[] | null>(null);
-  const loading = useRef(false);
-
-  const parsed = useMemo(() => parseQuery(query), [query]);
-
-  useEffect(() => {
-    if (parsed.kind !== "text" || plans || loading.current) return;
-    loading.current = true;
-    void (async () => {
-      try {
-        const res = await api.plans();
-        // The contract path pulls in the Stellar SDK; load it only when needed.
-        const loaded = res ? res.plans : await (await import("@/lib/chain")).chainPlans(config.readSource);
-        setPlans(loaded);
-      } catch {
-        setPlans([]);
-      } finally {
-        loading.current = false;
-      }
-    })();
-  }, [parsed, plans]);
-
-  const results: SearchTarget[] = useMemo(
-    () => (parsed.kind === "text" ? planTargets(plans ?? [], parsed.text) : directTargets(parsed)),
-    [parsed, plans],
-  );
-
-  function go(target: SearchTarget) {
-    setOpen(false);
-    setQuery("");
-    onNavigate(target.href);
-  }
-
-  function onKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
-    if (event.key === "Escape") {
-      setOpen(false);
-      return;
-    }
-    if (!results.length) return;
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      setOpen(true);
-      setActive((i) => (i + 1) % results.length);
-    } else if (event.key === "ArrowUp") {
-      event.preventDefault();
-      setOpen(true);
-      setActive((i) => (i - 1 + results.length) % results.length);
-    } else if (event.key === "Enter") {
-      event.preventDefault();
-      const target = results[Math.min(active, results.length - 1)];
-      if (target) go(target);
-    }
-  }
-
-  const showList = open && parsed.kind !== "empty";
-  const empty = parsed.kind === "text" && plans !== null && results.length === 0;
+  const generatedId = useId();
+  const inputId = id ?? `search-${generatedId}`;
 
   return (
-    <div className="relative w-full max-w-sm">
-      <label htmlFor="global-search" className="sr-only">
-        {tr("Search plans, merchants and mandates")}
+    <div className={`relative min-w-[12rem] flex-1 ${className}`} role="search">
+      <label htmlFor={inputId} className="sr-only">
+        {tr(label)}
       </label>
-      <input
-        id="global-search"
-        type="search"
-        role="combobox"
-        aria-expanded={showList}
-        aria-controls={listId}
-        aria-autocomplete="list"
-        aria-activedescendant={showList && results.length ? `${listId}-${active}` : undefined}
-        autoComplete="off"
-        spellCheck={false}
-        value={query}
-        placeholder={tr("Search address, id or plan name ( / )")}
-        onChange={(event) => {
-          setQuery(event.target.value);
-          setActive(0);
-          setOpen(true);
-        }}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setOpen(false)}
-        onKeyDown={onKeyDown}
-        className="w-full rounded-lg border border-edge bg-transparent px-3 py-1.5 text-sm text-fg placeholder:text-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-      />
-      <ul
-        id={listId}
-        role="listbox"
-        aria-label={tr("Search results")}
-        hidden={!showList}
-        className="absolute z-20 mt-1 w-full overflow-hidden rounded-lg border border-edge bg-bg shadow-lg"
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted"
+        aria-hidden="true"
       >
-        {results.map((target, index) => (
-          <li
-            key={target.href}
-            id={`${listId}-${index}`}
-            role="option"
-            aria-selected={index === active}
-            // mousedown runs before the input's blur closes the list.
-            onMouseDown={(event) => {
-              event.preventDefault();
-              go(target);
-            }}
-            className={`cursor-pointer px-3 py-2 text-sm ${index === active ? "bg-fg/10 text-fg" : "text-muted"}`}
+        <circle cx="11" cy="11" r="7" />
+        <path d="m20 20-3.5-3.5" />
+      </svg>
+      <input
+        id={inputId}
+        type="search"
+        className="input pl-9 pr-9"
+        value={value}
+        placeholder={tr(placeholder)}
+        autoComplete="off"
+        onChange={(event) => onChange(event.target.value)}
+      />
+      {value !== "" && (
+        <button
+          type="button"
+          aria-label={tr("Clear search")}
+          onClick={() => onChange("")}
+          className="absolute right-1.5 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-muted transition hover:bg-fg/10 hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            className="h-4 w-4"
+            aria-hidden="true"
           >
-            {tr(target.label, target.values)}
-          </li>
-        ))}
-        {empty && <li className="px-3 py-2 text-sm text-muted">{tr("No plans match")}</li>}
-      </ul>
+            <path d="M6 6l12 12M18 6 6 18" />
+          </svg>
+        </button>
+      )}
     </div>
   );
 }

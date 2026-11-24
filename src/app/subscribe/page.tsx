@@ -30,6 +30,7 @@ import { checkChargeLimit, confirmationFor } from "@/lib/subscribe-confirmation"
 import { observeContractRecord } from "@/lib/contract-compat";
 import { Empty, MerchantAccount, Notice, Panel, SkeletonPlanCards, TimeAgo, TxLink } from "@/components/ui";
 import { useAction } from "@/lib/useAction";
+import { Search } from "@/components/Search";
 import { SubscriberGuide } from "@/components/SubscriberGuide";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ContractVersionNotice } from "@/components/ContractVersionNotice";
@@ -161,9 +162,14 @@ function SubscribeInner() {
   // A shared link (?plan=12) shows that one plan instead of the catalogue.
   const shared = planParam(searchParams?.get("plan"));
   const periodParam = (searchParams?.get("period") as PlanPeriodOption) || "all";
+  const queryParam = searchParams?.get("q") ?? "";
+  const tokenParam = searchParams?.get("token") ?? "all";
 
   const [sort, setSort] = useState<PlanSortOption>(sortParam);
   const [period, setPeriod] = useState<PlanPeriodOption>(periodParam);
+  const [query, setQuery] = useState(queryParam);
+  const [tokenFilter, setTokenFilter] = useState(tokenParam);
+  const [loadFailed, setLoadFailed] = useState(false);
   // Plans ticked for the side-by-side table, in the order they were picked.
   const [compareIds, setCompareIds] = useState<number[]>([]);
   const [showComparison, setShowComparison] = useState(false);
@@ -213,30 +219,55 @@ function SubscribeInner() {
     walletState.current = { address, networkMismatch };
   }, [address, networkMismatch]);
 
-  // Sync state if searchParams change externally
+  // Sync state if the URL changes externally. Keyed on the primitive values,
+  // not the searchParams object: that object can be a fresh identity on every
+  // render, which would reset a search the user is still typing.
   useEffect(() => {
-    if (searchParams) {
-      const s = searchParams.get("sort") as PlanSortOption;
-      if (s) setSort(s);
-      const p = searchParams.get("period") as PlanPeriodOption;
-      if (p) setPeriod(p);
-    }
-  }, [searchParams]);
+    if (sortParam) setSort(sortParam);
+    if (periodParam) setPeriod(periodParam);
+    setQuery(queryParam);
+    setTokenFilter(tokenParam);
+  }, [sortParam, periodParam, queryParam, tokenParam]);
 
-  function updateParams(newSort: PlanSortOption, newPeriod: PlanPeriodOption) {
-    setSort(newSort);
-    setPeriod(newPeriod);
+  /**
+   * Apply one or more listing filters and mirror them in the URL, so a
+   * filtered catalogue can be linked and survives a reload.
+   */
+  function updateParams(next: {
+    sort?: PlanSortOption;
+    period?: PlanPeriodOption;
+    query?: string;
+    token?: string;
+  }) {
+    const nextSort = next.sort ?? sort;
+    const nextPeriod = next.period ?? period;
+    const nextQuery = next.query ?? query;
+    const nextToken = next.token ?? tokenFilter;
+    setSort(nextSort);
+    setPeriod(nextPeriod);
+    setQuery(nextQuery);
+    setTokenFilter(nextToken);
     if (typeof window !== "undefined") {
       const url = new URL(window.location.href);
-      if (newSort && newSort !== "newest") {
-        url.searchParams.set("sort", newSort);
+      if (nextSort && nextSort !== "newest") {
+        url.searchParams.set("sort", nextSort);
       } else {
         url.searchParams.delete("sort");
       }
-      if (newPeriod && newPeriod !== "all") {
-        url.searchParams.set("period", newPeriod);
+      if (nextPeriod && nextPeriod !== "all") {
+        url.searchParams.set("period", nextPeriod);
       } else {
         url.searchParams.delete("period");
+      }
+      if (nextQuery.trim() !== "") {
+        url.searchParams.set("q", nextQuery);
+      } else {
+        url.searchParams.delete("q");
+      }
+      if (nextToken && nextToken !== "all") {
+        url.searchParams.set("token", nextToken);
+      } else {
+        url.searchParams.delete("token");
       }
       window.history.replaceState(null, "", url.toString());
     }
@@ -249,10 +280,12 @@ function SubscribeInner() {
     const generation = ++request.current;
     const res = await api.plans();
     let loaded: ApiPlan[];
+    let failed = false;
     try {
       loaded = res ? res.plans : await chainPlans(address ?? config.readSource);
     } catch {
       loaded = [];
+      failed = true;
     }
     if (generation === request.current) {
       // Indexer rows carry future columns too; observe them so a newer
@@ -260,6 +293,7 @@ function SubscribeInner() {
       loaded.forEach((plan) => observeContractRecord("plan", plan));
       setPlans(loaded);
       setDirect(!res);
+      setLoadFailed(failed);
     }
     return loaded;
   }, [address]);
@@ -463,8 +497,19 @@ function SubscribeInner() {
     // to the catalogue would quietly offer a different plan from the one the
     // link promised.
     if (shared.kind === "plan") return sharedPlan ? [sharedPlan] : [];
-    return filterAndSortPlans(active, { sort, period });
-  }, [active, sort, period, shared, sharedPlan]);
+    return filterAndSortPlans(active, {
+      sort,
+      period,
+      query,
+      token: tokenFilter,
+    });
+  }, [active, sort, period, query, tokenFilter, shared, sharedPlan]);
+  /** Tokens present in the catalogue, keeping the URL-selected one visible. */
+  const tokenOptions = useMemo(() => {
+    const ids = [...new Set(active.map((plan) => plan.token))];
+    if (tokenFilter !== "all" && !ids.includes(tokenFilter)) ids.push(tokenFilter);
+    return ids;
+  }, [active, tokenFilter]);
   // Compare from the full active list rather than the filtered one: changing
   // the filter must not silently drop a column the subscriber already picked.
   const comparedPlans = useMemo(
@@ -559,6 +604,20 @@ function SubscribeInner() {
 
       {plans === null ? (
         <SkeletonPlanCards label={tr("Loading plans")} />
+      ) : loadFailed ? (
+        <Empty
+          title={tr("Could not load plans")}
+          action={
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => {
+                setPlans(null);
+                void load();
+              }}
+            >{tr("Retry")}</button>
+          }
+        >{tr("Neither the plan indexer nor the contract could be read. Check your connection and try again.")}</Empty>
       ) : active.length === 0 ? (
         (plans ?? []).length === 0 ? (
           <Empty
@@ -577,43 +636,68 @@ function SubscribeInner() {
         )
       ) : (
         <div className="space-y-4">
-          {/* Filter and Sort Toolbar */}
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-edge bg-surface/50 p-3">
-            <div className="flex flex-wrap items-center gap-4">
-              <div className="flex items-center gap-2">
-                <label htmlFor="period-filter" className="text-sm font-medium text-muted">{tr("Billing period:")}</label>
-                <select
-                  id="period-filter"
-                  className="input py-1 px-2.5 text-sm"
-                  value={period}
-                  onChange={(e) => updateParams(sort, e.target.value as PlanPeriodOption)}
-                >
-                  <option value="all">{tr("All periods")}</option>
-                  <option value="daily">{tr("Daily")}</option>
-                  <option value="weekly">{tr("Weekly")}</option>
-                  <option value="monthly">{tr("Monthly")}</option>
-                  <option value="yearly">{tr("Annual")}</option>
-                </select>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <label htmlFor="sort-select" className="text-sm font-medium text-muted">{tr("Sort by:")}</label>
-                <select
-                  id="sort-select"
-                  className="input py-1 px-2.5 text-sm"
-                  value={sort}
-                  onChange={(e) => updateParams(e.target.value as PlanSortOption, period)}
-                >
-                  <option value="newest">{tr("Newest first")}</option>
-                  <option value="price_asc">{tr("Price: Low to High")}</option>
-                  <option value="price_desc">{tr("Price: High to Low")}</option>
-                  <option value="period_asc">{tr("Period: Short to Long")}</option>
-                  <option value="period_desc">{tr("Period: Long to Short")}</option>
-                </select>
-              </div>
+          {/* Search, filter and sort toolbar */}
+          <div className="flex flex-wrap items-end gap-3 rounded-lg border border-edge bg-surface/50 p-3">
+            <div className="w-full sm:w-auto sm:min-w-[14rem] sm:flex-1">
+              <Search
+                id="plan-search"
+                value={query}
+                onChange={(value) => updateParams({ query: value })}
+                label={tr("Search plans by name")}
+                placeholder={tr("Search by name")}
+              />
             </div>
 
-            <span className="text-xs text-muted" aria-live="polite">{tr("Showing")}{" "}{formatNumber(filteredPlans.length)}{" "}{tr("of")}{" "}{formatNumber(active.length)}{" "}{tr("plans")}</span>
+            <div className="flex items-center gap-2">
+              <label htmlFor="token-filter" className="whitespace-nowrap text-sm font-medium text-muted">{tr("Token:")}</label>
+              <select
+                id="token-filter"
+                className="input py-1 px-2.5 text-sm"
+                value={tokenFilter}
+                onChange={(e) => updateParams({ token: e.target.value })}
+              >
+                <option value="all">{tr("All tokens")}</option>
+                {tokenOptions.map((id) => (
+                  <option key={id} value={id}>
+                    {metaFor(metas, id).symbol}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <label htmlFor="period-filter" className="whitespace-nowrap text-sm font-medium text-muted">{tr("Billing period:")}</label>
+              <select
+                id="period-filter"
+                className="input py-1 px-2.5 text-sm"
+                value={period}
+                onChange={(e) => updateParams({ period: e.target.value as PlanPeriodOption })}
+              >
+                <option value="all">{tr("All periods")}</option>
+                <option value="daily">{tr("Daily")}</option>
+                <option value="weekly">{tr("Weekly")}</option>
+                <option value="monthly">{tr("Monthly")}</option>
+                <option value="yearly">{tr("Annual")}</option>
+              </select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <label htmlFor="sort-select" className="whitespace-nowrap text-sm font-medium text-muted">{tr("Sort by:")}</label>
+              <select
+                id="sort-select"
+                className="input py-1 px-2.5 text-sm"
+                value={sort}
+                onChange={(e) => updateParams({ sort: e.target.value as PlanSortOption })}
+              >
+                <option value="newest">{tr("Newest first")}</option>
+                <option value="price_asc">{tr("Price: Low to High")}</option>
+                <option value="price_desc">{tr("Price: High to Low")}</option>
+                <option value="period_asc">{tr("Period: Short to Long")}</option>
+                <option value="period_desc">{tr("Period: Long to Short")}</option>
+              </select>
+            </div>
+
+            <span className="ml-auto text-xs text-muted" aria-live="polite">{tr("Showing")}{" "}{formatNumber(filteredPlans.length)}{" "}{tr("of")}{" "}{formatNumber(active.length)}{" "}{tr("plans")}</span>
           </div>
 
           {compareIds.length > 0 && (
@@ -657,10 +741,12 @@ function SubscribeInner() {
                 <button
                   type="button"
                   className="btn-ghost"
-                  onClick={() => updateParams("newest", "all")}
+                  onClick={() =>
+                    updateParams({ sort: "newest", period: "all", query: "", token: "all" })
+                  }
                 >{tr("Reset filters")}</button>
               }
-            >{tr("No active subscription plans match the selected billing period.")}</Empty>
+            >{tr("No active subscription plans match your search, token and billing period. Clear the filters to see them all.")}</Empty>
           ) : (
             <div className="grid gap-4 sm:grid-cols-2">
               {filteredPlans.map((plan) => {
