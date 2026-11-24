@@ -168,7 +168,15 @@ function SubscribeInner() {
   const [compareIds, setCompareIds] = useState<number[]>([]);
   const [showComparison, setShowComparison] = useState(false);
 
-  const { address, networkMismatch, signXdr } = useWallet();
+  const {
+    address,
+    networkMismatch,
+    signXdr,
+    connectingWallet,
+    signing,
+    signError,
+    locked,
+  } = useWallet();
   const [plans, setPlans] = useState<ApiPlan[] | null>(null);
   const [maxCharges, setMaxCharges] = useState<Record<number, string>>({});
   const [depositBusy, setDepositBusy] = useState<number | null>(null);
@@ -512,6 +520,7 @@ function SubscribeInner() {
     ? pendingPlan.name || tr("Plan #{0}", { "0": pendingPlan.id })
     : "";
   const pendingMeta = pendingPlan ? metaFor(metas, pendingPlan.token) : null;
+  const pendingSigning = pending && address && !networkMismatch && pending.address === address;
 
   return (
     <div className="space-y-6">
@@ -608,12 +617,14 @@ function SubscribeInner() {
                   <option value="price_asc">{tr("Price: Low to High")}</option>
                   <option value="price_desc">{tr("Price: High to Low")}</option>
                   <option value="period_asc">{tr("Period: Short to Long")}</option>
-                  <option value="period_desc">{tr("Period: Long to Short")}</option>
+                                    <option value="popularity_asc">{tr("Popularity: Most subscribers")}</option>
+                  <option value="popularity_desc">{tr("Popularity: Fewest subscribers")}</option>
                 </select>
               </div>
             </div>
-
-            <span className="text-xs text-muted" aria-live="polite">{tr("Showing")}{" "}{formatNumber(filteredPlans.length)}{" "}{tr("of")}{" "}{formatNumber(active.length)}{" "}{tr("plans")}</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted" aria-live="polite">{tr("Showing")}{" "}{formatNumber(filteredPlans.length)}{" "}{tr("of")}{" "}{formatNumber(active.length)}{" "}{tr("plans")}</span>
+            </div>
           </div>
 
           {compareIds.length > 0 && (
@@ -664,6 +675,7 @@ function SubscribeInner() {
           ) : (
             <div className="grid gap-4 sm:grid-cols-2">
               {filteredPlans.map((plan) => {
+
                 const meta = metaFor(metas, plan.token);
                 const badge = trialBadge(plan);
                 const availability = planAvailability(plan, now);
@@ -794,7 +806,7 @@ function SubscribeInner() {
                             <LoadingButton
                               variant="primary"
                               className="w-full"
-                              loading={busy === plan.id}
+                              loading={busy === plan.id || signing}
                               loadingText={tr("Confirming…")}
                               disabled={
                                 busy !== null || !address || networkMismatch || availability.reason !== null
@@ -808,8 +820,10 @@ function SubscribeInner() {
                               {networkMismatch
                                 ?tr("Wrong network")
                                 : address
-                                ?tr("Subscribe")
-                                :tr("Connect wallet")}
+                                  ? signing
+                                    ? tr("Signing…")
+                                    : tr("Subscribe")
+                                  : tr("Connect wallet")}
                             </LoadingButton>
                           </div>
                         );
@@ -838,7 +852,7 @@ function SubscribeInner() {
         onCancel={() => setPending(null)}
         onConfirm={confirmSubscription}
         title={confirmation ? tr("Subscribe to {0}?", { "0": pendingName }) : ""}
-        confirmLabel={tr("Confirm and sign")}
+        confirmLabel={pendingSigning ? tr("Signing…") : tr("Confirm and sign")}
       >
         {confirmation && pendingPlan && pendingMeta && (
           <>

@@ -5,7 +5,9 @@ export type PlanSortOption =
   | "price_asc"
   | "price_desc"
   | "period_asc"
-  | "period_desc";
+  | "period_desc"
+  | "popularity_asc"
+  | "popularity_desc";
 
 export type PlanPeriodOption =
   | "all"
@@ -64,6 +66,14 @@ export function filterAndSortPlans(
       }
       case "period_desc": {
         const diff = b.period - a.period;
+        return diff !== 0 ? diff : b.id - a.id;
+      }
+      case "popularity_asc": {
+        const diff = countOpenMandates(a.id) - countOpenMandates(b.id);
+        return diff !== 0 ? diff : b.id - a.id;
+      }
+      case "popularity_desc": {
+        const diff = countOpenMandates(b.id) - countOpenMandates(a.id);
         return diff !== 0 ? diff : b.id - a.id;
       }
       case "newest":
