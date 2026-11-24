@@ -1,5 +1,6 @@
 "use client";
 
+import { InfoTip } from "@/components/Tooltip";
 import { useI18n } from "@/i18n/provider";
 
 import { Suspense, startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -1798,12 +1799,17 @@ function AccountInner() {
                   {capFor === m.id && (
                     <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-edge pt-3">
                       <div className="min-w-[10rem] flex-1">
-                        <label
-                          htmlFor={`cap-${m.id}`}
-                          className="block text-xs text-muted"
-                        >
-                          Max charges (0 = unlimited)
-                        </label>
+                        <div className="flex items-center gap-1">
+                          <label
+                            htmlFor={`cap-${m.id}`}
+                            className="block text-xs text-muted"
+                          >
+                            Max charges (0 = unlimited)
+                          </label>
+                          <InfoTip label={tr("About the charge cap")}>
+                            {tr("The mandate ends by itself once this many charges have been made. It cannot be set below the charges already made.")}
+                          </InfoTip>
+                        </div>
                         <input
                           id={`cap-${m.id}`}
                           type="text"

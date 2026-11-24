@@ -83,6 +83,7 @@ function validatePlanNameLocal(name: string): string | null {
 import { OnboardingChecklist } from "@/components/OnboardingChecklist";
 import { AddressLink, Badge, Empty, Notice, Panel, SkeletonRows, Stat, TimeAgo, TxLink } from "@/components/ui";
 import { ConfirmDialog, confirmTitle } from "@/components/ConfirmDialog";
+import { InfoTip } from "@/components/Tooltip";
 import { observeContractRecord } from "@/lib/contract-compat";
 import { ContractVersionNotice } from "@/components/ContractVersionNotice";
 import { subscribeLink } from "@/lib/share";
@@ -124,7 +125,10 @@ function FeePreview({
     <span>{tr("Subscriber pays")}{" "}{formatAmount(split.gross, meta)}
       {usdEstimate ? ` (≈ ${usdEstimate})` : ""}{" "}{tr("· protocol fee")}{" "}
       {formatAmount(split.fee, meta)} ({formatFeeBps(feeBps)}{tr(") · you receive")}{" "}
-      {formatAmount(split.net, meta)}.
+      {formatAmount(split.net, meta)}.{" "}
+      <InfoTip label={tr("About the protocol fee")}>
+        {tr("The protocol takes {0} of every charge. The subscriber always pays the plan price; the fee is deducted from your payout.", { "0": formatFeeBps(feeBps) })}
+      </InfoTip>
     </span>
   );
 }

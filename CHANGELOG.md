@@ -6,6 +6,15 @@ All notable changes to payflow-frontend. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Accessible tooltips for inline help (#385).** `Tooltip` and `InfoTip` in
+  `src/components/Tooltip.tsx` open on hover and on keyboard focus, stay open
+  while hovered, close on Escape and are tied to their trigger with
+  `aria-describedby`. `InfoTip` is a labelled "?" button, pressed to toggle on
+  touch screens. They explain the protocol fee on the publish form and the
+  charge cap on the account page.
+
 ### Changed
 
 - **Next.js 15 → 16, React 19.0 → 19.3 (#80).** Turbopack is now the default
