@@ -324,6 +324,13 @@ function AccountInner() {
   useEffect(() => {
     addressRef.current = viewAddress;
   }, [viewAddress]);
+  // Once the page unmounts no address is current, so every guarded callback
+  // returns instead of setting state on a page that is gone.
+  useEffect(() => {
+    return () => {
+      addressRef.current = null;
+    };
+  }, []);
 
   // The vault holds the configured token; each mandate carries the token it
   // was opened against, which the indexer does not report.
