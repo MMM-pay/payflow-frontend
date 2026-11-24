@@ -1,5 +1,6 @@
 "use client";
 
+import { GracePeriodBadge } from "@/components/GracePeriodBadge";
 import { InfoTip } from "@/components/Tooltip";
 import { useI18n } from "@/i18n/provider";
 
@@ -1420,9 +1421,7 @@ function AccountInner() {
                           {resumes && (
                             <span className="text-xs text-muted">{tr("resumes")}{" "}{resumes}</span>
                           )}
-                          {pastDueUntil && (
-                            <span className="text-xs text-muted">{tr("grace period ends")}{" "}{formatDate(pastDueUntil)}</span>
-                          )}
+                          {isPastDue && <GracePeriodBadge until={pastDueUntil} />}
                           {trial && (
                             <span className="rounded-full bg-accent/15 px-2 py-0.5 text-xs font-medium text-accent">{tr("Free trial")}</span>
                           )}

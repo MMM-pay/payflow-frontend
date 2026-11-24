@@ -751,5 +751,7 @@
   "About the protocol fee": "About the protocol fee",
   "The protocol takes {0} of every charge. The subscriber always pays the plan price; the fee is deducted from your payout.": "The protocol takes {0} of every charge. The subscriber always pays the plan price; the fee is deducted from your payout.",
   "About the charge cap": "About the charge cap",
-  "The mandate ends by itself once this many charges have been made. It cannot be set below the charges already made.": "The mandate ends by itself once this many charges have been made. It cannot be set below the charges already made."
+  "The mandate ends by itself once this many charges have been made. It cannot be set below the charges already made.": "The mandate ends by itself once this many charges have been made. It cannot be set below the charges already made.",
+  "Grace period ends": "Grace period ends",
+  "Grace period ended": "Grace period ended"
 }

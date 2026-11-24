@@ -751,5 +751,7 @@
   "About the protocol fee": "À propos des frais du protocole",
   "The protocol takes {0} of every charge. The subscriber always pays the plan price; the fee is deducted from your payout.": "Le protocole prélève {0} sur chaque prélèvement. L’abonné paie toujours le prix de l’offre ; les frais sont déduits de votre versement.",
   "About the charge cap": "À propos du plafond de prélèvements",
-  "The mandate ends by itself once this many charges have been made. It cannot be set below the charges already made.": "Le mandat prend fin de lui-même une fois ce nombre de prélèvements effectué. Il ne peut pas être fixé en dessous des prélèvements déjà effectués."
+  "The mandate ends by itself once this many charges have been made. It cannot be set below the charges already made.": "Le mandat prend fin de lui-même une fois ce nombre de prélèvements effectué. Il ne peut pas être fixé en dessous des prélèvements déjà effectués.",
+  "Grace period ends": "Le délai de grâce prend fin",
+  "Grace period ended": "Le délai de grâce a pris fin"
 }

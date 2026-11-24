@@ -20,6 +20,9 @@ All notable changes to payflow-frontend. The format follows
   the account page, the mandate page's next and last charge, webhook creation
   and delivery attempts, the keeper's last pass, recent charges on the home
   page and a plan's availability end.
+- **Grace-period badge on past-due mandates (#392).** "Grace period ends in
+  3 days" turns to the danger tone in the last day and reads "Grace period
+  ended 2 hours ago" once it passes, with the exact end in the tooltip.
 
 ### Changed
 
