@@ -26,7 +26,14 @@ import {
   Stat,
   TxLink,
 } from "@/components/ui";
-import { ConfirmDialog, confirmTitle } from "@/components/ConfirmDialog";
+import dynamic from "next/dynamic";
+import { confirmTitle } from "@/lib/confirm-title";
+
+// Only rendered once the visitor asks to cancel or end the mandate.
+const ConfirmDialog = dynamic(
+  () => import("@/components/ConfirmDialog").then((m) => m.ConfirmDialog),
+  { ssr: false },
+);
 
 function MandateDetailsInner() {
   const { t: tr, formatPeriod, formatDate, formatAmount, translateMessage, formatTokenValue, formatNumber } = useI18n();

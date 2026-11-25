@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
   api,
   type ApiActivityType,
@@ -278,7 +279,17 @@ export function Activity() {
         </div>
       ) : null}
       {!loading && !failed && !partial && visibleItems.length === 0 ? (
-        <Empty>No activity yet.</Empty>
+        <Empty
+          title="No activity yet."
+          action={
+            <Link href="/subscribe" className="btn-ghost">
+              Browse plans
+            </Link>
+          }
+        >
+          Activity shows charges, subscriptions and cancellations for the connected wallet
+          once they settle on-chain. Connect a wallet, or browse plans to get started.
+        </Empty>
       ) : null}
       {!loading && !failed && visibleItems.length > 0 ? (
         <ol className="space-y-3" aria-label="Wallet activity">

@@ -87,7 +87,8 @@ import { computeVaultRunway } from "@/lib/runway";
 import { loadTokenMeta, metaFor, useTokenMetas } from "@/lib/token";
 import { VirtualList } from "@/components/VirtualList";
 import { AmountInput } from "@/components/AmountInput";
-import { ConfirmDialog, confirmTitle } from "@/components/ConfirmDialog";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { confirmTitle } from "@/lib/confirm-title";
 import { observeContractRecord } from "@/lib/contract-compat";
 import { ContractVersionNotice } from "@/components/ContractVersionNotice";
 import { SyncLagIndicator } from "@/components/SyncLagIndicator";
@@ -152,7 +153,7 @@ function PaymentHistoryPanel({
       // RPC history is finite; the receipt still downloads with its ledger
       // and a dash for the date rather than inventing one.
     }
-    downloadReceipt(receipt);
+    void downloadReceipt(receipt);
     setBusyHash(null);
   }
 

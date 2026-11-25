@@ -775,5 +775,9 @@
   "Section {0} of {1}: {2}": "Section {0} of {1}: {2}",
   "Press": "Press",
   "or": "or",
-  "to jump between sections.": "to jump between sections."
+  "to jump between sections.": "to jump between sections.",
+  "Capped": "Capped",
+  "The fee could not be read from the contract right now; it is still taken at settlement.": "The fee could not be read from the contract right now; it is still taken at settlement.",
+  "Read live and frozen into each mandate when it opens.": "Read live and frozen into each mandate when it opens.",
+  "Charges appear here after a subscriber opens a mandate and its first payment falls due. Nothing is charged until then.": "Charges appear here after a subscriber opens a mandate and its first payment falls due. Nothing is charged until then."
 }

@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { Dialog } from "@/components/ui";
+import { Dialog } from "@/components/Dialog";
 
 /**
  * Focus behaviour for `Dialog` (issue #83), which is the acceptance criterion:

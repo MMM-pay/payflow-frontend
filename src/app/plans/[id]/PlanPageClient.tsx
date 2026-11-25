@@ -23,12 +23,21 @@ interface PlanPageClientProps {
 }
 
 export function PlanPageClient({ planId }: PlanPageClientProps) {
-  const { t: tr, formatPeriod, translateMessage, formatTokenValue } = useI18n();
+  const {
+    t: tr,
+    formatDate,
+    formatFeeBps,
+    formatPeriod,
+    translateMessage,
+    formatTokenValue,
+    trialBadge,
+  } = useI18n();
   const { address, networkMismatch, signXdr } = useWallet();
   const wanted = Number(planId);
   const [plan, setPlan] = useState<ApiPlan | null>(null);
   const [charges, setCharges] = useState<ChargeRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [feeBps, setFeeBps] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [direct, setDirect] = useState(false);
   const [maxCharges, setMaxCharges] = useState("");
@@ -104,6 +113,22 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
     void load();
   }, [load]);
 
+  // The protocol fee is read live, independently of the plan read: a failed
+  // fee lookup leaves the page fully usable and simply says so, rather than
+  // hiding the term or inventing 0%.
+  useEffect(() => {
+    let live = true;
+    void payflow
+      .feeBps(config.readSource)
+      .then((bps) => {
+        if (live && Number.isFinite(bps)) setFeeBps(bps);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
+
   if (loading) {
     return (
       <Panel title={tr("Plan")}>
@@ -119,9 +144,10 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
   // `notFound()` terminates rendering when the plan is missing, so `plan` is
   // non-null from here on.
   const subscribePlanId = plan.id;
+  const availability = planAvailability(plan, now);
   const unavailable = plan.active !== 1
     ? "This plan is closed to new subscriptions."
-    : planAvailability(plan, now).reason;
+    : availability.reason;
 
   async function subscribe() {
     if (!address) {
@@ -202,12 +228,54 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
             <label className="label">{tr("Status")}</label>
             <Badge status={plan.active === 1 ? "Active" : "Paused"} />
           </div>
+          <div>
+            <label className="label">{tr("Protocol fee")}</label>
+            <div className="text-sm tabular-nums">
+              {feeBps === null ? "—" : formatFeeBps(feeBps)}
+            </div>
+            <p className="mt-1 text-xs text-muted">
+              {feeBps === null
+                ? tr("The fee could not be read from the contract right now; it is still taken at settlement.")
+                : tr("Read live and frozen into each mandate when it opens.")}
+            </p>
+          </div>
+          <div>
+            <label className="label">{tr("Free trial")}</label>
+            <div className="text-sm">
+              {trialBadge(plan) ?? tr("None")}
+            </div>
+          </div>
+          <div>
+            <label className="label">{tr("Seats")}</label>
+            <div className="text-sm tabular-nums">
+              {plan.max_subscribers === undefined
+                ? tr("Unlimited")
+                : availability.seats === null
+                  ? tr("Capped")
+                  : tr("{0} seats left", { "0": availability.seats })}
+            </div>
+          </div>
+          <div>
+            <label className="label">{tr("Available until")}</label>
+            <div className="text-sm">
+              {availability.until === null ? tr("Unlimited") : formatDate(availability.until)}
+            </div>
+          </div>
         </div>
       </Panel>
 
       <Panel title={tr("Recent charges")}>
         {charges.length === 0 ? (
-          <Empty>{tr("No charges settled against this plan yet.")}</Empty>
+          <Empty
+            title={tr("No charges yet")}
+            action={
+              <a href="#plan-subscribe" className="btn-ghost">
+                {tr("Subscribe to this plan")}
+              </a>
+            }
+          >
+            {tr("Charges appear here after a subscriber opens a mandate and its first payment falls due. Nothing is charged until then.")}
+          </Empty>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -242,7 +310,7 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
         )}
       </Panel>
 
-      <Panel title={tr("Subscribe to this plan")}>
+      <Panel id="plan-subscribe" title={tr("Subscribe to this plan")}>
         <p className="text-sm text-muted">{tr("Open a mandate against this plan. Fund your vault on the")}{" "}
           <Link href="/account" className="text-accent hover:underline">{tr("account page")}</Link>{" "}{tr("first, or charges will fail for lack of balance.")}</p>
         {unavailable && <p id="plan-availability" className="text-sm text-muted">{unavailable}</p>}

@@ -164,6 +164,11 @@ export default function StatusPage() {
                       {indexer.lag === null ? "—" : `${indexer.lag} ledgers`}
                     </Row>
                     <Row label="Indexed through ledger">{indexer.cursor ?? "—"}</Row>
+                    <Row label="Last update">
+                      {indexer.freshnessSeconds === null
+                        ? "—"
+                        : `${indexer.freshnessSeconds}s ago`}
+                    </Row>
                     {indexer.network && <Row label="Network">{indexer.network}</Row>}
                     {indexer.paused && (
                       <Row label="Paused">
@@ -171,6 +176,12 @@ export default function StatusPage() {
                       </Row>
                     )}
                   </dl>
+                )}
+                {indexer.state !== "skipped" && indexer.state !== "down" && indexer.lastError && (
+                  <Notice tone="warn">
+                    Last indexing error: {indexer.lastError} The indexer keeps retrying, so
+                    this can clear on its own.
+                  </Notice>
                 )}
               </>
             )}

@@ -775,5 +775,9 @@
   "Section {0} of {1}: {2}": "Section {0} sur {1} : {2}",
   "Press": "Appuyez sur",
   "or": "ou",
-  "to jump between sections.": "pour passer d’une section à l’autre."
+  "to jump between sections.": "pour passer d’une section à l’autre.",
+  "Capped": "Plafonné",
+  "The fee could not be read from the contract right now; it is still taken at settlement.": "Les frais n’ont pas pu être lus depuis le contrat pour le moment ; ils sont tout de même prélevés au règlement.",
+  "Read live and frozen into each mandate when it opens.": "Lus en direct et figés dans chaque mandat à son ouverture.",
+  "Charges appear here after a subscriber opens a mandate and its first payment falls due. Nothing is charged until then.": "Les prélèvements apparaissent ici après l’ouverture d’un mandat par un abonné et l’échéance de son premier paiement. Rien n’est prélevé avant."
 }

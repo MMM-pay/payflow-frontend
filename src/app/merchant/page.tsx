@@ -6,15 +6,32 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
 import { api, checkWebhookUrl, type ApiChargeAttempt, type ApiMandate, type ApiPlan, type ApiWebhook, type MerchantSummary, type StreamEvent } from "@/lib/api";
-import { RevenueChart } from "@/components/RevenueChart";
 import { WebhookDeliveryHistory } from "@/components/WebhookDeliveryHistory";
-import { CohortRetentionTable } from "@/components/CohortRetentionTable";
 import { buildCsv, buildMonthlyRevenueCsv, downloadCsv, exportFilename, monthlyRevenueFilename, type ChargeRow, type MonthlyRevenueRow } from "@/lib/csv";
 import { fillBuckets, parseRevenue, type BucketSize, type RevenuePoint } from "@/lib/revenue";
 import { parseMerchantChurn, type MerchantChurnMonth } from "@/lib/churn";
 import { endMandatesSequentially, type EndOutcome, chainMandatesFor, chainMerchantSummary, chainPlanSubscriberCount, chainPlansOf, chainUnpaidMandates, endable, mandateFunding, type UnpaidMandate } from "@/lib/chain";
 import { config, type ConfiguredToken } from "@/lib/config";
 import { VirtualList } from "@/components/VirtualList";
+import dynamic from "next/dynamic";
+
+// Widgets that appear only after a click or once the indexer returns optional
+// data: loaded in their own chunks so they stay out of the first-load bundle.
+const QrCode = dynamic(() => import("@/components/QrCode").then((m) => m.QrCode), {
+  ssr: false,
+});
+const CohortRetentionTable = dynamic(
+  () => import("@/components/CohortRetentionTable").then((m) => m.CohortRetentionTable),
+  { ssr: false },
+);
+const RevenueChart = dynamic(
+  () => import("@/components/RevenueChart").then((m) => m.RevenueChart),
+  { ssr: false },
+);
+const ConfirmDialog = dynamic(
+  () => import("@/components/ConfirmDialog").then((m) => m.ConfirmDialog),
+  { ssr: false },
+);
 
 const DEFAULT_TOKENS: readonly ConfiguredToken[] = [
   {
@@ -66,7 +83,7 @@ import { countOpenMandates, filterAndSortPlans, type PlanActiveOption } from "@/
 import { formatUsdEstimate, formatUsdcEstimate, useXlmUsdPrice } from "@/lib/price";
 import { AmountInput } from "@/components/AmountInput";
 import { CopyButton } from "@/components/CopyButton";
-import { QrCode } from "@/components/QrCode";
+
 // Mirrors payflow.validatePlanName, kept here so the form can check a name
 // without the SDK-backed module in this route's first-load bundle.
 function validatePlanNameLocal(name: string): string | null {
@@ -82,7 +99,7 @@ import { OnboardingChecklist } from "@/components/OnboardingChecklist";
 import { SectionShortcuts } from "@/components/SectionShortcuts";
 import { AddressLink, Badge, Empty, Notice, Panel, SkeletonRows, Stat, TimeAgo, TxLink } from "@/components/ui";
 import { Search } from "@/components/Search";
-import { ConfirmDialog, confirmTitle } from "@/components/ConfirmDialog";
+import { confirmTitle } from "@/lib/confirm-title";
 import { observeContractRecord } from "@/lib/contract-compat";
 import { ContractVersionNotice } from "@/components/ContractVersionNotice";
 import { SyncLagIndicator } from "@/components/SyncLagIndicator";

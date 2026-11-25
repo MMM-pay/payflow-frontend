@@ -1,10 +1,11 @@
 {
-  "//": "First-load JS budgets in kB (gzip), enforced by scripts/check-js-budget.mjs over out/**/index.html. Re-measured after merging upstream/main (cohort retention, webhooks UI, i18n French, failed-charge attempts, skip-link, WalletConnect) on top of the SDK deferral: / 227.0, /account 238.1, /m 226.8, /mandates 228.2, /merchant 244.2, /plans/* 226.9, /receipt 228.7, /subscribe 232.0. Budgets keep roughly 10% headroom; growth is only ever accepted deliberately, in the PR that causes it.",
+  "//": "First-load JS budgets in kB (gzip), enforced by scripts/check-js-budget.mjs over out/**/index.html. Re-measured 2026-11-25 after splitting the dialog out of the shared UI barrel, loading the merchant's QR/cohort/revenue widgets on demand, and deferring the downloadable receipt template: / 242.0, /account 263.0, /m 241.5, /mandates 244.4, /merchant 268.5, /plans/* 241.8, /receipt 243.8, /status 237.5, /subscribe 251.5. Budgets keep roughly 5-10% headroom; growth is only ever accepted deliberately, in the PR that causes it.",
   "default": 240,
   "routes": {
     "/": 250,
     "/account": 265,
     "/m": 250,
+    "/mandates": 250,
     "/merchant": 270,
     "/subscribe": 255,
     "/plans": 250,
