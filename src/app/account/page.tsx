@@ -49,8 +49,15 @@ import { mandateIsPastDue, mandatePastDueUntil, mandatePauseUntil, mandateSuppor
 // stays out of this route's first-load bundle.
 import { loadPayflow, payflow, server } from "@/lib/lazy-payflow";
 import { mandatePendingTransfer, mandateSupportsTransfer } from "@/lib/payflow-core";
-import { mandateStatus } from "@/lib/mandate-status";
+import { groupMandatesByStatus, mandateStatus } from "@/lib/mandate-status";
 import { createdAtDate, paymentDateRange, paymentRow, sortPaymentsNewestFirst } from "@/lib/payments";
+import {
+  buildReceiptData,
+  downloadReceipt,
+  formatReceiptDate,
+  type ReceiptData,
+} from "@/lib/receipt";
+import { vaultCommitment } from "@/lib/vault";
 import { useWallet } from "@/lib/wallet";
 import { useStream } from "@/lib/stream";
 import {
@@ -83,6 +90,10 @@ import { AmountInput } from "@/components/AmountInput";
 import { ConfirmDialog, confirmTitle } from "@/components/ConfirmDialog";
 import { observeContractRecord } from "@/lib/contract-compat";
 import { ContractVersionNotice } from "@/components/ContractVersionNotice";
+import { SyncLagIndicator } from "@/components/SyncLagIndicator";
+import { Money } from "@/components/Money";
+import { NotificationCentre } from "@/components/NotificationCentre";
+import { evaluateSubscriberNotifications } from "@/lib/notifications";
 import { LoadingButton } from "@/components/LoadingButton";
 import {
   Badge,
@@ -95,6 +106,131 @@ import {
   TimeAgo,
   TxLink,
 } from "@/components/ui";
+
+interface PaymentRecord {
+  row: PaymentRow;
+  /** Built once when the history loads; its date is filled in on download. */
+  receipt: ReceiptData;
+}
+
+type PaymentsState =
+  | { status: "loading" }
+  | { status: "unavailable" }
+  | { status: "error"; message: string }
+  | { status: "data"; rows: PaymentRecord[] };
+
+/**
+ * Past charges with a receipt per row.
+ *
+ * The list itself comes from the indexer and is read-only, so it stays
+ * available to someone viewing an account they do not control. Downloading
+ * writes a standalone HTML file; a transaction's close time is fetched only
+ * when the button is pressed, so opening the page never fires one RPC request
+ * per historical charge.
+ */
+function PaymentHistoryPanel({
+  state,
+  onRetry,
+}: {
+  state: PaymentsState;
+  onRetry: () => void;
+}) {
+  const { t: tr, translateMessage } = useI18n();
+  const [busyHash, setBusyHash] = useState<string | null>(null);
+
+  async function download(record: PaymentRecord) {
+    setBusyHash(record.row.txHash);
+    let receipt = record.receipt;
+    try {
+      const tx = await server.getTransaction(record.row.txHash);
+      if (tx && typeof tx === "object" && "createdAt" in tx && typeof tx.createdAt === "number") {
+        const raw = tx.createdAt;
+        const timestamp = raw > 1e12 ? raw : raw * 1000;
+        receipt = { ...receipt, timestamp, date: formatReceiptDate(timestamp) };
+      }
+    } catch {
+      // RPC history is finite; the receipt still downloads with its ledger
+      // and a dash for the date rather than inventing one.
+    }
+    downloadReceipt(receipt);
+    setBusyHash(null);
+  }
+
+  return (
+    <Panel
+      title={tr("Payment history")}
+      subtitle={tr("Every settled charge against your subscriptions, with a receipt you can download.")}
+    >
+      {state.status === "loading" ? (
+        <SkeletonRows rows={2} label={tr("Loading payment history")} />
+      ) : state.status === "unavailable" ? (
+        <Notice tone="info">{tr("Payment history requires the payflow indexer (set NEXT_PUBLIC_API_URL). The chain records how many charges each subscription has taken, but not their amounts, fees or transaction hashes, so no receipt can be built from contract state alone.")}</Notice>
+      ) : state.status === "error" ? (
+        <div className="space-y-3">
+          <Notice tone="error">{translateMessage(state.message)}</Notice>
+          <button type="button" className="btn-ghost" onClick={onRetry}>{tr("Retry")}</button>
+        </div>
+      ) : state.rows.length === 0 ? (
+        <Empty title={tr("No charges yet")}>{tr("Charges appear here with a downloadable receipt once they settle on-chain.")}</Empty>
+      ) : (
+        <div
+          className="overflow-x-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          role="region"
+          aria-label={tr("Payment history table")}
+          tabIndex={0}
+        >
+          <table className="w-full min-w-[640px] text-left text-sm">
+            <caption className="sr-only">{tr("Charges settled against your subscriptions, newest first.")}</caption>
+            <thead>
+              <tr className="border-b border-edge text-muted">
+                <th scope="col" className="py-2 pr-3 font-medium">{tr("Subscription")}</th>
+                <th scope="col" className="py-2 pr-3 font-medium">{tr("Ledger")}</th>
+                <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Amount")}</th>
+                <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Fee")}</th>
+                <th scope="col" className="py-2 text-right font-medium">{tr("Receipt")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {state.rows.map((record) => {
+                const { row } = record;
+                const label = tr("Receipt for charge {0} on subscription #{1}", {
+                  "0": row.txHash.slice(0, 8),
+                  "1": row.mandateId,
+                });
+                return (
+                  <tr key={`${row.mandateId}:${row.txHash}`} className="border-b border-edge last:border-0">
+                    <th scope="row" className="py-2 pr-3 font-medium">#{row.mandateId}</th>
+                    <td className="py-2 pr-3 tabular-nums text-muted">#{row.ledger}</td>
+                    <td className="py-2 pr-3 text-right tabular-nums">{row.amount} {row.token}</td>
+                    <td className="py-2 pr-3 text-right tabular-nums text-muted">{row.fee} {row.token}</td>
+                    <td className="py-2">
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        <Link
+                          href={`/receipt/?tx=${encodeURIComponent(row.txHash)}&mandate=${row.mandateId}`}
+                          className="btn-ghost text-xs"
+                          aria-label={tr("Open {0}", { "0": label })}
+                        >{tr("View")}</Link>
+                        <button
+                          type="button"
+                          className="btn-ghost text-xs"
+                          disabled={busyHash === row.txHash}
+                          aria-label={tr("Download {0}", { "0": label })}
+                          onClick={() => void download(record)}
+                        >
+                          {busyHash === row.txHash ? tr("Preparing…") : tr("Download")}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Panel>
+  );
+}
 
 function AccountInner() {
   const { checkAmount, t: tr, formatDate, parseAmount, formatAmount, formatPeriod, translateMessage, describeTrialEnd, discountBadge, formatTokenValue, formatNumber, localeTag } = useI18n();
@@ -117,6 +253,9 @@ function AccountInner() {
   const [balance, setBalance] = useState<bigint | null>(null);
   const [mandates, setMandates] = useState<ApiMandate[] | null>(null);
   const [history, setHistory] = useState<ApiVaultEvent[] | null>(null);
+  const [payments, setPayments] = useState<PaymentsState>({ status: "loading" });
+  // Bumped by the history panel's Retry button to re-run the charges fetch.
+  const [paymentsReload, setPaymentsReload] = useState(0);
   const [indexerAvailable, setIndexerAvailable] = useState(false);
   const [amount, setAmount] = useState("");
   // The wallet reports the native balance through its account state; a
@@ -326,6 +465,7 @@ function AccountInner() {
       setBalance(null);
       setMandates(null);
       setHistory(null);
+      setPayments({ status: "loading" });
       setIndexerAvailable(false);
       setMandatesFromApi(false);
       setInfo(null);
@@ -346,6 +486,90 @@ function AccountInner() {
       setReminderBusy(null);
     });
   }, [address]);
+
+  /**
+   * Past charges for the receipt list.
+   *
+   * Charge history exists only in the indexer, so contract-only mode says so
+   * rather than pretending there are no payments. A page that cannot read one
+   * mandate's history shows an error instead of a partial list that would
+   * understate what the subscriber paid.
+   */
+  useEffect(() => {
+    if (!viewAddress) return;
+    if (mandates === null) {
+      setPayments({ status: "loading" });
+      return;
+    }
+    if (!mandatesFromApi || typeof api.charges !== "function") {
+      setPayments({ status: "unavailable" });
+      return;
+    }
+    if (mandates.length === 0) {
+      setPayments({ status: "data", rows: [] });
+      return;
+    }
+
+    let live = true;
+    setPayments({ status: "loading" });
+    void (async () => {
+      try {
+        const histories = await Promise.all(
+          mandates.map(async (mandate) => ({
+            mandate,
+            result: await api.charges(mandate.id),
+          })),
+        );
+        if (!live) return;
+
+        // null/undefined means the endpoint or backend is unavailable, which
+        // is not the same as "this subscription has no charges".
+        if (histories.some(({ result }) => !result)) {
+          setPayments({ status: "unavailable" });
+          return;
+        }
+
+        const records: PaymentRecord[] = [];
+        for (const { mandate, result } of histories) {
+          if (!result) continue;
+          const tokenContract = mandate.token ?? config.contracts.token;
+          const meta = await loadTokenMeta(tokenContract);
+          for (const charge of result.charges) {
+            records.push({
+              row: paymentRow(charge, mandate, meta, tokenContract, "—"),
+              receipt: buildReceiptData(charge, mandate, meta, null, charge.tx_hash),
+            });
+          }
+        }
+        if (!live) return;
+        // Sort by the same newest-first rule as the CSV export, then map the
+        // order back to the record that carries the pre-built receipt.
+        const byKey = new Map(
+          records.map((record) => [
+            `${record.row.mandateId}:${record.row.txHash}`,
+            record,
+          ]),
+        );
+        const sorted = sortPaymentsNewestFirst(records.map((record) => record.row))
+          .map((row) => byKey.get(`${row.mandateId}:${row.txHash}`))
+          .filter((record): record is PaymentRecord => record !== undefined);
+        setPayments({ status: "data", rows: sorted });
+      } catch (err) {
+        if (!live) return;
+        setPayments({
+          status: "error",
+          message:
+            err instanceof Error
+              ? err.message
+              : tr("Could not load payment history."),
+        });
+      }
+    })();
+
+    return () => {
+      live = false;
+    };
+  }, [viewAddress, mandates, mandatesFromApi, paymentsReload, tr]);
 
   // A wallet switch mid-flow must not leave another account's mandate in the
   // confirming state.
@@ -748,6 +972,27 @@ function AccountInner() {
   const runway = useMemo(() => {
     return computeVaultRunway(balance, mandates, config.contracts.token);
   }, [balance, mandates]);
+  /**
+   * How the vault splits between money promised to the next charge of each
+   * active mandate and the amount that is freely withdrawable. Null while the
+   * balance or mandates are still loading.
+   */
+  const commitment = useMemo(
+    () => vaultCommitment(balance, mandates, config.contracts.token),
+    [balance, mandates],
+  );
+  /** The subscription list, split into active/paused/ended sections. */
+  const subscriptionGroups = useMemo(
+    () => groupMandatesByStatus(mandates ?? []),
+    [mandates],
+  );
+  // Short visible headings, with the full phrase kept for screen readers so a
+  // section name is never confused with the "Active subscriptions" stat above.
+  const subscriptionGroupTitles = {
+    active: tr("Active"),
+    paused: tr("Paused"),
+    ended: tr("Ended"),
+  } as const;
 
   /**
    * Whether the contract behind these mandates can service a dated pause.
@@ -994,12 +1239,30 @@ function AccountInner() {
         </div>
       ))}
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <Stat
           label={tr("Vault balance")}
           loading={balance === null}
           value={formatAmount(balance ?? 0n, vaultMeta)}
           hint={tr("Available to be charged")}
+        />
+        <Stat
+          label={tr("Committed to subscriptions")}
+          loading={commitment === null}
+          value={formatAmount(commitment?.committed ?? 0n, vaultMeta)}
+          hint={
+            commitment && commitment.shortfall > 0n
+              ? tr("Short of the next charges by {0}", {
+                  "0": formatAmount(commitment.shortfall, vaultMeta),
+                })
+              : tr("Next charge on each active subscription")
+          }
+        />
+        <Stat
+          label={tr("Freely withdrawable")}
+          loading={commitment === null}
+          value={formatAmount(commitment?.free ?? 0n, vaultMeta)}
+          hint={tr("Balance left after those charges")}
         />
         <Stat
           label={tr("Active subscriptions")}
@@ -1041,6 +1304,18 @@ function AccountInner() {
       )}
 
       <ContractVersionNotice />
+      <SyncLagIndicator />
+      <NotificationCentre
+        address={address}
+        notifications={evaluateSubscriberNotifications({
+          runway,
+          mandates,
+          vaultMeta,
+        })}
+        loading={mandates === null || balance === null}
+        defaultOpen={Boolean(runway?.isLow && runway.hasActiveMandates)}
+        className="mb-4"
+      />
       {error && <Notice tone="error">{translateMessage(error)}</Notice>}
       {info && (
         <Notice tone="info">
@@ -1277,13 +1552,12 @@ function AccountInner() {
                     <TxLink hash={event.tx_hash} />
                   </div>
                   <div className="text-right">
-                    <span
-                      className={`font-semibold tabular-nums ${
-                        isCredit ? "text-accent" : "text-danger"
-                      }`}
-                    >
-                      {eventAmount} {vaultMeta.symbol}
-                    </span>
+                    <Money
+                      amount={isCredit ? event.amount : `-${event.amount}`}
+                      meta={vaultMeta}
+                      signDisplay="always"
+                      tone="auto"
+                    />
                     <div className="text-xs text-muted">{tr("ledger")}{" "}{event.ledger}</div>
                   </div>
                 </div>
@@ -1367,14 +1641,32 @@ function AccountInner() {
                 </button>
               </div>
             )}
-            <VirtualList
-              items={mandates}
-              threshold={100}
-              itemHeight={180}
-              keyExtractor={(m) => m.id}
-              listAriaLabel="Subscriptions"
-              className="space-y-3"
-              renderItem={(m) => {
+            {subscriptionGroups
+              .filter((group) => group.mandates.length > 0)
+              .map((group) => (
+                <section
+                  key={group.key}
+                  aria-labelledby={`subscription-group-${group.key}`}
+                  className="space-y-3"
+                >
+                  <h3
+                    id={`subscription-group-${group.key}`}
+                    className="flex items-center gap-2 pt-2 text-sm font-semibold text-soft"
+                  >
+                    {subscriptionGroupTitles[group.key]}
+                    <span className="sr-only">{" "}{tr("subscriptions")}</span>
+                    <span className="rounded-full bg-fg/10 px-2 py-0.5 text-xs font-medium text-muted">
+                      {formatNumber(group.mandates.length)}
+                    </span>
+                  </h3>
+                  <VirtualList
+                    items={group.mandates}
+                    threshold={100}
+                    itemHeight={180}
+                    keyExtractor={(m) => m.id}
+                    listAriaLabel={tr("{0} subscriptions", { "0": subscriptionGroupTitles[group.key] })}
+                    className="space-y-3"
+                    renderItem={(m) => {
                 const terminal = m.status === "Cancelled" || m.status === "Completed";
                 const meta = metaFor(metas, m.token ?? config.contracts.token);
                 const resumeAt = mandatePauseUntil(m);
@@ -1888,10 +2180,17 @@ function AccountInner() {
                   </div>
                 );
               }}
-            />
+                  />
+                </section>
+              ))}
           </div>
         )}
       </Panel>
+
+      <PaymentHistoryPanel
+        state={payments}
+        onRetry={() => setPaymentsReload((value) => value + 1)}
+      />
 
       <ConfirmDialog
         open={cancelAllTargets !== null}

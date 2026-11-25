@@ -54,4 +54,4 @@ filing a follow-up.
       states.
 - [ ] Keep tests deterministic: no real network or wallet.
 
-See also [docs/visual-regression.md](visual-regression.md).
+See also [docs/visual-regression.md](visual-regression.md) and [docs/testing.md](testing.md).

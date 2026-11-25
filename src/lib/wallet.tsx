@@ -14,7 +14,11 @@ import type { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit";
 import { config } from "./config";
 import { createWalletModules } from "./wallet-modules";
 import type { SignXdr } from "./payflow";
-import { translateSignatureError } from "./signature-error";
+import {
+  SIGNATURE_CANCELLED_MESSAGE,
+  isSignatureRejection,
+  translateSignatureError,
+} from "./signature-error";
 import { fundWithFriendbot, readNativeAccount, type NativeAccount } from "./account";
 import {
   clearMerchantSession,
@@ -168,6 +172,16 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     addressRef.current = address;
   }, [address]);
 
+  // False once the provider has unmounted, so a lookup that resolves later
+  // does not set state on a provider that is gone.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   // Track in-flight checks to prevent duplicate concurrent queries.
   const syncingRef = useRef(false);
 
@@ -183,6 +197,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       return;
     }
     const result = await readNativeAccount(current);
+    if (!mountedRef.current) return; // the provider unmounted meanwhile
     if (addressRef.current !== current) return; // the wallet switched meanwhile
     if (result.state === "found") {
       setAccount({ state: "loaded", account: result.account });
@@ -254,8 +269,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       if (shouldUpdateAddress(addressRef.current, detected)) {
         applyAccountChange(detected);
       }
-    } catch (err) {
-      // Wallet extension may be closed, locked, or busy; ignore background errors
+    } catch {
+      // Wallet extension may be closed, locked, or busy; ignore background
+      // errors but remember that the next signature may need the user to
+      // unlock the wallet first.
       setLocked(true);
     } finally {
       syncingRef.current = false;
@@ -410,7 +427,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
           const res = await kit.getAddress();
           currentAddress = res.address;
         } catch (err) {
-          setSignError(err instanceof Error ? err.message : "Could not read address from wallet.");
+          // The wallet could not be read at all (closed, locked or busy), so
+          // surface that the user may need to unlock it.
           setLocked(true);
           throw new Error(
             err instanceof Error ? err.message : "Could not read address from wallet.",
@@ -419,29 +437,32 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
         if (shouldUpdateAddress(address, currentAddress)) {
           applyAccountChange(currentAddress!);
-          setSigning(false);
           throw new Error(ACCOUNT_CHANGED_ERROR);
         }
 
-        try {
-          const { signedTxXdr } = await kit.signTransaction(xdrString, {
-            networkPassphrase: config.networkPassphrase,
-            address,
-          });
-          setSigning(false);
-          return signedTxXdr;
-        } catch (err) {
-          const error = err instanceof Error ? err : new Error(String(err));
-          translateSignatureError(error);
-          setSignError(error.message);
-          setLocked(true);
-          throw error;
-        }
+        // translateSignatureError always throws: it replaces a cancellation
+        // with a friendly message and rethrows anything else. A rejection is
+        // not a locked wallet, so `locked` is left alone here.
+        const { signedTxXdr } = await kit.signTransaction(xdrString, {
+          networkPassphrase: config.networkPassphrase,
+          address,
+        });
+        return signedTxXdr;
       } catch (err) {
-        const error = err instanceof Error ? err : new Error(String(err));
-        setSignError(error.message);
-        setLocked(true);
-        throw err;
+        // Record the message callers will see, then translate the raw error so
+        // a wallet that rejects with a plain object (Albedo) is still detected.
+        setSignError(
+          isSignatureRejection(err)
+            ? SIGNATURE_CANCELLED_MESSAGE
+            : err instanceof Error
+              ? err.message
+              : String(err),
+        );
+        translateSignatureError(err);
+      } finally {
+        // Every path, including a wallet rejection or an account switch, must
+        // clear the pending state or the Subscribe buttons stay disabled.
+        setSigning(false);
       }
     },
     [address, networkMismatch, applyAccountChange],

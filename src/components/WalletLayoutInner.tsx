@@ -11,8 +11,8 @@ import { useEffect, useRef, useState } from "react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { WalletButton } from "@/components/WalletButton";
 import { Activity } from "@/components/Activity";
-import { NetworkMismatchBanner } from "@/components/ui";
-import { Search } from "@/components/Search";
+import { NetworkMismatchBanner, Notice } from "@/components/ui";
+import { HeaderSearch } from "@/components/HeaderSearch";
 import {
   APP_VERSION,
   COMMIT_HASH,
@@ -116,7 +116,7 @@ function NetworkSwitcher({
  */
 export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
   const { t: tr } = useI18n();
-  const { networkMismatch, walletNetwork, address } = useWallet();
+  const { networkMismatch, walletNetwork, address, locked } = useWallet();
   const { network, networks, select } = useNetwork();
   const pathname = usePathname();
   const router = useRouter();
@@ -219,6 +219,14 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
           />
         </div>
       )}
+      {/* A wallet that stopped answering needs a way out, not a silent failure. */}
+      {locked && address && (
+        <div className="mx-auto max-w-5xl px-5 pt-4 print:hidden">
+          <Notice tone="info">
+            {tr("Your wallet is locked or not responding. Unlock it in your wallet and try again.")}
+          </Notice>
+        </div>
+      )}
       <div className="mx-auto flex min-h-screen max-w-5xl flex-col px-5 print:block print:max-w-none print:px-0">
         {/*
           Skip-navigation link: invisible until focused via keyboard. Lets
@@ -253,7 +261,7 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
             </div>
 
             <div className="hidden min-w-0 flex-1 justify-center px-2 md:flex">
-              <Search onNavigate={(href) => router.push(href)} />
+              <HeaderSearch onNavigate={(href) => router.push(href)} />
             </div>
 
             <div className="flex shrink-0 items-center gap-2">
@@ -299,13 +307,13 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="mt-3 md:hidden">
-            <Search onNavigate={(href) => router.push(href)} />
+            <HeaderSearch onNavigate={(href) => router.push(href)} />
           </div>
 
           <div className="mt-3 flex justify-end"><LanguagePicker /></div>
 
           <div className="mt-3 md:hidden">
-            <Search onNavigate={(href) => router.push(href)} />
+            <HeaderSearch onNavigate={(href) => router.push(href)} />
           </div>
           <nav
             id="mobile-nav"

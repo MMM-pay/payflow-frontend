@@ -126,6 +126,68 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+const PLAN_TOKEN_XLM = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+const PLAN_TOKEN_USDC = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA";
+
+describe("MerchantPage plan search and filters (#300)", () => {
+  beforeEach(() => {
+    apiMock.plans.mockResolvedValue({
+      plans: [
+        { id: 1, merchant: MERCHANT, name: "Starter", token: PLAN_TOKEN_XLM, amount: "10000000", period: 2_592_000, active: 1, ledger: 0 },
+        { id: 2, merchant: MERCHANT, name: "Growth", token: PLAN_TOKEN_USDC, amount: "20000000", period: 2_592_000, active: 1, ledger: 0 },
+        { id: 3, merchant: MERCHANT, name: "Legacy", token: PLAN_TOKEN_USDC, amount: "30000000", period: 2_592_000, active: 0, ledger: 0 },
+      ],
+    });
+  });
+
+  it("filters the plan listing by name", async () => {
+    render(<MerchantPage />);
+    await screen.findByText("Starter");
+
+    fireEvent.change(screen.getByLabelText("Search plans by name"), {
+      target: { value: "grow" },
+    });
+
+    expect(screen.getByText("Growth")).toBeTruthy();
+    expect(screen.queryByText("Starter")).toBeNull();
+    expect(screen.queryByText("Legacy")).toBeNull();
+  });
+
+  it("filters by active status and token", async () => {
+    render(<MerchantPage />);
+    await screen.findByText("Starter");
+
+    fireEvent.change(screen.getByLabelText("Status:"), {
+      target: { value: "inactive" },
+    });
+    expect(screen.getByText("Legacy")).toBeTruthy();
+    expect(screen.queryByText("Starter")).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("Token:"), {
+      target: { value: PLAN_TOKEN_XLM },
+    });
+    expect(await screen.findByText("No plans match these filters")).toBeTruthy();
+  });
+
+  it("resets the filters from the empty state", async () => {
+    render(<MerchantPage />);
+    await screen.findByText("Starter");
+
+    fireEvent.change(screen.getByLabelText("Search plans by name"), {
+      target: { value: "nothing matches this" },
+    });
+    expect(await screen.findByText("No plans match these filters")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
+
+    expect(await screen.findByText("Starter")).toBeTruthy();
+    expect(
+      (screen.getByLabelText("Search plans by name") as HTMLInputElement).value,
+    ).toBe("");
+    expect((screen.getByLabelText("Status:") as HTMLSelectElement).value).toBe("all");
+  });
+});
+
 /** Type into the price field and return the Publish button. */
 async function fillPrice(value: string): Promise<HTMLButtonElement> {
   const field = (await screen.findByLabelText(/price/i)) as HTMLInputElement;
