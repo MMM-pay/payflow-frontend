@@ -181,6 +181,9 @@ codes into sentences a user can act on.
 See [CONTRIBUTING.md](CONTRIBUTING.md). CI runs `lint`, `typecheck`, `test` and
 `build`. Changes are recorded in [CHANGELOG.md](CHANGELOG.md).
 
+Adding a route? [docs/adding-a-page.md](docs/adding-a-page.md) covers the file
+layout, the metadata entry, the loader hook and the tests.
+
 ## Security
 
 See [SECURITY.md](SECURITY.md). Unaudited, testnet only.
