@@ -130,9 +130,11 @@ test("subscriber cancels the mandate", async ({ page }) => {
   });
   await expect(cancel).toBeVisible({ timeout: 60_000 });
   await cancel.click();
-  // The confirm button is named by its aria-label, not its visible text.
+  // The dialog's committing button uses the generic action label; the dialog
+  // name carries the mandate id.
   await page
-    .getByRole("button", { name: `Confirm cancelling subscription #${mandateId}` })
+    .getByRole("dialog", { name: `Cancel subscription #${mandateId}?` })
+    .getByRole("button", { name: "Confirm cancellation" })
     .click();
 
   await expect(page.getByText("Cancelled", { exact: true })).toBeVisible({
