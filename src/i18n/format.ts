@@ -1,7 +1,18 @@
 import { fromStroops, XLM, type TokenMeta } from "@/lib/format";
-export type Locale = "en" | "fr" | "de";
+export type Locale = "en" | "fr" | "de" | "ar";
+
+/**
+ * Financial values use Latin digits in every locale: a stroop is a stroop, and
+ * mixing Arabic-Indic digits into an amount a merchant will type back into a
+ * form invites transcription mistakes. All the other locale choices — grouping,
+ * decimal mark, month names, currency symbol placement, plural rules — still
+ * come from Intl.
+ */
 export const localeTag = (locale: Locale) =>
-  locale === "fr" ? "fr-FR" : locale === "de" ? "de-DE" : "en-GB";
+  locale === "fr" ? "fr-FR" : locale === "de" ? "de-DE" : locale === "ar" ? "ar-EG-u-nu-latn" : "en-GB";
+export const isRtlLocale = (locale: Locale) => locale === "ar";
+export const direction = (locale: Locale): "ltr" | "rtl" => isRtlLocale(locale) ? "rtl" : "ltr";
+
 export function formatNumber(value: number | bigint, locale: Locale): string {
   return new Intl.NumberFormat(localeTag(locale)).format(value);
 }
@@ -12,7 +23,7 @@ export function decimalSeparator(locale: Locale): string {
 }
 
 /** Format an exact canonical decimal string without ever coercing it to Number. */
-export function formatDecimal(canonical: string, locale: Locale): string {
+function formatDecimal(canonical: string, locale: Locale): string {
   const [, sign = "", whole = "0", fraction] = /^(-?)(\d+)(?:\.(\d+))?$/.exec(canonical) ?? [];
   return `${sign}${formatNumber(BigInt(whole), locale)}${fraction ? decimalSeparator(locale) + fraction : ""}`;
 }
@@ -93,62 +104,69 @@ export function formatWhen(seconds: number, locale: Locale, now = Date.now()): s
   if (!seconds) return "—";
   const delta = seconds * 1000 - now;
   const minutes = Math.round(Math.abs(delta) / 60_000);
-  if (minutes < 1) return locale === "fr" ? (delta >= 0 ? "échéance immédiate" : "à l’instant") : locale === "de" ? (delta >= 0 ? "sofort fällig" : "gerade eben") : (delta >= 0 ? "due now" : "just now");
+  if (minutes < 1) {
+    if (locale === "fr") return delta >= 0 ? "échéance immédiate" : "à l’instant";
+    if (locale === "de") return delta >= 0 ? "sofort fällig" : "gerade eben";
+    if (locale === "ar") return delta >= 0 ? "الاستحقاق الآن" : "الآن";
+    return delta >= 0 ? "due now" : "just now";
+  }
   const hours = Math.round(minutes / 60);
   const [count, unit] = relativeUnit(minutes, hours);
   return new Intl.RelativeTimeFormat(localeTag(locale), { numeric: "always" }).format(delta < 0 ? -count : count, unit);
 }
-const PERIODS: Record<Locale, ReadonlyArray<readonly [number, string, string, string, boolean]>> = {
+/** [seconds, English, French singular, French plural, dual, French feminine]. */
+const PERIODS: Record<Locale, ReadonlyArray<readonly [number, string, string, string, string, boolean]>> = {
   en: [
-    [31_536_000, "year", "years", "years", false], [2_592_000, "month", "months", "months", false],
-    [604_800, "week", "weeks", "weeks", false], [86_400, "day", "days", "days", false],
-    [3_600, "hour", "hours", "hours", false], [60, "minute", "minutes", "minutes", false],
-    [1, "second", "seconds", "seconds", false],
+    [31_536_000, "year", "years", "years", "year", false], [2_592_000, "month", "months", "months", "month", false],
+    [604_800, "week", "weeks", "weeks", "week", false], [86_400, "day", "days", "days", "day", false],
+    [3_600, "hour", "hours", "hours", "hour", false], [60, "minute", "minutes", "minutes", "minute", false],
+    [1, "second", "seconds", "seconds", "second", false],
   ],
   fr: [
-    [31_536_000, "an", "ans", "ans", false], [2_592_000, "mois", "mois", "mois", false],
-    [604_800, "semaine", "semaines", "semaines", true], [86_400, "jour", "jours", "jours", false],
-    [3_600, "heure", "heures", "heures", true], [60, "minute", "minutes", "minutes", true],
-    [1, "seconde", "secondes", "secondes", true],
+    [31_536_000, "year", "an", "ans", "an", false], [2_592_000, "month", "mois", "mois", "mois", false],
+    [604_800, "week", "semaine", "semaines", "semaine", true], [86_400, "day", "jour", "jours", "jour", false],
+    [3_600, "hour", "heure", "heures", "heure", true], [60, "minute", "minutes", "minutes", "minute", true],
+    [1, "second", "seconde", "secondes", "seconde", true],
+  ],
+  de: [
+    [31_536_000, "year", "Jahr", "Jahre", "Jahr", false], [2_592_000, "month", "Monat", "Monate", "Monat", false],
+    [604_800, "week", "Woche", "Wochen", "Woche", true], [86_400, "day", "Tag", "Tage", "Tag", false],
+    [3_600, "hour", "Stunde", "Stunden", "Stunde", true], [60, "minute", "Minute", "Minuten", "Minute", true],
+    [1, "second", "Sekunde", "Sekunden", "Sekunde", true],
   ],
   ar: [
-    [31_536_000, "سنة", "سنوات", "سنتين", false], [2_592_000, "شهر", "أشهر", "شهرين", false],
-    [604_800, "أسبوع", "أسابيع", "أسبوعين", true], [86_400, "يوم", "أيام", "يومين", false],
-    [3_600, "ساعة", "ساعات", "ساعتين", true], [60, "دقيقة", "دقائق", "دقيقتين", true],
-    [1, "ثانية", "ثوان", "ثانيتين", true],
+    [31_536_000, "year", "سنة", "سنوات", "سنتين", false], [2_592_000, "month", "شهر", "أشهر", "شهرين", false],
+    [604_800, "week", "أسبوع", "أسابيع", "أسبوعين", true], [86_400, "day", "يوم", "أيام", "يومين", false],
+    [3_600, "hour", "ساعة", "ساعات", "ساعتين", true], [60, "minute", "دقيقة", "دقائق", "دقيقتين", true],
+    [1, "second", "ثانية", "ثوان", "ثانيتين", true],
   ],
 };
 
 export function formatPeriod(seconds: number, locale: Locale): string {
-  const units = [
-    [31_536_000, "year", "an", "ans", false], [2_592_000, "month", "mois", "mois", false],
-    [604_800, "week", "semaine", "semaines", true], [86_400, "day", "jour", "jours", false],
-    [3_600, "hour", "heure", "heures", true], [60, "minute", "minute", "minutes", true],
-    [1, "second", "seconde", "secondes", true],
-  ] as const;
-  for (const [size, en, singular, plural, feminine] of units) {
-    if (seconds >= size && seconds % size === 0) {
-      const count = seconds / size;
-      if (locale === "fr") return count === 1 ? `par ${singular}` : `${feminine ? "toutes" : "tous"} les ${formatNumber(count, locale)} ${plural}`;
-      if (locale === "de") {
-        const german = {
-          year: ["Jahr", "Jahre"], month: ["Monat", "Monate"],
-          week: ["Woche", "Wochen"], day: ["Tag", "Tage"],
-          hour: ["Stunde", "Stunden"], minute: ["Minute", "Minuten"],
-          second: ["Sekunde", "Sekunden"],
-        } as const;
-        const [one, many] = german[en];
-        return count === 1 ? `pro ${one}` : `alle ${formatNumber(count, locale)} ${many}`;
-      }
-      return count === 1 && size !== 1 ? `per ${en}` : size === 1 ? `every ${count}s` : `every ${formatNumber(count, locale)} ${en}s`;
+  for (const [size, en, singular, plural, dual, feminine] of PERIODS[locale]) {
+    if (seconds < size || seconds % size !== 0) continue;
+    const count = Math.round(seconds / size);
+    if (locale === "fr") {
+      return count === 1
+        ? `par ${singular}`
+        : `${feminine ? "toutes" : "tous"} les ${formatNumber(count, locale)} ${plural}`;
+    }
+    if (locale === "de") {
+      return count === 1 ? `pro ${singular}` : `alle ${formatNumber(count, locale)} ${plural}`;
+    }
+    if (locale === "ar") {
+      if (count === 1) return `كل ${singular}`;
+      if (count === 2) return `كل ${dual}`;
+      return `كل ${formatNumber(count, locale)} ${plural}`;
     }
     return count === 1 && size !== 1
-      ? `per ${singular}`
+      ? `per ${en}`
       : size === 1
         ? `every ${count}s`
-        : `every ${formatNumber(count, locale)} ${plural}`;
+        : `every ${formatNumber(count, locale)} ${en}s`;
   }
   return locale === "fr" ? `toutes les ${formatNumber(seconds, locale)} secondes`
+    : locale === "de" ? `alle ${formatNumber(seconds, locale)} Sekunden`
     : locale === "ar" ? `كل ${formatNumber(seconds, locale)} ثانية`
     : `every ${seconds}s`;
 }
@@ -161,8 +179,8 @@ export function formatUsdString(value: string, locale: Locale): string {
   if (locale === "en") return value;
   const match = /^(< )?\$(\d+)\.(\d{2})$/.exec(value);
   if (!match) return value;
-  const currency = locale === "de" ? "$" : "$US";
-  return `${match[1] ?? ""}${formatNumber(BigInt(match[2]!), locale)},${match[3]}\u00a0${currency}`;
+  const cents = BigInt(match[2]!) * 100n + BigInt(match[3]!);
+  return `${match[1] ?? ""}${formatCurrencyValue(cents, "USD", locale, 2)}`;
 }
 export function formatTokenValue(raw: string | bigint, locale: Locale, digits = 4, decimals = 7): string {
   return formatAmount(raw, locale, { symbol: "", decimals }, digits).trimEnd();

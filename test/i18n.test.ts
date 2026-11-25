@@ -80,10 +80,11 @@ describe("German financial presentation", () => {
 describe("catalog completeness and application errors", () => {
   it("has French and German translations with matching interpolation tokens for every English key", () => {
     for (const [name, catalog] of [["French", fr], ["German", de]] as const) {
-      expect(Object.keys(catalog).sort(), name).toEqual(Object.keys(en).sort());
-      for (const key of Object.keys(en) as (keyof typeof en)[]) {
-        expect(catalog[key].trim(), `${name}: ${key}`).not.toBe("");
-        expect([...new Set([...catalog[key].matchAll(/\{\w+\}/g)].map(m => m[0]))].sort(), `${name}: ${key}`).toEqual([...new Set([...key.matchAll(/\{\w+\}/g)].map(m => m[0]))].sort());
+      const entries = catalog as Record<string, string>;
+      expect(Object.keys(entries).sort(), name).toEqual(Object.keys(en).sort());
+      for (const key of Object.keys(en)) {
+        expect(entries[key]!.trim(), `${name}: ${key}`).not.toBe("");
+        expect([...new Set([...entries[key]!.matchAll(/\{\w+\}/g)].map(m => m[0]))].sort(), `${name}: ${key}`).toEqual([...new Set([...key.matchAll(/\{\w+\}/g)].map(m => m[0]))].sort());
       }
     }
   });

@@ -51,13 +51,13 @@ export const READ_SOURCE =
 export const XLM_SAC =
   "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
 
-export type SubscribeOutcome = "success" | "contract-error" | "failed";
+type SubscribeOutcome = "success" | "contract-error" | "failed";
 
 export interface MockRpcOptions {
   subscribe?: SubscribeOutcome;
 }
 
-export type MockRpcCall =
+type MockRpcCall =
   | { kind: "simulate"; contractMethod: string; args: unknown[] }
   | { kind: "sendTransaction"; hash: string }
   | { kind: "getTransaction"; hash: string; status: string };

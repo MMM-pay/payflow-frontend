@@ -124,7 +124,7 @@ export function ConnectionBanner({
   className = "",
 }: ConnectionBannerProps) {
   const { t: tr } = useI18n();
-  const live = useConnectionStatus({ configured: statusProp === undefined ? undefined : false });
+  const live = useConnectionStatus(statusProp === undefined ? undefined : { configured: false });
   const status = statusProp ?? live.status;
   const checking = checkingProp ?? live.checking;
   const episode = episodeProp ?? (statusProp === undefined ? live.episode : 0);
