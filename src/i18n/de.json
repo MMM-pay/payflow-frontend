@@ -867,5 +867,6 @@
   "Technical details": "Technische Details",
   "Try again": "Erneut versuchen",
   "We couldn't load this page.": "Diese Seite konnte nicht geladen werden.",
-  "Your payment settings are safe. Try again, or reload the page.": "Deine Zahlungseinstellungen sind sicher. Versuche es erneut oder lade die Seite neu."
+  "Your payment settings are safe. Try again, or reload the page.": "Deine Zahlungseinstellungen sind sicher. Versuche es erneut oder lade die Seite neu.",
+  "View transaction {0} on the Stellar explorer (opens in a new tab)": "Transaktion {0} im Stellar Explorer ansehen (öffnet in einem neuen Tab)"
 }
