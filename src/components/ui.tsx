@@ -277,6 +277,52 @@ export function Empty({
   );
 }
 
+type GuideCardRadius = "lg" | "xl";
+type GuideCardHeaderAlign = "start" | "center";
+
+const GUIDE_CARD_RADIUS: Record<GuideCardRadius, string> = {
+  lg: "rounded-lg",
+  xl: "rounded-xl",
+};
+
+const GUIDE_CARD_HEADER_ALIGN: Record<GuideCardHeaderAlign, string> = {
+  start: "flex items-start justify-between gap-3",
+  center: "flex flex-wrap items-center justify-between gap-3",
+};
+
+export function GuideCard({
+  titleId,
+  title,
+  subtitle,
+  action,
+  radius = "lg",
+  headerAlign = "start",
+  children,
+}: {
+  titleId: string;
+  title: string;
+  subtitle?: string;
+  action: ReactNode;
+  radius?: GuideCardRadius;
+  headerAlign?: GuideCardHeaderAlign;
+  children: ReactNode;
+}) {
+  return (
+    <section
+      aria-labelledby={titleId}
+      className={`${GUIDE_CARD_RADIUS[radius]} border border-edge bg-surface/50 p-4`}
+    >
+      <div className={GUIDE_CARD_HEADER_ALIGN[headerAlign]}>
+        <div>
+          <h2 id={titleId} className="text-base font-semibold">{title}</h2>
+          {subtitle && <p className="mt-1 text-sm text-muted">{subtitle}</p>}
+        </div>
+        {action}
+      </div>
+      {children}
+    </section>
+  );
+}
 
 export function NetworkMismatchBanner({
   walletNetwork,
