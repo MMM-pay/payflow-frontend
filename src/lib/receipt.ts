@@ -311,8 +311,8 @@ export function buildReceiptHtml(receipt: ReceiptData): string {
   dt { color: #52606f; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
   dd { margin: 2px 0 0; overflow-wrap: anywhere; }
   table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-  th, td { text-align: left; padding: 10px 0; border-bottom: 1px solid #e6ebf1; }
-  th:last-child, td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+  th, td { text-align: start; padding: 10px 0; border-bottom: 1px solid #e6ebf1; }
+  th:last-child, td:last-child { text-align: end; font-variant-numeric: tabular-nums; }
   tfoot th, tfoot td { border-bottom: 0; border-top: 2px solid #d3dce7; font-weight: 700; font-size: 16px; }
   footer { border-top: 1px solid #d3dce7; margin-top: 24px; padding-top: 16px; font-size: 12px; color: #52606f; overflow-wrap: anywhere; }
   a { color: #067647; }

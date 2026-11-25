@@ -775,5 +775,14 @@
   "Section {0} of {1}: {2}": "Section {0} sur {1} : {2}",
   "Press": "Appuyez sur",
   "or": "ou",
-  "to jump between sections.": "pour passer d’une section à l’autre."
+  "to jump between sections.": "pour passer d’une section à l’autre.",
+  "Backend is unreachable": "Le backend est inaccessible",
+  "Checking connection…": "Vérification de la connexion…",
+  "Connected.": "Connexion rétablie.",
+  "Connection lost": "Connexion perdue",
+  "Contract-only mode: this build has no backend configured.": "Mode contrat seul : aucun backend n’est configuré pour cette version.",
+  "Dismiss connection notice": "Masquer l’avis de connexion",
+  "Live backend data may be out of date. Contract-backed plans, balances and mandates still work.": "Les données du backend peuvent être obsolètes. Les offres, soldes et mandats enregistrés sur la chaîne restent disponibles.",
+  "Retry": "Réessayer",
+  "Your device is offline. Contract-backed pages stay available and your changes resume when the connection returns.": "Votre appareil est hors ligne. Les pages adossées au contrat restent disponibles et vos modifications reprennent au retour de la connexion."
 }

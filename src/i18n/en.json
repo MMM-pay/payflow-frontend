@@ -775,5 +775,14 @@
   "Section {0} of {1}: {2}": "Section {0} of {1}: {2}",
   "Press": "Press",
   "or": "or",
-  "to jump between sections.": "to jump between sections."
+  "to jump between sections.": "to jump between sections.",
+  "Backend is unreachable": "Backend is unreachable",
+  "Checking connection…": "Checking connection…",
+  "Connected.": "Connected.",
+  "Connection lost": "Connection lost",
+  "Contract-only mode: this build has no backend configured.": "Contract-only mode: this build has no backend configured.",
+  "Dismiss connection notice": "Dismiss connection notice",
+  "Live backend data may be out of date. Contract-backed plans, balances and mandates still work.": "Live backend data may be out of date. Contract-backed plans, balances and mandates still work.",
+  "Retry": "Retry",
+  "Your device is offline. Contract-backed pages stay available and your changes resume when the connection returns.": "Your device is offline. Contract-backed pages stay available and your changes resume when the connection returns."
 }

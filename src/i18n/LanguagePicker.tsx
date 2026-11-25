@@ -6,8 +6,9 @@ export function LanguagePicker() {
     <span>{t("Language")}</span>
     <select aria-label={t("Language")} className="input min-h-11 w-auto" value={locale}
       onChange={event => { if (isLocale(event.target.value)) setLocale(event.target.value); }}>
-      <option value="en" lang="en">English</option>
-      <option value="fr" lang="fr">Français</option>
+      <option value="en" lang="en" dir="ltr">English</option>
+      <option value="fr" lang="fr" dir="ltr">Français</option>
+      <option value="ar" lang="ar" dir="rtl">العربية</option>
     </select>
   </label>;
 }

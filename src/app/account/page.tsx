@@ -179,15 +179,15 @@ function PaymentHistoryPanel({
           aria-label={tr("Payment history table")}
           tabIndex={0}
         >
-          <table className="w-full min-w-[640px] text-left text-sm">
+          <table className="w-full min-w-[640px] text-start text-sm">
             <caption className="sr-only">{tr("Charges settled against your subscriptions, newest first.")}</caption>
             <thead>
               <tr className="border-b border-edge text-muted">
-                <th scope="col" className="py-2 pr-3 font-medium">{tr("Subscription")}</th>
-                <th scope="col" className="py-2 pr-3 font-medium">{tr("Ledger")}</th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Amount")}</th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Fee")}</th>
-                <th scope="col" className="py-2 text-right font-medium">{tr("Receipt")}</th>
+                <th scope="col" className="py-2 pe-3 font-medium">{tr("Subscription")}</th>
+                <th scope="col" className="py-2 pe-3 font-medium">{tr("Ledger")}</th>
+                <th scope="col" className="py-2 pe-3 text-end font-medium">{tr("Amount")}</th>
+                <th scope="col" className="py-2 pe-3 text-end font-medium">{tr("Fee")}</th>
+                <th scope="col" className="py-2 text-end font-medium">{tr("Receipt")}</th>
               </tr>
             </thead>
             <tbody>
@@ -199,10 +199,10 @@ function PaymentHistoryPanel({
                 });
                 return (
                   <tr key={`${row.mandateId}:${row.txHash}`} className="border-b border-edge last:border-0">
-                    <th scope="row" className="py-2 pr-3 font-medium">#{row.mandateId}</th>
-                    <td className="py-2 pr-3 tabular-nums text-muted">#{row.ledger}</td>
-                    <td className="py-2 pr-3 text-right tabular-nums">{row.amount} {row.token}</td>
-                    <td className="py-2 pr-3 text-right tabular-nums text-muted">{row.fee} {row.token}</td>
+                    <th scope="row" className="py-2 pe-3 font-medium">#{row.mandateId}</th>
+                    <td className="py-2 pe-3 tabular-nums text-muted">#{row.ledger}</td>
+                    <td className="py-2 pe-3 text-end tabular-nums">{row.amount} {row.token}</td>
+                    <td className="py-2 pe-3 text-end tabular-nums text-muted">{row.fee} {row.token}</td>
                     <td className="py-2">
                       <div className="flex flex-wrap items-center justify-end gap-2">
                         <Link
@@ -1551,7 +1551,7 @@ function AccountInner() {
                     <span className="mono text-xs text-muted">{tr("tx")}</span>
                     <TxLink hash={event.tx_hash} />
                   </div>
-                  <div className="text-right">
+                  <div className="text-end">
                     <Money
                       amount={isCredit ? event.amount : `-${event.amount}`}
                       meta={vaultMeta}

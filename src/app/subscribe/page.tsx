@@ -76,9 +76,9 @@ function ComparisonTable({
         <caption className="sr-only">{tr("Side-by-side comparison of")}{" "}{formatNumber(plans.length)}{" "}{tr("selected plans")}</caption>
         <thead>
           <tr className="border-b border-edge bg-fg/5">
-            <th scope="col" className="px-3 py-2 text-left font-medium text-muted">{tr("Feature")}</th>
+            <th scope="col" className="px-3 py-2 text-start font-medium text-muted">{tr("Feature")}</th>
             {plans.map((plan) => (
-              <th key={plan.id} scope="col" className="px-3 py-2 text-left font-semibold">
+              <th key={plan.id} scope="col" className="px-3 py-2 text-start font-semibold">
                 {plan.name ||tr("Plan #{0}", { "0": plan.id })}
               </th>
             ))}
@@ -86,7 +86,7 @@ function ComparisonTable({
         </thead>
         <tbody>
           <tr className="border-b border-edge/60">
-            <th scope="row" className="px-3 py-2 text-left font-medium text-muted">{tr("Price")}</th>
+            <th scope="row" className="px-3 py-2 text-start font-medium text-muted">{tr("Price")}</th>
             {plans.map((plan) => {
               const meta = metaFor(metas, plan.token);
               return (
@@ -98,7 +98,7 @@ function ComparisonTable({
             })}
           </tr>
           <tr className="border-b border-edge/60">
-            <th scope="row" className="px-3 py-2 text-left font-medium text-muted">{tr("Billing period")}</th>
+            <th scope="row" className="px-3 py-2 text-start font-medium text-muted">{tr("Billing period")}</th>
             {plans.map((plan) => (
               <td key={plan.id} className="px-3 py-2">
                 {formatPeriod(plan.period)}
@@ -106,7 +106,7 @@ function ComparisonTable({
             ))}
           </tr>
           <tr className="border-b border-edge/60">
-            <th scope="row" className="px-3 py-2 text-left font-medium text-muted">{tr("Monthly equivalent")}<span className="block text-xs font-normal">{tr("30-day month")}</span>
+            <th scope="row" className="px-3 py-2 text-start font-medium text-muted">{tr("Monthly equivalent")}<span className="block text-xs font-normal">{tr("30-day month")}</span>
             </th>
             {plans.map((plan) => {
               const meta = metaFor(metas, plan.token);
@@ -119,7 +119,7 @@ function ComparisonTable({
             })}
           </tr>
           <tr className="border-b border-edge/60">
-            <th scope="row" className="px-3 py-2 text-left font-medium text-muted">{tr("Free trial")}</th>
+            <th scope="row" className="px-3 py-2 text-start font-medium text-muted">{tr("Free trial")}</th>
             {plans.map((plan) => {
               const trial = trialSeconds(plan);
               return (
@@ -134,7 +134,7 @@ function ComparisonTable({
             })}
           </tr>
           <tr className="border-b border-edge/60">
-            <th scope="row" className="px-3 py-2 text-left font-medium text-muted">{tr("Seats")}</th>
+            <th scope="row" className="px-3 py-2 text-start font-medium text-muted">{tr("Seats")}</th>
             {plans.map((plan) => (
               <td key={plan.id} className="px-3 py-2">
                 {seatsLabel(plan, now, tr)}
@@ -142,7 +142,7 @@ function ComparisonTable({
             ))}
           </tr>
           <tr>
-            <th scope="row" className="px-3 py-2 text-left font-medium text-muted">{tr("Merchant")}</th>
+            <th scope="row" className="px-3 py-2 text-start font-medium text-muted">{tr("Merchant")}</th>
             {plans.map((plan) => (
               <td key={plan.id} className="px-3 py-2">
                 <MerchantAccount value={plan.merchant} />
@@ -697,7 +697,7 @@ function SubscribeInner() {
               </select>
             </div>
 
-            <span className="ml-auto text-xs text-muted" aria-live="polite">{tr("Showing")}{" "}{formatNumber(filteredPlans.length)}{" "}{tr("of")}{" "}{formatNumber(active.length)}{" "}{tr("plans")}</span>
+            <span className="ms-auto text-xs text-muted" aria-live="polite">{tr("Showing")}{" "}{formatNumber(filteredPlans.length)}{" "}{tr("of")}{" "}{formatNumber(active.length)}{" "}{tr("plans")}</span>
           </div>
 
           {compareIds.length > 0 && (

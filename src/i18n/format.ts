@@ -1,16 +1,80 @@
 import { fromStroops, XLM, type TokenMeta } from "@/lib/format";
-export type Locale = "en" | "fr";
-export const localeTag = (locale: Locale) => locale === "fr" ? "fr-FR" : "en-GB";
+export type Locale = "en" | "fr" | "ar";
+
+/**
+ * Financial values use Latin digits in every locale: a stroop is a stroop, and
+ * mixing Arabic-Indic digits into an amount a merchant will type back into a
+ * form invites transcription mistakes. All the other locale choices — grouping,
+ * decimal mark, month names, currency symbol placement, plural rules — still
+ * come from Intl.
+ */
+export const localeTag = (locale: Locale) => locale === "fr" ? "fr-FR" : locale === "ar" ? "ar-EG-u-nu-latn" : "en-GB";
+export const isRtlLocale = (locale: Locale) => locale === "ar";
+export const direction = (locale: Locale): "ltr" | "rtl" => isRtlLocale(locale) ? "rtl" : "ltr";
+
 export function formatNumber(value: number | bigint, locale: Locale): string {
   return new Intl.NumberFormat(localeTag(locale)).format(value);
 }
+
+/** The decimal mark the locale uses, read from Intl rather than hard-coded. */
+export function decimalSeparator(locale: Locale): string {
+  return new Intl.NumberFormat(localeTag(locale)).formatToParts(1.1).find(part => part.type === "decimal")?.value ?? ".";
+}
+
+/** Format an exact canonical decimal string without ever coercing it to Number. */
+export function formatDecimal(canonical: string, locale: Locale): string {
+  const [, sign = "", whole = "0", fraction] = /^(-?)(\d+)(?:\.(\d+))?$/.exec(canonical) ?? [];
+  return `${sign}${formatNumber(BigInt(whole), locale)}${fraction ? decimalSeparator(locale) + fraction : ""}`;
+}
+
 /** Group the integer bigint and retain the decimal string; never coerce money to Number. */
 export function formatAmount(raw: string | bigint, locale: Locale, meta: TokenMeta = XLM, digits = 4): string {
   const canonical = fromStroops(raw, digits, meta.decimals);
-  const [, sign = "", whole = "0", fraction] = /^(-?)(\d+)(?:\.(\d+))?$/.exec(canonical) ?? [];
-  const decimal = new Intl.NumberFormat(localeTag(locale)).formatToParts(1.1).find(part => part.type === "decimal")?.value ?? ".";
-  return `${sign}${formatNumber(BigInt(whole), locale)}${fraction ? decimal + fraction : ""} ${meta.symbol}`;
+  return `${formatDecimal(canonical, locale)} ${meta.symbol}`;
 }
+
+/**
+ * A fiat amount from exact minor units, laid out by Intl's currency formatter.
+ * Intl cannot accept a decimal string, so its parts are filled from the exact
+ * bigint digits instead of losing cents to a Number conversion.
+ */
+export function formatCurrencyValue(
+  minor: string | bigint,
+  currency: string,
+  locale: Locale,
+  decimals = 2,
+): string {
+  const canonical = fromStroops(minor, decimals, decimals);
+  const [, sign = "", whole = "0", fraction = ""] = /^(-?)(\d+)(?:\.(\d+))?$/.exec(canonical) ?? [];
+  let formatter: Intl.NumberFormat;
+  try {
+    formatter = new Intl.NumberFormat(localeTag(locale), {
+      style: "currency",
+      currency,
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    });
+  } catch {
+    // SEP-41 symbols such as XLM are not ISO 4217 codes; keep the exact value.
+    return `${formatDecimal(canonical, locale)} ${currency}`;
+  }
+  const parts = formatter.formatToParts(0);
+  const symbol = parts.find(part => part.type === "currency")?.value ?? currency;
+  const decimal = parts.find(part => part.type === "decimal")?.value ?? ".";
+  const formattedWhole = formatNumber(BigInt(whole), locale);
+  return sign + parts.map(part => {
+    switch (part.type) {
+      case "integer": return formattedWhole;
+      case "group": return "";
+      case "decimal": return decimal;
+      case "fraction": return fraction;
+      case "currency": return symbol;
+      case "minusSign": case "plusSign": return "";
+      default: return part.value;
+    }
+  }).join("");
+}
+
 export function formatDate(seconds: number, locale: Locale): string {
   if (!seconds) return "—";
   return new Intl.DateTimeFormat(localeTag(locale), { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(seconds * 1000));
@@ -23,26 +87,59 @@ export function formatWhen(seconds: number, locale: Locale, now = Date.now()): s
   if (!seconds) return "—";
   const delta = seconds * 1000 - now;
   const minutes = Math.round(Math.abs(delta) / 60_000);
-  if (minutes < 1) return locale === "fr" ? (delta >= 0 ? "échéance immédiate" : "à l’instant") : (delta >= 0 ? "due now" : "just now");
+  if (minutes < 1) {
+    if (locale === "fr") return delta >= 0 ? "échéance immédiate" : "à l’instant";
+    if (locale === "ar") return delta >= 0 ? "الاستحقاق الآن" : "الآن";
+    return delta >= 0 ? "due now" : "just now";
+  }
   const hours = Math.round(minutes / 60);
   const [count, unit]: [number, Intl.RelativeTimeFormatUnit] = minutes < 60 ? [minutes, "minute"] : hours < 24 ? [hours, "hour"] : [Math.round(hours / 24), "day"];
   return new Intl.RelativeTimeFormat(localeTag(locale), { numeric: "always" }).format(delta < 0 ? -count : count, unit);
 }
+const PERIODS: Record<Locale, ReadonlyArray<readonly [number, string, string, string, boolean]>> = {
+  en: [
+    [31_536_000, "year", "years", "years", false], [2_592_000, "month", "months", "months", false],
+    [604_800, "week", "weeks", "weeks", false], [86_400, "day", "days", "days", false],
+    [3_600, "hour", "hours", "hours", false], [60, "minute", "minutes", "minutes", false],
+    [1, "second", "seconds", "seconds", false],
+  ],
+  fr: [
+    [31_536_000, "an", "ans", "ans", false], [2_592_000, "mois", "mois", "mois", false],
+    [604_800, "semaine", "semaines", "semaines", true], [86_400, "jour", "jours", "jours", false],
+    [3_600, "heure", "heures", "heures", true], [60, "minute", "minutes", "minutes", true],
+    [1, "seconde", "secondes", "secondes", true],
+  ],
+  ar: [
+    [31_536_000, "سنة", "سنوات", "سنتين", false], [2_592_000, "شهر", "أشهر", "شهرين", false],
+    [604_800, "أسبوع", "أسابيع", "أسبوعين", true], [86_400, "يوم", "أيام", "يومين", false],
+    [3_600, "ساعة", "ساعات", "ساعتين", true], [60, "دقيقة", "دقائق", "دقيقتين", true],
+    [1, "ثانية", "ثوان", "ثانيتين", true],
+  ],
+};
+
 export function formatPeriod(seconds: number, locale: Locale): string {
-  const units = [
-    [31_536_000, "year", "an", "ans", false], [2_592_000, "month", "mois", "mois", false],
-    [604_800, "week", "semaine", "semaines", true], [86_400, "day", "jour", "jours", false],
-    [3_600, "hour", "heure", "heures", true], [60, "minute", "minute", "minutes", true],
-    [1, "second", "seconde", "secondes", true],
-  ] as const;
-  for (const [size, en, singular, plural, feminine] of units) {
-    if (seconds >= size && seconds % size === 0) {
-      const count = seconds / size;
-      if (locale === "fr") return count === 1 ? `par ${singular}` : `${feminine ? "toutes" : "tous"} les ${formatNumber(count, locale)} ${plural}`;
-      return count === 1 && size !== 1 ? `per ${en}` : size === 1 ? `every ${count}s` : `every ${formatNumber(count, locale)} ${en}s`;
+  for (const [size, singular, plural, dual, feminine] of PERIODS[locale]) {
+    if (seconds < size || seconds % size !== 0) continue;
+    const count = Math.round(seconds / size);
+    if (locale === "fr") {
+      return count === 1
+        ? `par ${singular}`
+        : `${feminine ? "toutes" : "tous"} les ${formatNumber(count, locale)} ${plural}`;
     }
+    if (locale === "ar") {
+      if (count === 1) return `كل ${singular}`;
+      if (count === 2) return `كل ${dual}`;
+      return `كل ${formatNumber(count, locale)} ${plural}`;
+    }
+    return count === 1 && size !== 1
+      ? `per ${singular}`
+      : size === 1
+        ? `every ${count}s`
+        : `every ${formatNumber(count, locale)} ${plural}`;
   }
-  return locale === "fr" ? `toutes les ${formatNumber(seconds, locale)} secondes` : `every ${seconds}s`;
+  return locale === "fr" ? `toutes les ${formatNumber(seconds, locale)} secondes`
+    : locale === "ar" ? `كل ${formatNumber(seconds, locale)} ثانية`
+    : `every ${seconds}s`;
 }
 export function formatFeeBps(bps: number, locale: Locale): string {
   return new Intl.NumberFormat(localeTag(locale), { style: "percent", maximumFractionDigits: 2 }).format(Number.isFinite(bps) && bps > 0 ? bps / 10_000 : 0);
@@ -53,7 +150,8 @@ export function formatUsdString(value: string, locale: Locale): string {
   if (locale === "en") return value;
   const match = /^(< )?\$(\d+)\.(\d{2})$/.exec(value);
   if (!match) return value;
-  return `${match[1] ?? ""}${formatNumber(BigInt(match[2]!), locale)},${match[3]}\u00a0$US`;
+  const cents = BigInt(match[2]!) * 100n + BigInt(match[3]!);
+  return `${match[1] ?? ""}${formatCurrencyValue(cents, "USD", locale, 2)}`;
 }
 export function formatTokenValue(raw: string | bigint, locale: Locale, digits = 4, decimals = 7): string {
   return formatAmount(raw, locale, { symbol: "", decimals }, digits).trimEnd();

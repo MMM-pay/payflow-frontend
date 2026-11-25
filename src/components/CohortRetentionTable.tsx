@@ -87,17 +87,17 @@ export function CohortRetentionTable({ merchant, apiConfigured }: CohortRetentio
           aria-label="Cohort retention table"
           tabIndex={0}
         >
-          <table className="w-full text-left text-sm">
+          <table className="w-full text-start text-sm">
             <caption className="sr-only">
               Cohort retention: percentage of subscribers from each signup month still active after
               0, 1, 2, ... months
             </caption>
             <thead>
               <tr className="border-b border-edge text-muted">
-                <th scope="col" className="sticky left-0 bg-panel py-2 pr-3 font-medium z-10">
+                <th scope="col" className="sticky start-0 bg-panel py-2 pe-3 font-medium z-10">
                   Signup month
                 </th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">
+                <th scope="col" className="py-2 pe-3 text-end font-medium">
                   Cohort size
                 </th>
                 {Array.from({ length: state.data.maxAge + 1 }, (_, i) => (
@@ -110,10 +110,10 @@ export function CohortRetentionTable({ merchant, apiConfigured }: CohortRetentio
             <tbody>
               {state.data.cohorts.map((cohort) => (
                 <tr key={cohort.cohort} className="border-b border-edge last:border-0">
-                  <th scope="row" className="sticky left-0 bg-panel py-2 pr-3 font-medium z-10">
+                  <th scope="row" className="sticky start-0 bg-panel py-2 pe-3 font-medium z-10">
                     {cohort.cohort}
                   </th>
-                  <td className="py-2 pr-3 text-right tabular-nums">{cohort.size}</td>
+                  <td className="py-2 pe-3 text-end tabular-nums">{cohort.size}</td>
                   {Array.from({ length: state.data.maxAge + 1 }, (_, monthIndex) => {
                     const percent = cohort.retention[monthIndex];
                     return (

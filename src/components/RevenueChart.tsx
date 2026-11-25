@@ -101,35 +101,35 @@ export function RevenueChart({
       <details className="text-sm">
         <summary className={`cursor-pointer text-muted hover:text-fg ${reducedMotion ? "transition-none" : "transition-colors"}`}>{tr("Show revenue as a table")}</summary>
         <div className="mt-3 overflow-x-auto" id={tableId}>
-          <table className="w-full text-left text-sm">
+          <table className="w-full text-start text-sm">
             <caption className="sr-only">{summary}</caption>
             <thead>
               <tr className="border-b border-edge text-xs uppercase tracking-wide text-muted">
-                <th scope="col" className="py-1.5 pr-3 font-medium">
+                <th scope="col" className="py-1.5 pe-3 font-medium">
                   {size === "week" ?tr("Week of") :tr("Day")}
                 </th>
-                <th scope="col" className="py-1.5 pr-3 text-right font-medium">{tr("Charged")}</th>
-                <th scope="col" className="py-1.5 pr-3 text-right font-medium">{tr("Fee")}</th>
-                <th scope="col" className="py-1.5 text-right font-medium">{tr("You received")}</th>
+                <th scope="col" className="py-1.5 pe-3 text-end font-medium">{tr("Charged")}</th>
+                <th scope="col" className="py-1.5 pe-3 text-end font-medium">{tr("Fee")}</th>
+                <th scope="col" className="py-1.5 text-end font-medium">{tr("You received")}</th>
               </tr>
             </thead>
             <tbody className="tabular-nums">
               {points.map((p) => (
                 <tr key={p.start} className="border-b border-edge/60 last:border-0">
-                  <th scope="row" className="py-1.5 pr-3 font-normal" title={bucketTitle(p.start, size)}>
+                  <th scope="row" className="py-1.5 pe-3 font-normal" title={bucketTitle(p.start, size)}>
                     {formatBucketLabel(p.start)}
                   </th>
-                  <td className="py-1.5 pr-3 text-right">{render(p.gross)}</td>
-                  <td className="py-1.5 pr-3 text-right text-muted">{render(p.fee)}</td>
-                  <td className="py-1.5 text-right">{render(p.net)}</td>
+                  <td className="py-1.5 pe-3 text-end">{render(p.gross)}</td>
+                  <td className="py-1.5 pe-3 text-end text-muted">{render(p.fee)}</td>
+                  <td className="py-1.5 text-end">{render(p.net)}</td>
                 </tr>
               ))}
             </tbody>
             <tfoot>
               <tr className="border-t border-edge font-medium">
-                <th scope="row" className="py-1.5 pr-3 text-left font-medium">{tr("Total")}</th>
+                <th scope="row" className="py-1.5 pe-3 text-start font-medium">{tr("Total")}</th>
                 <td className="sr-only" colSpan={2} />
-                <td className="py-1.5 text-right">{render(totalNet(points))}</td>
+                <td className="py-1.5 text-end">{render(totalNet(points))}</td>
               </tr>
             </tfoot>
           </table>

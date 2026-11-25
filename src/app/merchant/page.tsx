@@ -464,27 +464,27 @@ function MerchantChurnPanel({
           aria-label={tr("Monthly subscriber activity table")}
           tabIndex={0}
         >
-          <table className="w-full min-w-[760px] text-left text-sm">
+          <table className="w-full min-w-[760px] text-start text-sm">
             <caption className="sr-only">{tr("Monthly subscription starts, departures, completions, and net change. Completed subscriptions are included in the net calculation.")}</caption>
             <thead>
               <tr className="border-b border-edge text-muted">
-                <th scope="col" className="py-2 pr-3 font-medium">{tr("Month (UTC)")}</th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Started")}</th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Subscriber cancellations")}</th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Merchant-ended")}</th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Completed")}</th>
-                <th scope="col" className="py-2 text-right font-medium">{tr("Net subscriber change")}</th>
+                <th scope="col" className="py-2 pe-3 font-medium">{tr("Month (UTC)")}</th>
+                <th scope="col" className="py-2 pe-3 text-end font-medium">{tr("Started")}</th>
+                <th scope="col" className="py-2 pe-3 text-end font-medium">{tr("Subscriber cancellations")}</th>
+                <th scope="col" className="py-2 pe-3 text-end font-medium">{tr("Merchant-ended")}</th>
+                <th scope="col" className="py-2 pe-3 text-end font-medium">{tr("Completed")}</th>
+                <th scope="col" className="py-2 text-end font-medium">{tr("Net subscriber change")}</th>
               </tr>
             </thead>
             <tbody>
               {state.months.map((month) => (
                 <tr key={month.bucket} className="border-b border-edge last:border-0">
-                  <th scope="row" className="py-2 pr-3 font-medium">{month.bucket}</th>
-                  <td className="py-2 pr-3 text-right tabular-nums">{formatNumber(month.started)}</td>
-                  <td className="py-2 pr-3 text-right tabular-nums">{formatNumber(month.cancelled)}</td>
-                  <td className="py-2 pr-3 text-right tabular-nums">{formatNumber(month.ended)}</td>
-                  <td className="py-2 pr-3 text-right tabular-nums">{formatNumber(month.completed)}</td>
-                  <td className="py-2 text-right tabular-nums">
+                  <th scope="row" className="py-2 pe-3 font-medium">{month.bucket}</th>
+                  <td className="py-2 pe-3 text-end tabular-nums">{formatNumber(month.started)}</td>
+                  <td className="py-2 pe-3 text-end tabular-nums">{formatNumber(month.cancelled)}</td>
+                  <td className="py-2 pe-3 text-end tabular-nums">{formatNumber(month.ended)}</td>
+                  <td className="py-2 pe-3 text-end tabular-nums">{formatNumber(month.completed)}</td>
+                  <td className="py-2 text-end tabular-nums">
                     {month.net > 0
                       ?tr("+{0} (increase)", { "0": month.net })
                       : month.net < 0
@@ -2015,7 +2015,7 @@ export default function MerchantPage() {
             {batchResult.filter((i) => i.ok).length} of {batchResult.length} mandates ended.
           </p>
           {batchResult.some((i) => !i.ok) && (
-            <ul className="mt-1 list-disc pl-5 text-sm">
+            <ul className="mt-1 list-disc ps-5 text-sm">
               {batchResult
                 .filter((i) => !i.ok)
                 .map((i) => (
@@ -2304,7 +2304,7 @@ export default function MerchantPage() {
                 </select>
               </div>
 
-              <span className="ml-auto text-xs text-muted" aria-live="polite">{tr("Showing")}{" "}{formatNumber(filteredPlans.length)}{" "}{tr("of")}{" "}{formatNumber(plans.length)}{" "}{tr("plans")}</span>
+              <span className="ms-auto text-xs text-muted" aria-live="polite">{tr("Showing")}{" "}{formatNumber(filteredPlans.length)}{" "}{tr("of")}{" "}{formatNumber(plans.length)}{" "}{tr("plans")}</span>
             </div>
 
             {filteredPlans.length === 0 ? (
@@ -2598,7 +2598,7 @@ export default function MerchantPage() {
                 aria-selected={subscribersTab === "all"}
                 aria-controls="subscribers-all-panel"
                 id="subscribers-all-tab"
-                className={`px-3 py-1.5 text-sm font-medium transition-colors rounded-l-lg ${
+                className={`px-3 py-1.5 text-sm font-medium transition-colors rounded-s-lg ${
                   subscribersTab === "all"
                     ? "bg-accent text-white"
                     : "text-muted hover:text-fg"
@@ -2611,14 +2611,14 @@ export default function MerchantPage() {
                 aria-selected={subscribersTab === "unpaid"}
                 aria-controls="subscribers-unpaid-panel"
                 id="subscribers-unpaid-tab"
-                className={`px-3 py-1.5 text-sm font-medium transition-colors rounded-r-lg ${
+                className={`px-3 py-1.5 text-sm font-medium transition-colors rounded-e-lg ${
                   subscribersTab === "unpaid"
                     ? "bg-accent text-white"
                     : "text-muted hover:text-fg"
                 }`}
                 onClick={() => setSubscribersTab("unpaid")}
               >{tr("Unpaid")}{unpaidMandates && unpaidMandates.length > 0 && (
-                  <span className="ml-1.5 rounded-full bg-danger px-1.5 py-0.5 text-xs font-semibold text-white">
+                  <span className="ms-1.5 rounded-full bg-danger px-1.5 py-0.5 text-xs font-semibold text-white">
                     {formatNumber(unpaidMandates.length)}
                   </span>
                 )}

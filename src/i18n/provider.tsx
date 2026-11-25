@@ -6,12 +6,14 @@ import * as localized from "./format";
 import { presentation } from "./presentation";
 import { createTranslation, translateMessage } from "./translate";
 export const LOCALE_STORAGE_KEY = "payflow.locale";
-export const isLocale = (value: unknown): value is localized.Locale => value === "en" || value === "fr";
+export const isLocale = (value: unknown): value is localized.Locale => value === "en" || value === "fr" || value === "ar";
 function makeValue(locale: localized.Locale, setLocale: (value: localized.Locale) => void) {
   return {
     ...presentation(locale),
     formatTokenValue: (raw: string | bigint, digits?: number, decimals?: number) => localized.formatTokenValue(raw, locale, digits, decimals),
     formatUsdString: (value: string) => localized.formatUsdString(value, locale),
+    formatCurrency: (minor: string | bigint, currency: string, decimals = 2) => localized.formatCurrencyValue(minor, currency, locale, decimals),
+    dir: localized.direction(locale), isRtl: localized.isRtlLocale(locale),
     locale, localeTag: localized.localeTag(locale), setLocale, t: createTranslation(locale),
     translateMessage: (value: string) => translateMessage(locale, value),
     formatNumber: (value: number | bigint) => localized.formatNumber(value, locale),
@@ -40,6 +42,9 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }, []);
   useEffect(() => {
     document.documentElement.lang = locale;
+    // Mirroring the document is what makes Tailwind's logical utilities and
+    // the browser's own form/table layout follow the reader's direction.
+    document.documentElement.dir = localized.direction(locale);
     document.title = createTranslation(locale)("Payflow — recurring payments on Stellar");
   }, [locale]);
   const value = useMemo(() => makeValue(locale, next => {
