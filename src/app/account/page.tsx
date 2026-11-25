@@ -324,6 +324,16 @@ function AccountInner() {
   useEffect(() => {
     addressRef.current = viewAddress;
   }, [viewAddress]);
+  // A data load can outlive the page (it awaits the RPC and the indexer).
+  // Writing state after unmount throws in React 18 once the DOM is gone, so
+  // the load checks this before it applies anything.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // The vault holds the configured token; each mandate carries the token it
   // was opened against, which the indexer does not report.
@@ -361,6 +371,9 @@ function AccountInner() {
     addressRef.current = viewAddress;
     if (!viewAddress) return;
     const who = viewAddress;
+    // True when the page is gone or the wallet switched accounts while these
+    // reads were in flight.
+    const stale = () => !mountedRef.current || addressRef.current !== who;
     const [bal, res, hist] = await Promise.allSettled([
       payflow.vaultBalance(source, who, config.contracts.token),
       api.mandatesOf(who),
@@ -368,7 +381,7 @@ function AccountInner() {
     ]);
     // The wallet may have switched accounts while those reads were in flight.
     // Applying them would show one account's balance under another's address.
-    if (addressRef.current !== who) return;
+    if (stale()) return;
     if (bal.status === "fulfilled") setBalance(bal.value);
 
     if (res.status === "fulfilled" && res.value) {
@@ -379,10 +392,10 @@ function AccountInner() {
       // No indexer: read the subscriber's mandates from the contract.
       try {
         const fromChain = await chainMandatesOf(source, who);
-        if (addressRef.current !== who) return;
+        if (stale()) return;
         setMandates(fromChain);
       } catch {
-        if (addressRef.current !== who) return;
+        if (stale()) return;
         setMandates([]);
       }
       setMandatesFromApi(false);
@@ -390,7 +403,7 @@ function AccountInner() {
 
     // A contract fallback above may have awaited long enough for an account
     // switch; do not attach the old account's history to the new one.
-    if (addressRef.current !== who) return;
+    if (stale()) return;
 
     // Vault history lives only in the indexer; without a backend there is no
     // contract-side event log to fall back to, so we report what is knowable.
@@ -418,7 +431,7 @@ function AccountInner() {
           }
         }
       }
-      if (addressRef.current === who) {
+      if (!stale()) {
         setMissingTrustlines(missing);
       }
     }
