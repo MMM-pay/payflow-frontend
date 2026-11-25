@@ -16,7 +16,11 @@ import type { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit";
 import { config } from "./config";
 import { createWalletModules } from "./wallet-modules";
 import type { SignXdr } from "./payflow";
-import { SIGNATURE_CANCELLED_MESSAGE, translateSignatureError } from "./signature-error";
+import {
+  SIGNATURE_CANCELLED_MESSAGE,
+  isSignatureRejection,
+  translateSignatureError,
+} from "./signature-error";
 import { fundWithFriendbot, readNativeAccount, type NativeAccount } from "./account";
 import {
   clearMerchantSession,
@@ -97,6 +101,8 @@ export type AccountState =
 export interface WalletState {
   address: string | null;
   connecting: boolean;
+  /** True while a wallet modal is open or a signature request is in flight. */
+  connectingWallet: boolean;
   error: string | null;
   networkMismatch: boolean;
   walletNetwork: string | null;
@@ -104,6 +110,12 @@ export interface WalletState {
   account: AccountState;
   /** True while a Friendbot request is in flight. */
   funding: boolean;
+  /** True while a signature is pending from the wallet. */
+  signing: boolean;
+  /** Error from the most recent signing attempt, if any. */
+  signError: string | null;
+  /** True while the wallet is locked or unresponsive. */
+  locked: boolean;
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
   /** Re-reads the native balance. Safe to call after any transaction. */
@@ -150,7 +162,11 @@ export function setKitPromiseForTesting(p: Promise<StellarWalletsKit> | null) {
 export function WalletProvider({ children }: { children: ReactNode }) {
   const [address, setAddress] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [connectingWallet, setConnectingWallet] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [signing, setSigning] = useState(false);
+  const [signError, setSignError] = useState<string | null>(null);
+  const [locked, setLocked] = useState(false);
   const [walletNetwork, setWalletNetwork] = useState<string | null>(null);
   const [account, setAccount] = useState<AccountState>({ state: "loading" });
   const [funding, setFunding] = useState(false);
@@ -293,7 +309,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         applyAccountChange(detected);
       }
     } catch {
-      // Wallet extension may be closed, locked, or busy; ignore background errors
+      // Wallet extension may be closed, locked, or busy; ignore background
+      // errors but remember that the next signature may need the user to
+      // unlock the wallet first.
+      setLocked(true);
     } finally {
       syncingRef.current = false;
     }
@@ -366,7 +385,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   const connect = useCallback(async () => {
     setConnecting(true);
+    setConnectingWallet(true);
     setError(null);
+    setLocked(false);
     try {
       const kit = await getKit();
       await kit.openModal({
@@ -392,13 +413,18 @@ export function WalletProvider({ children }: { children: ReactNode }) {
             setWalletNetwork(null);
           } finally {
             setConnecting(false);
+            setConnectingWallet(false);
           }
         },
-        onClosed: () => setConnecting(false),
+        onClosed: () => {
+          setConnecting(false);
+          setConnectingWallet(false);
+        },
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not open wallet");
       setConnecting(false);
+      setConnectingWallet(false);
     }
   }, []);
 
@@ -416,60 +442,82 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     addressRef.current = null;
     setAddress(null);
     setWalletNetwork(null);
+    setSigning(false);
+    setSignError(null);
+    setLocked(false);
   }, []);
 
   const signXdr = useCallback<SignXdr>(
-    async (xdrString, description) => {
+    async (xdrString, description): Promise<string> => {
       if (!address) throw new Error("Connect a wallet first.");
-      const kit = await getKit();
-
-      // Wallet extensions can change networks without changing accounts. Read
-      // the active network immediately before signing instead of trusting the
-      // value captured when the session was restored or connected.
-      let activeNetwork: string | null = null;
+      if (networkMismatch) throw new Error("Switch your wallet to the correct network first.");
+      setSigning(true);
+      setSignError(null);
+      setLocked(false);
       try {
-        const { networkPassphrase } = await kit.getNetwork();
-        activeNetwork = networkPassphrase;
-        setWalletNetwork(networkPassphrase);
-      } catch {
-        // Preserve the established behavior for wallets without getNetwork.
-      }
-      if (
-        checkNetworkMismatch(activeNetwork) ||
-        (!activeNetwork && networkMismatch)
-      ) {
-        throw new Error("Switch your wallet to the correct network first.");
-      }
+        const kit = await getKit();
 
-      // Re-read the address before signing. If the user switched accounts
-      // in the wallet extension popup, the prepared transaction was built
-      // for the previous address. Signing it would fail verification or act
-      // on the wrong account.
-      let currentAddress: string | null = null;
-      try {
-        const res = await kit.getAddress();
-        currentAddress = res.address;
-      } catch (err) {
-        throw new Error(
-          err instanceof Error ? err.message : "Could not read address from wallet.",
-        );
-      }
+        let currentNetwork: string | null = null;
+        try {
+          const { networkPassphrase } = await kit.getNetwork();
+          currentNetwork = networkPassphrase;
+          setWalletNetwork(networkPassphrase);
+        } catch {
+          setWalletNetwork(null);
+        }
+        if (checkNetworkMismatch(currentNetwork)) {
+          throw new Error("Switch your wallet to the correct network first.");
+        }
 
-      if (shouldUpdateAddress(address, currentAddress)) {
-        applyAccountChange(currentAddress!);
-        throw new Error(ACCOUNT_CHANGED_ERROR);
-      }
+        if (description) {
+          await requestSigningConfirmation(description);
+        }
 
-      if (description) await requestSigningConfirmation(description);
+        // Re-read the address before signing. If the user switched accounts
+        // in the wallet extension popup, the prepared transaction was built
+        // for the previous address. Signing it would fail verification or act
+        // on the wrong account.
+        let currentAddress: string | null = null;
+        try {
+          const res = await kit.getAddress();
+          currentAddress = res.address;
+        } catch (err) {
+          // The wallet could not be read at all (closed, locked or busy), so
+          // surface that the user may need to unlock it.
+          setLocked(true);
+          throw new Error(
+            err instanceof Error ? err.message : "Could not read address from wallet.",
+          );
+        }
 
-      try {
+        if (shouldUpdateAddress(address, currentAddress)) {
+          applyAccountChange(currentAddress!);
+          throw new Error(ACCOUNT_CHANGED_ERROR);
+        }
+
+        // translateSignatureError always throws: it replaces a cancellation
+        // with a friendly message and rethrows anything else. A rejection is
+        // not a locked wallet, so `locked` is left alone here.
         const { signedTxXdr } = await kit.signTransaction(xdrString, {
           networkPassphrase: config.networkPassphrase,
           address,
         });
         return signedTxXdr;
       } catch (err) {
+        // Record the message callers will see, then translate the raw error so
+        // a wallet that rejects with a plain object (Albedo) is still detected.
+        setSignError(
+          isSignatureRejection(err)
+            ? SIGNATURE_CANCELLED_MESSAGE
+            : err instanceof Error
+              ? err.message
+              : String(err),
+        );
         translateSignatureError(err);
+      } finally {
+        // Every path, including a wallet rejection or an account switch, must
+        // clear the pending state or the Subscribe buttons stay disabled.
+        setSigning(false);
       }
     },
     [address, networkMismatch, applyAccountChange, requestSigningConfirmation],
@@ -508,11 +556,15 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     () => ({
       address,
       connecting,
+      connectingWallet,
       error,
       networkMismatch,
       walletNetwork,
       account,
       funding,
+      signing,
+      signError,
+      locked,
       connect,
       disconnect,
       refreshAccount,
@@ -522,13 +574,15 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     [
       address,
       connecting,
+      connectingWallet,
       error,
       networkMismatch,
       walletNetwork,
       account,
       funding,
-      fund,
-      refreshAccount,
+      signing,
+      signError,
+      locked,
       connect,
       disconnect,
       signXdr,

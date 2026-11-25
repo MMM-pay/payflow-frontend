@@ -111,7 +111,6 @@ describe("checkRoutes", () => {
 
   it("passes a route with no budget but reports it", () => {
     const [only] = checkRoutes([{ route: "/unknown", bytes: 900 * 1024 }], {
-      default: undefined,
       routes: {},
     });
     expect(only?.ok).toBe(true);

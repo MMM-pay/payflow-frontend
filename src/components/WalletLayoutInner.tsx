@@ -11,7 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { WalletButton } from "@/components/WalletButton";
 import { Activity } from "@/components/Activity";
-import { NetworkMismatchBanner } from "@/components/ui";
+import { NetworkMismatchBanner, Notice } from "@/components/ui";
 import { HeaderSearch } from "@/components/HeaderSearch";
 import {
   APP_VERSION,
@@ -116,7 +116,7 @@ function NetworkSwitcher({
  */
 export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
   const { t: tr } = useI18n();
-  const { networkMismatch, walletNetwork, address } = useWallet();
+  const { networkMismatch, walletNetwork, address, locked } = useWallet();
   const { network, networks, select } = useNetwork();
   const pathname = usePathname();
   const router = useRouter();
@@ -217,6 +217,14 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
             walletNetwork={walletNetwork}
             expectedNetwork={network.networkPassphrase}
           />
+        </div>
+      )}
+      {/* A wallet that stopped answering needs a way out, not a silent failure. */}
+      {locked && address && (
+        <div className="mx-auto max-w-5xl px-5 pt-4 print:hidden">
+          <Notice tone="info">
+            {tr("Your wallet is locked or not responding. Unlock it in your wallet and try again.")}
+          </Notice>
         </div>
       )}
       <div className="mx-auto flex min-h-screen max-w-5xl flex-col px-5 print:block print:max-w-none print:px-0">

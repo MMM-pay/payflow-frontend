@@ -101,7 +101,6 @@ const nextConfig = {
     NEXT_PUBLIC_APP_VERSION: appVersion,
     NEXT_PUBLIC_COMMIT_HASH: commitHash,
     NEXT_PUBLIC_BASE_PATH: basePath,
-    NEXT_PUBLIC_CSP_CONNECT_SRC: [...new Set(connectSources)].join(" "),
   },
 };
 

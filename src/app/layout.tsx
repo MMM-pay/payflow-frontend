@@ -1,4 +1,4 @@
-import type { Metadata, Viewport } from "next";
+import type { Metadata } from "next";
 import "./globals.css";
 import { I18nProvider } from "@/i18n/provider";
 import { WalletProvider } from "@/lib/wallet";
@@ -7,6 +7,9 @@ import { AppErrorBoundary } from "@/components/AppErrorBoundary";
 import { THEME_INIT_SCRIPT } from "@/lib/theme";
 
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+// The Content-Security-Policy is injected into the static export after the
+// build by scripts/apply-csp.mjs. Rendering it here would put the policy (and
+// the hash list computed from the inline RSC payload) inside that same payload.
 
 export const metadata: Metadata = {
   title: "Payflow — recurring payments on Stellar",

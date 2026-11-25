@@ -1,95 +1,69 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { applyCspToExport, withInlineScriptHashes } from "../scripts/csp.mjs";
+import { applyCspToExport, withCsp } from "../scripts/apply-csp.mjs";
 
-const hash = (script: string) =>
-  `'sha256-${createHash("sha256").update(script, "utf8").digest("base64")}'`;
-
-/** The RSC payload Next inlines into every page; it marks a page as exported. */
-const FLIGHT = 'self.__next_f.push([1,"1:\\"$Sreact.fragment\\""])';
-
-function page(inline: string[] = ["window.ready = true;"]) {
-  return [
-    "<!DOCTYPE html><html><head>",
-    '<meta name="theme-color" content="#0b0e14">',
-    "</head><body>",
-    '<script src="/_next/static/chunk.js"></script>',
-    ...inline.map((script) => `<script>${script}</script>`),
-    `<script>${FLIGHT}</script>`,
-    "</body></html>",
-  ].join("");
+function digest(contents: string) {
+  return createHash("sha256").update(contents, "utf8").digest("base64");
 }
 
-/** The policy the exported document declares, or null when it has none. */
-function declaredPolicy(html: string): string | null {
+function cspFrom(html: string) {
   const match = html.match(
-    /<meta http-equiv="Content-Security-Policy" content="([^"]*)">/,
+    /<meta http-equiv="Content-Security-Policy" content="([^"]+)">/,
   );
-  return match?.[1] ?? null;
+  expect(match).not.toBeNull();
+  return match?.[1] ?? "";
 }
 
 describe("static export CSP", () => {
-  it("hashes inline scripts while leaving external scripts to self", () => {
-    const html = withInlineScriptHashes(page(["window.ready = true;"]));
-    const policy = declaredPolicy(html);
+  it("hashes inline scripts and injects the policy before them", () => {
+    const inlineScript = "window.ready = true;";
+    const html = [
+      "<html><head>",
+      '<script src="/_next/static/chunk.js"></script>',
+      `<script>${inlineScript}</script>`,
+      "</head><body></body></html>",
+    ].join("");
 
-    expect(policy).toContain(`script-src 'self' ${hash("window.ready = true;")}`);
-    expect(policy).toContain("connect-src 'self'");
-    // External scripts are authorised by 'self', never by a hash of nothing.
-    expect(policy).not.toContain(hash(""));
-  });
+    const result = withCsp(html);
+    const policy = cspFrom(result);
 
-  it("injects the policy into <head> before any script runs", () => {
-    const html = withInlineScriptHashes(page());
-    expect(html.indexOf("Content-Security-Policy")).toBeLessThan(
-      html.indexOf("<script"),
+    expect(policy).toContain(`'sha256-${digest(inlineScript)}'`);
+    expect(policy).toContain("script-src 'self'");
+    expect(result).toContain(`<script>${inlineScript}</script>`);
+    expect(result.indexOf("Content-Security-Policy")).toBeLessThan(
+      result.indexOf("<script"),
     );
   });
 
-  it("leaves every hashed script byte-identical", () => {
-    // The flight payload used to contain the policy (and so the hash list)
-    // because the root layout rendered it. That made the hash self-referential
-    // and the browser blocked the script, breaking hydration on every page.
-    const html = withInlineScriptHashes(page());
+  it("does not rewrite the RSC payload that mentions the policy", () => {
+    const flightScript =
+      'self.__next_f.push([1,"policy: script-src \'self\' __PAYFLOW_SCRIPT_HASHES__"])';
+    const html = `<html><head><script>${flightScript}</script></head><body></body></html>`;
 
-    expect(html).toContain(`<script>${FLIGHT}</script>`);
-    for (const script of ["window.ready = true;", FLIGHT]) {
-      expect(declaredPolicy(html)).toContain(hash(script));
-    }
+    const result = withCsp(html);
+
+    expect(result).toContain(flightScript);
+    expect(cspFrom(result)).toContain(`'sha256-${digest(flightScript)}'`);
   });
 
-  it("rejects HTML that is not a Next export page", () => {
-    expect(() => withInlineScriptHashes("<html><head></head></html>")).toThrow(
-      "Not a Next.js export page",
-    );
+  it("replaces an existing policy instead of adding a second one", () => {
+    const html = [
+      "<html><head>",
+      '<meta http-equiv="Content-Security-Policy" content="old-policy">',
+      "<script>1</script>",
+      "</head><body></body></html>",
+    ].join("");
+
+    const result = withCsp(html);
+
+    expect(result.match(/Content-Security-Policy/g)).toHaveLength(1);
+    expect(result).not.toContain("old-policy");
+    expect(cspFrom(result)).toContain(`'sha256-${digest("1")}'`);
   });
 
-  it("stamps exported pages and skips copied fixtures", async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), "payflow-csp-"));
-    await mkdir(path.join(directory, "embed"), { recursive: true });
-    await writeFile(path.join(directory, "index.html"), page());
-    const fixture = "<!DOCTYPE html><html><head></head><body>demo</body></html>";
-    await writeFile(path.join(directory, "embed", "test.html"), fixture);
-
-    await applyCspToExport(directory);
-
-    const stampedHtml = await readFile(path.join(directory, "index.html"), "utf8");
-    const policy = declaredPolicy(stampedHtml);
-    expect(policy).toContain(hash("window.ready = true;"));
-    expect(await readFile(path.join(directory, "embed", "test.html"), "utf8")).toBe(
-      fixture,
-    );
-  });
-
-  it("fails when the export contains no page to stamp", async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), "payflow-csp-"));
-    await writeFile(path.join(directory, "test.html"), "<html><head></head></html>");
-
-    await expect(applyCspToExport(directory)).rejects.toThrow(
-      "No Next.js export pages found",
+  it("fails if the document has no head", () => {
+    expect(() => withCsp("<html></html>")).toThrow(
+      "Exported HTML is missing a <head> element.",
     );
   });
 

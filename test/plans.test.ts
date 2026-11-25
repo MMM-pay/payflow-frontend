@@ -64,6 +64,22 @@ describe("Filter and sort plans (#18)", () => {
     expect(filterAndSortPlans(all, { period: "86400" }).map((p) => p.id)).toEqual([1]);
   });
 
+  it("sorts by popularity using the reported subscriber count", () => {
+    const quiet = mockPlan({ id: 1, subscriber_count: 0 });
+    const busy = mockPlan({ id: 2, subscriber_count: 12 });
+    const mid = mockPlan({ id: 3, subscriber_count: 4 });
+    // Contract-only listings do not report a count; they sort as zero.
+    const unknown = mockPlan({ id: 4 });
+    const all = [quiet, busy, mid, unknown];
+
+    expect(filterAndSortPlans(all, { sort: "popularity_desc" }).map((p) => p.id)).toEqual([
+      2, 3, 4, 1,
+    ]);
+    expect(filterAndSortPlans(all, { sort: "popularity_asc" }).map((p) => p.id)).toEqual([
+      4, 1, 3, 2,
+    ]);
+  });
+
   it("combines filter and sort", () => {
     const pWeekly1 = mockPlan({ id: 10, amount: "30000000", period: 604_800 });
     const pWeekly2 = mockPlan({ id: 11, amount: "10000000", period: 604_800 });

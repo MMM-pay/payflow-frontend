@@ -77,12 +77,13 @@ function validatePlanNameLocal(name: string): string | null {
 
 import { OnboardingChecklist } from "@/components/OnboardingChecklist";
 import { SectionShortcuts } from "@/components/SectionShortcuts";
-import { AddressLink, Badge, Empty, Notice, Panel, SkeletonRows, Stat, TimeAgo, TxLink } from "@/components/ui";
+import { AddressLink, Badge, Empty, InlineError, Notice, Panel, SkeletonRows, Stat, TimeAgo, TxLink } from "@/components/ui";
 import { Search } from "@/components/Search";
 import { ConfirmDialog, confirmTitle } from "@/components/ConfirmDialog";
 import { observeContractRecord } from "@/lib/contract-compat";
 import { ContractVersionNotice } from "@/components/ContractVersionNotice";
 import { SyncLagIndicator } from "@/components/SyncLagIndicator";
+import { StaleDataNotice } from "@/components/StaleDataNotice";
 import { Money } from "@/components/Money";
 import { NotificationCentre } from "@/components/NotificationCentre";
 import { evaluateMerchantNotifications } from "@/lib/notifications";
@@ -1164,6 +1165,9 @@ export default function MerchantPage() {
 
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  // When the projections on this page were last received, for staleness.
+  const [lastLoadedAt, setLastLoadedAt] = useState<number | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   // Ids of mandates ticked for the "End selected" batch action.
   const [selected, setSelected] = useState<Set<number>>(new Set());
   // Whether the batch-end confirmation dialog is open.
@@ -1396,6 +1400,7 @@ export default function MerchantPage() {
 
   const load = useCallback(async () => {
     if (!address) return;
+    setRefreshing(true);
     const [p, m, s] = await Promise.all([
       api.plans(address),
       // A failed fallback read must not take the whole dashboard down with it:
@@ -2235,6 +2240,12 @@ export default function MerchantPage() {
 
       <ContractVersionNotice />
       <SyncLagIndicator />
+      <StaleDataNotice
+        fetchedAt={lastLoadedAt}
+        refreshing={refreshing}
+        onRefresh={() => { void load(); }}
+        className="mb-4"
+      />
       <NotificationCentre
         address={address}
         notifications={evaluateMerchantNotifications({

@@ -8,7 +8,7 @@
 
 ## How it was checked
 
-- [ ] `npm run lint`, `npm run typecheck` and `npm test` pass
+- [ ] `npm run check:unused`, `npm run lint`, `npm run typecheck` and `npm test` pass
 - [ ] `npm run build` succeeds
 - [ ] Checked at desktop width and at a phone width (about 375px)
 - [ ] Works with the backend switched off (the app falls back to reading the contracts)

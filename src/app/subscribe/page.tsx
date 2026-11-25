@@ -174,7 +174,7 @@ function SubscribeInner() {
   const [compareIds, setCompareIds] = useState<number[]>([]);
   const [showComparison, setShowComparison] = useState(false);
 
-  const { address, networkMismatch, signXdr } = useWallet();
+  const { address, networkMismatch, signXdr, signing } = useWallet();
   const [plans, setPlans] = useState<ApiPlan[] | null>(null);
   const [maxCharges, setMaxCharges] = useState<Record<number, string>>({});
   const [depositBusy, setDepositBusy] = useState<number | null>(null);
@@ -696,6 +696,8 @@ function SubscribeInner() {
                 <option value="price_desc">{tr("Price: High to Low")}</option>
                 <option value="period_asc">{tr("Period: Short to Long")}</option>
                 <option value="period_desc">{tr("Period: Long to Short")}</option>
+                <option value="popularity_desc">{tr("Popularity: Most subscribers")}</option>
+                <option value="popularity_asc">{tr("Popularity: Fewest subscribers")}</option>
               </select>
             </div>
 
@@ -752,6 +754,7 @@ function SubscribeInner() {
           ) : (
             <div className="grid gap-4 sm:grid-cols-2">
               {filteredPlans.map((plan) => {
+
                 const meta = metaFor(metas, plan.token);
                 const badge = trialBadge(plan);
                 const availability = planAvailability(plan, now);
@@ -910,8 +913,10 @@ function SubscribeInner() {
                               {networkMismatch
                                 ?tr("Wrong network")
                                 : address
-                                ?tr("Subscribe")
-                                :tr("Connect wallet")}
+                                  ? busy === plan.id && signing
+                                    ? tr("Signing…")
+                                    : tr("Subscribe")
+                                  : tr("Connect wallet")}
                             </LoadingButton>
                           </div>
                     </div>

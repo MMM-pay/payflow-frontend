@@ -92,6 +92,7 @@ import { ConfirmDialog, confirmTitle } from "@/components/ConfirmDialog";
 import { observeContractRecord } from "@/lib/contract-compat";
 import { ContractVersionNotice } from "@/components/ContractVersionNotice";
 import { SyncLagIndicator } from "@/components/SyncLagIndicator";
+import { StaleDataNotice } from "@/components/StaleDataNotice";
 import { Money } from "@/components/Money";
 import { NotificationCentre } from "@/components/NotificationCentre";
 import { evaluateSubscriberNotifications } from "@/lib/notifications";
@@ -99,6 +100,7 @@ import { LoadingButton } from "@/components/LoadingButton";
 import {
   Badge,
   Empty,
+  InlineError,
   MerchantAccount,
   Notice,
   Panel,
@@ -298,6 +300,9 @@ function AccountInner() {
   const [pauseError, setPauseError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  // When the projections on this page were last received, for staleness.
+  const [lastLoadedAt, setLastLoadedAt] = useState<number | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [capFor, setCapFor] = useState<number | null>(null);
   const [capAmount, setCapAmount] = useState("");
   const [capError, setCapError] = useState<string | null>(null);
@@ -390,6 +395,7 @@ function AccountInner() {
   const load = useCallback(async () => {
     addressRef.current = viewAddress;
     if (!viewAddress) return;
+    setRefreshing(true);
     const who = viewAddress;
     const [bal, res, hist] = await Promise.allSettled([
       payflow.vaultBalance(source, who, config.contracts.token),
@@ -452,6 +458,10 @@ function AccountInner() {
         setMissingTrustlines(missing);
       }
     }
+    if (addressRef.current === who) {
+      setLastLoadedAt(Date.now());
+      setRefreshing(false);
+    }
   }, [viewAddress, source, configuredTokens]);
 
   // SSE stream for live updates (payflow-backend#19)
@@ -502,6 +512,8 @@ function AccountInner() {
       setError(null);
       setDone(null);
       setExporting(false);
+      setLastLoadedAt(null);
+      setRefreshing(false);
     });
     void load();
   }, [load]);
@@ -864,13 +876,14 @@ function AccountInner() {
     try {
       setBusy(`trustline-${token.symbol}`);
       setError(null);
-      await payflow.addTrustline(
+      setDone(null);
+      const hash = await payflow.addTrustline(
         address,
         signXdr,
         token.classicAsset.code,
         token.classicAsset.issuer,
       );
-      setDone(`Added trustline for ${token.symbol}.`);
+      setDone(hash);
       await checkTrustlines();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -1339,6 +1352,12 @@ function AccountInner() {
 
       <ContractVersionNotice />
       <SyncLagIndicator />
+      <StaleDataNotice
+        fetchedAt={lastLoadedAt}
+        refreshing={refreshing}
+        onRefresh={() => { void load(); }}
+        className="mb-4"
+      />
       <NotificationCentre
         address={address}
         notifications={evaluateSubscriberNotifications({
@@ -1393,12 +1412,10 @@ function AccountInner() {
                 }
                 hideError={withdrawError !== null}
                 invalid={withdrawError !== null}
-                describedBy={withdrawError ? "withdraw-amount-error" : undefined}
+                {...(withdrawError ? { describedBy: "withdraw-amount-error" } : {})}
               />
               {withdrawError && (
-                <p id="withdraw-amount-error" role="alert" className="mt-1 text-sm text-danger">
-                  {translateMessage(withdrawError)}
-                </p>
+                <InlineError id="withdraw-amount-error">{withdrawError}</InlineError>
               )}
             </div>
             <button

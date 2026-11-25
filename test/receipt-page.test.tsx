@@ -231,9 +231,9 @@ describe("receipt charge fields (#388)", () => {
 
     // Transaction proof carries the full and shortened hash, plus the explorer link.
     expect(text).toContain(`Hash: ${TX}`);
-    expect(screen.getByText("012345…abcdef")).toBeTruthy();
+    expect(screen.getByText("01234567…89abcdef")).toBeTruthy();
     expect(
-      screen.getByText("012345…abcdef").closest("a")?.getAttribute("href"),
+      screen.getByText("01234567…89abcdef").closest("a")?.getAttribute("href"),
     ).toContain(`/tx/${TX}`);
     expect(text).toContain(
       "Settled permissionlessly on Stellar via Payflow recurring mandate.",

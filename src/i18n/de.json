@@ -443,6 +443,8 @@
   "Plan comparison": "Angebotsvergleich",
   "Plan comparison, scroll horizontally if needed": "Angebotsvergleich, bei Bedarf horizontal scrollen",
   "Plan name": "Angebotsname",
+  "Popularity: Fewest subscribers": "Beliebtheit: wenigste Abonnenten",
+  "Popularity: Most subscribers": "Beliebtheit: meisten Abonnenten",
   "Plan registry": "Angebotsregister",
   "Plans": "Angebote",
   "Plans published by this merchant. Subscribing opens a mandate; fund your vault on the": "Von diesem Händler veröffentlichte Angebote. Beim Abonnieren wird ein Mandat geöffnet; füllen Sie Ihren Tresor auf der",
@@ -651,6 +653,7 @@
   "Your signature creates permission to collect the plan price on each billing date. You do not need to sign every charge.": "Ihre Signatur erteilt die Erlaubnis, den Angebotspreis an jedem Abrechnungstag einzuziehen. Sie müssen nicht jede Zahlung signieren.",
   "Your vault is short by": "Ihrem Tresor fehlen",
   "Your wallet is connected to a different network than this app. Switch to": "Ihre Wallet ist mit einem anderen Netzwerk als diese App verbunden. Wechseln Sie zu",
+  "Your wallet is locked or not responding. Unlock it in your wallet and try again.": "Ihre Wallet ist gesperrt oder reagiert nicht. Entsperren Sie sie in Ihrer Wallet und versuchen Sie es erneut.",
   "account page": "Kontoseite",
   "active plan": "aktives Paket",
   "address": "Adresse",
@@ -867,5 +870,6 @@
   "Technical details": "Technische Details",
   "Try again": "Erneut versuchen",
   "We couldn't load this page.": "Diese Seite konnte nicht geladen werden.",
-  "Your payment settings are safe. Try again, or reload the page.": "Deine Zahlungseinstellungen sind sicher. Versuche es erneut oder lade die Seite neu."
+  "Your payment settings are safe. Try again, or reload the page.": "Deine Zahlungseinstellungen sind sicher. Versuche es erneut oder lade die Seite neu.",
+  "View transaction {0} on the Stellar explorer (opens in a new tab)": "Transaktion {0} im Stellar Explorer ansehen (öffnet in einem neuen Tab)"
 }
