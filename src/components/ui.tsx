@@ -267,7 +267,7 @@ export function Empty({
   const { t: tr } = useI18n();
   return (
     <div className="rounded-lg border border-dashed border-edge px-4 py-8 text-center">
-      {title && <p className="text-sm font-medium text-slate-200">{tr(title)}</p>}
+      {title && <p className="text-sm font-medium text-soft">{tr(title)}</p>}
       <p className={`mx-auto max-w-prose text-sm text-muted ${title ? "mt-1" : ""}`}>
         {children}
       </p>

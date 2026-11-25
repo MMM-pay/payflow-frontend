@@ -30,11 +30,13 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   );
 }
 
+// State is carried by the badge's text as well as its colour, and every colour
+// comes from a theme token so both palettes stay legible.
 const STATE_STYLES: Record<CheckState, string> = {
   ok: "border-accent/40 bg-accent/10 text-accent",
-  degraded: "border-amber-500/40 bg-amber-500/10 text-amber-300",
-  down: "border-rose-500/40 bg-rose-500/10 text-rose-300",
-  skipped: "border-edge bg-white/5 text-muted",
+  degraded: "border-warn/40 bg-warn/10 text-warn",
+  down: "border-danger/40 bg-danger/10 text-danger",
+  skipped: "border-edge bg-fg/5 text-muted",
 };
 
 /** A text-labelled badge; the state is never carried by colour alone. */
@@ -167,7 +169,7 @@ export default function StatusPage() {
                     {indexer.network && <Row label="Network">{indexer.network}</Row>}
                     {indexer.paused && (
                       <Row label="Paused">
-                        <span className="text-amber-300">indexing paused by an operator</span>
+                        <span className="text-warn">indexing paused by an operator</span>
                       </Row>
                     )}
                   </dl>

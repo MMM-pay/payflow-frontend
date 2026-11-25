@@ -1776,7 +1776,7 @@ function AccountInner() {
                         Close
                       </button>
                       {capError && (
-                        <p className="w-full text-xs text-rose-300" role="alert">
+                        <p className="w-full text-xs text-danger" role="alert">
                           {capError}
                         </p>
                       )}

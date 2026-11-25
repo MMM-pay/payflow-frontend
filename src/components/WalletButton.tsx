@@ -91,7 +91,7 @@ function BalanceLabel({
   }
   if (account.state === "error") {
     return (
-      <span className="text-xs text-amber-300" title={account.message}>
+      <span className="text-xs text-warn" title={account.message}>
         Balance unavailable
       </span>
     );
@@ -100,7 +100,7 @@ function BalanceLabel({
     // The Fund button next to this says the same thing, so the label is only
     // worth the width where there is room for both.
     return (
-      <span className="hidden text-xs text-amber-300 sm:inline" aria-hidden="true">
+      <span className="hidden text-xs text-warn sm:inline" aria-hidden="true">
         Account not funded
       </span>
     );

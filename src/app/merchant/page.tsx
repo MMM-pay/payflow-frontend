@@ -2035,7 +2035,7 @@ export default function MerchantPage() {
                 </div>
               </div>
               {periodError && (
-                <p id="period-error" className="mt-2 text-sm text-rose-200">
+                <p id="period-error" className="mt-2 text-sm text-danger">
                   {translateMessage(periodError)}
                 </p>
               )}
@@ -2218,9 +2218,9 @@ export default function MerchantPage() {
                         role="status"
                       >
                         <span className="sr-only">{tr("Loading plan stats…")}</span>
-                        <span className="h-4 w-20 rounded bg-white/10 motion-safe:animate-pulse" aria-hidden="true" />
-                        <span className="h-4 w-24 rounded bg-white/10 motion-safe:animate-pulse" aria-hidden="true" />
-                        <span className="h-4 w-20 rounded bg-white/10 motion-safe:animate-pulse" aria-hidden="true" />
+                        <span className="h-4 w-20 rounded bg-fg/10 motion-safe:animate-pulse" aria-hidden="true" />
+                        <span className="h-4 w-24 rounded bg-fg/10 motion-safe:animate-pulse" aria-hidden="true" />
+                        <span className="h-4 w-20 rounded bg-fg/10 motion-safe:animate-pulse" aria-hidden="true" />
                       </div>
                     ) : stats ? (
                       <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
@@ -2252,11 +2252,11 @@ export default function MerchantPage() {
                   </div>
                   {confirmDeactivate === p.id ? (
                     <div
-                      className="w-full mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm"
+                      className="w-full mt-3 rounded-lg border border-warn/40 bg-warn/10 p-3 text-sm"
                       role="alert"
                       aria-live="polite"
                     >
-                      <div className="font-medium text-amber-200">{tr("Confirm plan deactivation")}</div>
+                      <div className="font-medium text-warn">{tr("Confirm plan deactivation")}</div>
                       <p className="mt-1 text-xs text-muted">{tr("This plan has")}{" "}
                         <strong className="text-foreground font-semibold">
                           {openCount === 1 ?tr("1 open subscription") :tr("{0} open subscriptions", { "0": openCount })}
@@ -2434,7 +2434,7 @@ export default function MerchantPage() {
                 id="subscribers-all-tab"
                 className={`px-3 py-1.5 text-sm font-medium transition-colors rounded-l-lg ${
                   subscribersTab === "all"
-                    ? "bg-accent text-white"
+                    ? "bg-accent text-ink"
                     : "text-muted hover:text-fg"
                 }`}
                 onClick={() => setSubscribersTab("all")}
@@ -2447,12 +2447,12 @@ export default function MerchantPage() {
                 id="subscribers-unpaid-tab"
                 className={`px-3 py-1.5 text-sm font-medium transition-colors rounded-r-lg ${
                   subscribersTab === "unpaid"
-                    ? "bg-accent text-white"
+                    ? "bg-accent text-ink"
                     : "text-muted hover:text-fg"
                 }`}
                 onClick={() => setSubscribersTab("unpaid")}
               >{tr("Unpaid")}{unpaidMandates && unpaidMandates.length > 0 && (
-                  <span className="ml-1.5 rounded-full bg-danger px-1.5 py-0.5 text-xs font-semibold text-white">
+                  <span className="ml-1.5 rounded-full bg-danger-solid px-1.5 py-0.5 text-xs font-semibold text-white">
                     {formatNumber(unpaidMandates.length)}
                   </span>
                 )}

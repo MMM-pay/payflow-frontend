@@ -79,7 +79,7 @@ function ReceiptContent() {
         <div className="flex items-center justify-between print:hidden">
           <Link
             href="/"
-            className="text-sm text-muted transition hover:text-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            className="text-sm text-muted transition hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
           >{tr("← Back to overview")}</Link>
         </div>
 
@@ -91,7 +91,7 @@ function ReceiptContent() {
         </Notice>
 
         <p className="text-xs text-muted">{tr("A receipt requires both a transaction hash and mandate ID in the URL, for example:")}{" "}
-          <code className="rounded bg-white/10 px-1.5 py-0.5">
+          <code className="rounded bg-fg/10 px-1.5 py-0.5">
             /receipt/?tx=abc…&mandate=1
           </code>
         </p>
@@ -109,7 +109,7 @@ function ReceiptContent() {
       <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
         <Link
           href="/"
-          className="text-sm text-muted transition hover:text-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          className="text-sm text-muted transition hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         >{tr("← Back to overview")}</Link>
         <button
           type="button"
@@ -139,7 +139,7 @@ function ReceiptContent() {
       {!apiAvailable && (
         <div className="print:hidden">
           <Notice tone="info">
-            <span className="font-medium text-slate-200">{tr("Contract-only mode:")}</span>{" "}{tr("Detailed historical charge logs require the indexer API (")}<code className="text-xs">NEXT_PUBLIC_API_URL</code>{tr("). Because the API is unreachable, this receipt is constructed from on-chain mandate state. You can verify the transaction directly on the Stellar explorer below.")}</Notice>
+            <span className="font-medium text-soft">{tr("Contract-only mode:")}</span>{" "}{tr("Detailed historical charge logs require the indexer API (")}<code className="text-xs">NEXT_PUBLIC_API_URL</code>{tr("). Because the API is unreachable, this receipt is constructed from on-chain mandate state. You can verify the transaction directly on the Stellar explorer below.")}</Notice>
         </div>
       )}
 
@@ -206,14 +206,14 @@ function ReceiptContent() {
 
           <div className="space-y-0.5">
             <span className="label print:text-slate-500 print:mb-0.5">{tr("Billing frequency")}</span>
-            <div className="font-medium text-slate-200 print:text-black">
+            <div className="font-medium text-soft print:text-black">
               {formatPeriod(receipt.period)}
             </div>
           </div>
 
           <div className="space-y-0.5">
             <span className="label print:text-slate-500 print:mb-0.5">{tr("Charge sequence")}</span>
-            <div className="font-medium text-slate-200 print:text-black">
+            <div className="font-medium text-soft print:text-black">
               {receipt.chargeNumber !== null
                 ? receipt.totalCharges
                   ?tr("Charge {0} of {1}", { "0": receipt.chargeNumber, "1": receipt.totalCharges })
@@ -238,7 +238,7 @@ function ReceiptContent() {
               <tr>
                 <td className="py-2.5 text-muted print:text-slate-700">{tr("Subscription charge (Mandate #")}{receipt.mandateId})
                 </td>
-                <td className="py-2.5 text-right font-mono text-slate-200 print:text-black tabular-nums">
+                <td className="py-2.5 text-right font-mono text-soft print:text-black tabular-nums">
                   {grossFormatted}
                 </td>
               </tr>
@@ -270,16 +270,16 @@ function ReceiptContent() {
         <footer className="border-t border-edge pt-4 text-xs text-muted print:border-slate-300 print:pt-3 print:text-slate-600">
           <div className="space-y-1.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="font-medium text-slate-300 print:text-slate-700">{tr("Transaction proof:")}</span>
+              <span className="font-medium text-soft print:text-slate-700">{tr("Transaction proof:")}</span>
               <div className="print:hidden">
                 <TxLink hash={receipt.txHash} />
               </div>
             </div>
             <div className="hidden font-mono text-[11px] break-all print:block print:text-black">{tr("Hash:")}{" "}{receipt.txHash}
             </div>
-            <div className="hidden text-[10px] text-slate-500 break-all print:block">{tr("Verify: https://stellar.expert/explorer/testnet/tx/")}{receipt.txHash}
+            <div className="hidden text-[10px] text-muted break-all print:block">{tr("Verify: https://stellar.expert/explorer/testnet/tx/")}{receipt.txHash}
             </div>
-            <p className="text-[11px] text-muted/80 print:text-slate-500">{tr("Settled permissionlessly on Stellar via Payflow recurring mandate. Funds debited directly from subscriber vault.")}</p>
+            <p className="text-[11px] text-muted print:text-slate-500">{tr("Settled permissionlessly on Stellar via Payflow recurring mandate. Funds debited directly from subscriber vault.")}</p>
           </div>
         </footer>
       </article>

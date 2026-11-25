@@ -760,7 +760,7 @@ function SubscribeInner() {
                             <div className="rounded-lg border border-edge bg-surface/40 p-2 text-xs space-y-1">
                               <div className="flex items-center justify-between font-medium">
                                 <span className="text-muted">{tr("Guided Flow")}</span>
-                                <span className={funded ? "text-emerald-500 font-semibold" : "text-amber-500 font-semibold"}>
+                                <span className={funded ? "text-accent font-semibold" : "text-warn font-semibold"}>
                                   {funded ? tr("Step 2: Ready to Subscribe") : tr("Step 1: Fund Vault First")}
                                 </span>
                               </div>
