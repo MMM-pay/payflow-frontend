@@ -36,7 +36,7 @@ const PaginationControl = lazy(() =>
 import { cursorPage, TABLE_PAGE_SIZE } from "@/lib/pagination";
 
 function MandateDetailsInner() {
-  const { t: tr, formatPeriod, formatDate, formatAmount, translateMessage, formatTokenValue, formatNumber } = useI18n();
+  const { t: tr, formatPeriod, formatDate, formatWhen, formatAmount, translateMessage, formatTokenValue, formatNumber } = useI18n();
   const searchParams = useSearchParams();
   const idParam = searchParams?.get("id");
   const mandateId =
@@ -258,7 +258,7 @@ function MandateDetailsInner() {
         <Stat
           label={tr("Next charge")}
           value={!isTerminal && mandate.next_charge > 0 ? formatDate(mandate.next_charge) : tr("None")}
-          hint={isDue ?tr("Due now") : !isTerminal ?tr("Scheduled") :tr("Terminal")}
+          hint={isDue ?tr("Due now") : !isTerminal ? (mandate.next_charge > 0 ? formatWhen(mandate.next_charge) : tr("Scheduled")) :tr("Terminal")}
         />
         <Stat
           label={tr("Protocol fee")}
