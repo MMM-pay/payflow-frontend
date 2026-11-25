@@ -49,3 +49,9 @@ The `E2E test wallet` module is compiled in only when
 `NEXT_PUBLIC_E2E_WALLET=1` (see `src/lib/wallet-modules.ts`); it signs with the
 key the test injects before the app boots, and reports itself unavailable when
 none was injected.
+
+The exported CSP is disabled for this build (`NEXT_PUBLIC_DISABLE_CSP=1`). Its
+inline hashes are self-referential — Next serialises the policy into the flight
+payload, so hashing the payload changes the hash that authorises it and blocks
+hydration. This job asserts the contract flow, not the CSP, which has its own
+tests.

@@ -41,6 +41,14 @@ export async function applyCspToExport(directory = "out") {
     throw new Error(`No exported HTML files found in ${directory}.`);
   }
 
+  // Builds that opt out of the meta policy (visual regression, local E2E) must
+  // also skip stamping: there is no marker to replace, and failing here would
+  // turn a deliberate opt-out into a broken build.
+  if (process.env.NEXT_PUBLIC_DISABLE_CSP === "1") {
+    console.log("CSP disabled for this build; skipping inline script hashes.");
+    return;
+  }
+
   // Static fixtures copied into the export (embed/test.html) are not rendered
   // through the root layout, so they carry no marker; skip those. If nothing
   // carries the marker, the layout lost its CSP tag and the build must fail.
