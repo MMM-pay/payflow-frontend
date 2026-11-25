@@ -1,4 +1,4 @@
-# Contributing to the Payflow Frontend
+# Contributing to the Payflow Frontend 
 
 ## Setup
 

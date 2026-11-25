@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { withInlineScriptHashes } from "../scripts/apply-csp.mjs";
+import { applyCspToExport, withInlineScriptHashes } from "../scripts/apply-csp.mjs";
 
 describe("static export CSP", () => {
   it("hashes inline scripts while leaving external scripts to self", () => {
@@ -21,5 +21,16 @@ describe("static export CSP", () => {
     expect(() => withInlineScriptHashes("<html></html>")).toThrow(
       "CSP hash marker was not found in exported HTML.",
     );
+  });
+
+  it("skips hash injection when CSP is disabled for a test build", async () => {
+    const previous = process.env.NEXT_PUBLIC_DISABLE_CSP;
+    process.env.NEXT_PUBLIC_DISABLE_CSP = "1";
+    try {
+      await expect(applyCspToExport("/nonexistent-test-export")).resolves.toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env.NEXT_PUBLIC_DISABLE_CSP;
+      else process.env.NEXT_PUBLIC_DISABLE_CSP = previous;
+    }
   });
 });

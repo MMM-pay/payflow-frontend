@@ -2,11 +2,12 @@
 
 import { useI18n } from "@/i18n/provider";
 
-import { useEffect, useId, useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { CopyButton } from "@/components/CopyButton";
 import { explorerBase } from "@/lib/config";
 import{ shortAddress } from "@/lib/format";
+import { LABEL_MAX_LENGTH, saveLabel, useAddressLabel } from "@/lib/labels";
 import { useOrgName } from "@/lib/toml";
 
 export function Panel({
@@ -145,6 +146,14 @@ export function Badge({ status }: { status: string }) {
   );
 }
 
+/**
+ * An address with an optional label the reader gave it.
+ *
+ * The label lives only in this browser (see `lib/labels`), so it works with
+ * no backend and is never shared. The pencil exposes a small inline form;
+ * labels are edited in place rather than on a separate settings page so the
+ * reader can name an address exactly where they were confused by it.
+ */
 export function AddressLink({
   value,
   kind = "account",
@@ -160,18 +169,137 @@ export function AddressLink({
   base?: string;
 }) {
   const { t: tr } = useI18n();
+  const label = useAddressLabel(value);
+  const inputId = useId();
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [writeFailed, setWriteFailed] = useState(false);
+  const noun = kind === "contract" ? tr("contract") : tr("address");
+
+  useEffect(() => {
+    if (editing) inputRef.current?.focus();
+  }, [editing]);
+
+  function startEditing() {
+    setDraft(label ?? "");
+    setWriteFailed(false);
+    setEditing(true);
+  }
+
+  function commit(raw: string) {
+    const result = saveLabel(value, raw);
+    if (!result.ok) {
+      // Storage is blocked: keep the form open and say so rather than
+      // silently discarding what was typed.
+      setWriteFailed(true);
+      return;
+    }
+    setWriteFailed(false);
+    setEditing(false);
+  }
+
   return (
-    <span className="inline-flex max-w-full items-center gap-1 align-middle">
-      <a
-        href={`${base}/${kind}/${value}`}
-        target="_blank"
-        rel="noreferrer"
-        className="mono truncate text-muted underline-offset-2 hover:text-accent hover:underline"
-        title={value}
-      >
-        {shortAddress(value, 6)}
-      </a>
-      <CopyButton value={value} label={kind === "contract" ?tr("contract address") :tr("address")} />
+    <span className="inline-flex max-w-full flex-col align-middle">
+      <span className="inline-flex max-w-full flex-wrap items-center gap-1">
+        {label && (
+          <span className="max-w-full truncate font-medium" title={label}>
+            {label}
+            <span className="sr-only">
+              {" "}
+              {kind === "contract"
+                ? tr("Your label for this contract")
+                : tr("Your label for this address")}
+            </span>
+          </span>
+        )}
+        <a
+          href={`${base}/${kind}/${value}`}
+          target="_blank"
+          rel="noreferrer"
+          className="mono truncate text-muted underline-offset-2 hover:text-accent hover:underline"
+          title={value}
+        >
+          {shortAddress(value, 6)}
+        </a>
+        <CopyButton value={value} label={kind === "contract" ?tr("contract address") :tr("address")} />
+        <button
+          type="button"
+          onClick={startEditing}
+          aria-expanded={editing}
+          aria-label={
+            label
+              ? tr("Edit your label for {address}", { address: value })
+              : tr("Add a label for {address}", { address: value })
+          }
+          title={label ? tr("Edit label") : tr("Add a label")}
+          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted transition hover:bg-fg/10 hover:text-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="h-3.5 w-3.5"
+            aria-hidden="true"
+          >
+            <path d="M12 20h9" />
+            <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+          </svg>
+        </button>
+      </span>
+      {editing && (
+        <form
+          className="mt-1 flex max-w-full flex-wrap items-center gap-1"
+          onSubmit={(event) => {
+            event.preventDefault();
+            commit(draft);
+          }}
+        >
+          <label className="sr-only" htmlFor={inputId}>
+            {tr("Label for {address}", { address: value })}
+          </label>
+          <input
+            id={inputId}
+            ref={inputRef}
+            className="input h-8 w-40 max-w-full py-1 text-xs"
+            value={draft}
+            maxLength={LABEL_MAX_LENGTH}
+            onChange={(event) => setDraft(event.target.value)}
+            placeholder={tr("e.g. Alice")}
+            autoComplete="off"
+          />
+          <button type="submit" className="btn-ghost px-2 py-1 text-xs">
+            {tr("Save")}
+          </button>
+          {label && (
+            <button
+              type="button"
+              className="btn-ghost px-2 py-1 text-xs"
+              onClick={() => commit("")}
+            >
+              {tr("Remove")}
+            </button>
+          )}
+          <button
+            type="button"
+            className="btn-ghost px-2 py-1 text-xs"
+            onClick={() => {
+              setEditing(false);
+              setWriteFailed(false);
+            }}
+          >
+            {tr("Cancel")}
+          </button>
+          {writeFailed && (
+            <span role="status" className="text-xs text-danger">
+              {tr("This browser is not allowing labels to be saved.")}
+            </span>
+          )}
+        </form>
+      )}
     </span>
   );
 }
@@ -330,7 +458,9 @@ const DIALOG_TABABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 function tabbableWithin(root: HTMLElement): HTMLElement[] {
-  return Array.from(root.querySelectorAll<HTMLElement>(DIALOG_TABABLE));
+  return Array.from(root.querySelectorAll<HTMLElement>(DIALOG_TABABLE)).filter(
+    (el) => !el.closest('[hidden], [aria-hidden="true"], fieldset[disabled]'),
+  );
 }
 
 /**
@@ -359,6 +489,7 @@ export function Dialog({
 }) {
   const { t: tr } = useI18n();
   const titleId = useId();
+  const bodyId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   // The handler is read through a ref so that an inline `onClose={() => …}` —
   // the natural way to call this — cannot re-run the effect below. A dialog
@@ -378,6 +509,8 @@ export function Dialog({
     const root: HTMLElement = panel;
 
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
 
     // Focus the panel rather than its first control, so a reader hears the
     // title before any button — and so a dialog that only shows text still
@@ -396,6 +529,11 @@ export function Dialog({
       // order: the panel is focusable but deliberately not a tab stop, so it
       // has to count as the seat before the first control and after the last.
       const tabbable = tabbableWithin(root);
+      event.preventDefault();
+      if (tabbable.length === 0) {
+        root.focus();
+        return;
+      }
       const active = document.activeElement;
       // -1 is the panel itself, or a control the browser moved focus to that
       // is not in the ring; either way the next stop is the end it is heading
@@ -409,7 +547,6 @@ export function Dialog({
           ? 0
           : (index + 1) % tabbable.length;
 
-      event.preventDefault();
       tabbable[at]?.focus();
     }
 
@@ -426,6 +563,7 @@ export function Dialog({
     return () => {
       document.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("focusin", onFocusIn);
+      document.body.style.overflow = previousOverflow;
       // Hand focus back to the control that opened the dialog, otherwise a
       // keyboard user dismissing it is dropped at the top of the document.
       // An opener the parent removed while the dialog was open is skipped
@@ -437,12 +575,26 @@ export function Dialog({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 sm:items-center">
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 sm:items-center"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          // Prevent clicking the backdrop from moving focus to document.body.
+          event.preventDefault();
+        }
+      }}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) {
+          onCloseRef.current();
+        }
+      }}
+    >
       <div
         ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        aria-describedby={bodyId}
         tabIndex={-1}
         className="panel max-h-full w-full max-w-lg overflow-y-auto"
       >
@@ -469,7 +621,7 @@ export function Dialog({
             </svg>
           </button>
         </div>
-        <div className="text-sm">{children}</div>
+        <div id={bodyId} className="text-sm">{children}</div>
         {actions && <div className="mt-4 flex flex-wrap justify-end gap-2">{actions}</div>}
       </div>
     </div>

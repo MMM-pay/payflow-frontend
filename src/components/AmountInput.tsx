@@ -12,9 +12,10 @@ import { canonicalAmount, normaliseAmountInput } from "@/lib/format";
  * accepts `1234.5`, so this field takes what their keyboard produces —
  * `1,234.5`, `1.234,5`, `1,5` — and all of them parse to the same bigint
  * stroops through `parseAmount` at submit time. While typing, the field is
- * filtered to digits plus at most one separator; a fraction longer than the
- * token's decimals stays visible and is reported as an error rather than
- * silently truncated, because dropping digits changes the amount.
+ * filtered to an optional leading minus, digits plus at most one separator;
+ * a negative, a fraction longer than the token's decimals, or an amount above
+ * the contract's `i128` maximum stays visible and is reported as an error
+ * rather than silently changed, because altering digits changes the amount.
  *
  * The parent page owns the raw string state and reads the bigint back with
  * `parseAmount(value, decimals)` (or `checkAmount`) when the user submits.
@@ -30,6 +31,7 @@ export function AmountInput({
   hint,
   hideError = false,
   describedBy,
+  invalid = false,
   onBlur,
 }: {
   id: string;
@@ -51,6 +53,8 @@ export function AmountInput({
   hideError?: boolean;
   /** Extra id for `aria-describedby`, e.g. the form's own message element. */
   describedBy?: string;
+  /** External validation error flag (e.g. balance check in the parent form). */
+  invalid?: boolean;
   onBlur?: () => void;
 }) {
   const { locale, amountError, t: tr, translateMessage } = useI18n();
@@ -61,7 +65,7 @@ export function AmountInput({
     previousLocale.current = locale;
     // Keep the exact amount while changing its decimal mark. Do not alter invalid drafts.
     if (canonical !== null) {
-      const next = locale === "fr" ? canonical.replace(".", ",") : canonical;
+      const next = locale === "fr" || locale === "de" ? canonical.replace(".", ",") : canonical;
       if (next !== value) onChange(next);
     }
   }, [locale, value, onChange]);
@@ -89,7 +93,7 @@ export function AmountInput({
         placeholder={placeholder}
         value={value}
         disabled={disabled}
-        aria-invalid={message ? true : undefined}
+        aria-invalid={invalid || Boolean(message) || undefined}
         aria-describedby={described || undefined}
         onChange={(e) => onChange(normaliseAmountInput(e.target.value))}
         onBlur={onBlur}
@@ -100,7 +104,7 @@ export function AmountInput({
         </p>
       )}
       {!hideError && message && (
-        <p id={errorId} className="mt-1 text-sm text-danger">
+        <p id={errorId} role="alert" className="mt-1 text-sm text-danger">
           {translateMessage(message)}
         </p>
       )}

@@ -377,7 +377,7 @@ function SubscribeInner() {
     }
     const cap = checkChargeLimit(maxCharges[plan.id]);
     if (!cap.ok) {
-      setError(cap.message);
+      document.getElementById(`limit-${plan.id}`)?.focus();
       return;
     }
     setError(null);
@@ -413,11 +413,11 @@ function SubscribeInner() {
     try {
       const hash = await payflow.deposit(
         address,
-        async (xdr) => {
+        async (xdr, description) => {
           if (walletState.current.address !== address || walletState.current.networkMismatch) {
             throw new Error(tr("Wallet changed. Check your wallet and try again."));
           }
-          return signXdr(xdr);
+          return signXdr(xdr, description);
         },
         plan.token,
         amount,
@@ -461,13 +461,13 @@ function SubscribeInner() {
       if (reason) throw new Error(reason);
       const hash = await payflow.subscribe(
         address,
-        async (xdr) => {
+        async (xdr, description) => {
           if (walletState.current.address !== address || walletState.current.networkMismatch) {
             throw new Error(tr("Wallet changed. Check your wallet and try again."));
           }
           const closed = planAvailability(latest).reason;
           if (closed) throw new Error(closed);
-          return signXdr(xdr);
+          return signXdr(xdr, description);
         },
         plan.id,
         limit,
@@ -760,13 +760,19 @@ function SubscribeInner() {
                       ? formatUsdString(formatUsdcEstimate(plan.amount, meta.decimals))
                       : null;
                 const selectedForCompare = compareIds.includes(plan.id);
+                const cap = checkChargeLimit(maxCharges[plan.id]);
+                const currentBal = vaultBalances[plan.token] ?? 0n;
+                const periods = cap.ok && cap.limit > 0 ? cap.limit : 3;
+                const required = BigInt(plan.amount) * BigInt(periods);
+                const funded = currentBal >= required;
                 return (
                   <Panel
                     key={plan.id}
                     title={plan.name ||tr("Plan #{0}", { "0": plan.id })}
                     actions={
-                      <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg px-1 py-1 text-sm text-muted">
+                      <label htmlFor={`compare-plan-${plan.id}`} className="inline-flex cursor-pointer items-center gap-2 rounded-lg px-1 py-1 text-sm text-muted">
                         <input
+                          id={`compare-plan-${plan.id}`}
                           type="checkbox"
                           className="h-4 w-4 accent-accent"
                           checked={selectedForCompare}
@@ -842,17 +848,17 @@ function SubscribeInner() {
                           onChange={(e) =>
                             setMaxCharges((m) => ({ ...m, [plan.id]: e.target.value }))
                           }
+                          aria-invalid={!cap.ok || undefined}
+                          aria-describedby={!cap.ok ? `limit-error-${plan.id}` : undefined}
                         />
+                        {!cap.ok && (
+                          <p id={`limit-error-${plan.id}`} role="alert" className="mt-1 text-sm text-danger">
+                            {translateMessage(cap.message)}
+                          </p>
+                        )}
                       </div>
 
-                      {(() => {
-                        const currentBal = vaultBalances[plan.token] ?? 0n;
-                        const cap = checkChargeLimit(maxCharges[plan.id]);
-                        const periods = cap.ok && cap.limit > 0 ? cap.limit : 3;
-                        const required = BigInt(plan.amount) * BigInt(periods);
-                        const funded = currentBal >= required;
-                        return (
-                          <div className="space-y-2">
+                      <div className="space-y-2">
                             <div className="rounded-lg border border-edge bg-surface/40 p-2 text-xs space-y-1">
                               <div className="flex items-center justify-between font-medium">
                                 <span className="text-muted">{tr("Guided Flow")}</span>
@@ -898,8 +904,6 @@ function SubscribeInner() {
                                 :tr("Connect wallet")}
                             </LoadingButton>
                           </div>
-                        );
-                      })()}
                     </div>
                   </Panel>
                 );

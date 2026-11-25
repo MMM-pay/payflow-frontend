@@ -20,7 +20,10 @@ import { observeUnknownContractError } from "./contract-compat";
 export { mandateStatus };
 
 /** Signs a transaction XDR and returns the signed XDR. Supplied by the wallet. */
-export type SignXdr = (xdrString: string) => Promise<string>;
+export type SignXdr = (
+  xdrString: string,
+  description?: string,
+) => Promise<string>;
 
 /**
  * Maps the contracterror codes from payflow-contract onto readable text.

@@ -148,7 +148,7 @@ export interface MerchantSessionDeps {
   /** The merchant account the token is minted for. */
   address: string;
   /** Signs the challenge transaction XDR; the wallet context's `signXdr`. */
-  signXdr: (xdr: string) => Promise<string>;
+  signXdr: (xdr: string, description?: string) => Promise<string>;
   /** Backend base URL; `config.apiUrl` in production. */
   apiUrl: string;
   /** Passphrase the challenge must be built for; `config.networkPassphrase`. */
@@ -269,7 +269,10 @@ export async function getMerchantToken(
 
   let signedXdr: string;
   try {
-    signedXdr = await deps.signXdr(challenge.transaction);
+    signedXdr = await deps.signXdr(
+      challenge.transaction,
+      "authenticate this merchant session with your wallet",
+    );
   } catch {
     // User cancelled, account changed, or the wallet is on the wrong network.
     // Do not cache: a retry may succeed once the wallet is in the right state.

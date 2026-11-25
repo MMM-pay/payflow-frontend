@@ -1,34 +1,34 @@
 import { describe, expect, it } from "vitest";
-import { catalogueLink, planParam, subscribeLink } from "@/lib/share";
+import { catalogueLink, planLink, planParam } from "@/lib/share";
 
 /**
- * The link a merchant sends to a customer (issue #19). Two things have to be
- * right or the link is useless: it has to name the plan, and it has to carry
- * the base path the static export is served from — on GitHub Pages the app
- * lives under `/payflow-frontend`, and a link without it 404s.
+ * The link a merchant sends to a customer (issues #19 and #305). Two things
+ * have to be right or the link is useless: it has to name the plan, and it has
+ * to carry the base path the static export is served from — on GitHub Pages the
+ * app lives under `/payflow-frontend`, and a link without it 404s.
  */
 
-describe("subscribeLink", () => {
-  it("points at one plan on the subscribe page", () => {
-    expect(subscribeLink("https://mmm-pay.github.io", 12, "")).toBe(
-      "https://mmm-pay.github.io/subscribe/?plan=12",
+describe("planLink", () => {
+  it("points at the plan's own route", () => {
+    expect(planLink("https://mmm-pay.github.io", 12, "")).toBe(
+      "https://mmm-pay.github.io/plans/12/",
     );
   });
 
   it("carries the base path of the static export", () => {
-    expect(subscribeLink("https://mmm-pay.github.io", 12, "/payflow-frontend")).toBe(
-      "https://mmm-pay.github.io/payflow-frontend/subscribe/?plan=12",
+    expect(planLink("https://mmm-pay.github.io", 12, "/payflow-frontend")).toBe(
+      "https://mmm-pay.github.io/payflow-frontend/plans/12/",
     );
   });
 
   it("does not double up the slashes", () => {
-    expect(subscribeLink("https://example.com/", 3, "/app/")).toBe(
-      "https://example.com/app/subscribe/?plan=3",
+    expect(planLink("https://example.com/", 3, "/app/")).toBe(
+      "https://example.com/app/plans/3/",
     );
   });
 
   it("takes a bigint plan id", () => {
-    expect(subscribeLink("https://example.com", 12n, "")).toContain("plan=12");
+    expect(planLink("https://example.com", 12n, "")).toContain("/plans/12/");
   });
 });
 

@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { Activity } from "@/components/Activity";
+import { useStream } from "@/lib/stream";
 
 const wallet = vi.hoisted(() => ({
   address: "G-A" as string | null,
@@ -13,6 +14,7 @@ const apiMock = vi.hoisted(() => ({
   mandatesOf: vi.fn(),
   mandatesFor: vi.fn(),
   timeline: vi.fn(),
+  stream: vi.fn(),
 }));
 
 vi.mock("@/lib/wallet", async () => {
@@ -27,6 +29,28 @@ vi.mock("@/lib/wallet", async () => {
 });
 vi.mock("@/lib/config", () => ({ config: { apiConfigured: true } }));
 vi.mock("@/lib/api", () => ({ api: apiMock }));
+
+class MockEventSource {
+  onopen: ((ev: Event) => unknown) | null = null;
+  onmessage: ((ev: MessageEvent) => unknown) | null = null;
+  onerror: ((ev: Event) => unknown) | null = null;
+  close = vi.fn();
+
+  emit(data: string) {
+    this.onmessage?.(new MessageEvent("message", { data }));
+  }
+}
+
+function onlyStreamSource(): MockEventSource {
+  const source = streamSources[0];
+  if (!source) throw new Error("Expected an EventSource connection");
+  return source;
+}
+
+function StreamDriver({ address = "G-A" }: { address?: string } = {}) {
+  useStream({ address, role: "subscriber", onEvent: () => {} });
+  return null;
+}
 
 function mandate(id: number) {
   return { id };
@@ -58,6 +82,14 @@ beforeEach(() => {
   apiMock.mandatesOf.mockReset();
   apiMock.mandatesFor.mockReset();
   apiMock.timeline.mockReset();
+  apiMock.stream.mockReset();
+  const sources: MockEventSource[] = [];
+  apiMock.stream.mockImplementation(() => {
+    const source = new MockEventSource();
+    sources.push(source);
+    return source;
+  });
+  streamSources = sources;
   apiMock.mandatesOf.mockResolvedValue({ mandates: [mandate(1)] });
   apiMock.mandatesFor.mockResolvedValue({ mandates: [mandate(2)] });
   apiMock.timeline.mockImplementation(async (id: number) => ({
@@ -66,6 +98,8 @@ beforeEach(() => {
 });
 
 afterEach(cleanup);
+
+let streamSources: MockEventSource[] = [];
 
 describe("Activity", () => {
   it("shows a genuine empty state only when both mandate sources are empty", async () => {
@@ -230,5 +264,79 @@ describe("Activity", () => {
 
     resolveOld?.({ events: [event("old", 1, 1)] });
     await waitFor(() => expect(screen.queryByText(/ledger 1/)).toBeNull());
+  });
+
+  it("refreshes the feed when the existing scoped stream delivers an event", async () => {
+    render(
+      <>
+        <Activity />
+        <StreamDriver />
+      </>,
+    );
+    expect(await screen.findAllByText("New")).toHaveLength(2);
+    expect(streamSources).toHaveLength(1);
+
+    apiMock.timeline.mockImplementation(async (id: number) => ({
+      events: [event(`live-${id}`, id, 99)],
+    }));
+    act(() => {
+      onlyStreamSource().emit(JSON.stringify({
+        type: "charge",
+        mandate_id: 1,
+        timestamp: 123,
+        charge: { tx_hash: "tx", mandate_id: 1, amount: "1000000", fee: "0", charges_made: 1, ledger: 99 },
+      }));
+    });
+
+    expect(await screen.findAllByText(/ledger 99/)).toHaveLength(2);
+  });
+
+  it("ignores malformed stream messages and unsubscribes the feed on unmount", async () => {
+    const view = render(
+      <>
+        <Activity />
+        <StreamDriver />
+      </>,
+    );
+    expect(await screen.findAllByText("New")).toHaveLength(2);
+    const source = onlyStreamSource();
+    const initialTimelineCalls = apiMock.timeline.mock.calls.length;
+
+    act(() => source.emit("{malformed"));
+    expect(apiMock.timeline).toHaveBeenCalledTimes(initialTimelineCalls);
+
+    view.unmount();
+    apiMock.timeline.mockClear();
+    act(() => {
+      source.emit(JSON.stringify({
+        type: "charge",
+        mandate_id: 1,
+        timestamp: 123,
+        charge: { tx_hash: "tx", mandate_id: 1, amount: "1000000", fee: "0", charges_made: 1, ledger: 99 },
+      }));
+    });
+    expect(apiMock.timeline).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh the feed for a stream scoped to another wallet", async () => {
+    render(
+      <>
+        <Activity />
+        <StreamDriver address="G-B" />
+      </>,
+    );
+    expect(await screen.findAllByText("New")).toHaveLength(2);
+    const initialMandateCalls = apiMock.mandatesOf.mock.calls.length;
+
+    act(() => {
+      onlyStreamSource().emit(JSON.stringify({
+        type: "charge",
+        mandate_id: 1,
+        timestamp: 123,
+        charge: { tx_hash: "tx", mandate_id: 1, amount: "1000000", fee: "0", charges_made: 1, ledger: 99 },
+      }));
+    });
+
+    expect(apiMock.mandatesOf).toHaveBeenCalledTimes(initialMandateCalls);
   });
 });
