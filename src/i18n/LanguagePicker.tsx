@@ -8,6 +8,7 @@ export function LanguagePicker() {
       onChange={event => { if (isLocale(event.target.value)) setLocale(event.target.value); }}>
       <option value="en" lang="en">English</option>
       <option value="fr" lang="fr">Français</option>
+      <option value="de" lang="de">Deutsch</option>
     </select>
   </label>;
 }

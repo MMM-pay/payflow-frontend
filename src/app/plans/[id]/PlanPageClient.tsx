@@ -3,7 +3,7 @@
 import { useI18n } from "@/i18n/provider";
 
 import { notFound } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { api, type ApiMandate, type ApiPlan } from "@/lib/api";
 import { chainMandatesFor, chainPlans, planChargeRow, type PlanCharge } from "@/lib/chain";
@@ -16,6 +16,13 @@ import { payflow } from "@/lib/lazy-payflow";
 import { useWallet } from "@/lib/wallet";
 
 import { AddressLink, Badge, Empty, Notice, Panel, TxLink } from "@/components/ui";
+import { cursorPage, TABLE_PAGE_SIZE } from "@/lib/pagination";
+
+const PaginationControl = lazy(() =>
+  import("@/components/Pagination").then((module) => ({
+    default: module.Pagination,
+  })),
+);
 
 type ChargeRow = PlanCharge;
 
@@ -29,6 +36,7 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
   const wanted = Number(planId);
   const [plan, setPlan] = useState<ApiPlan | null>(null);
   const [charges, setCharges] = useState<ChargeRow[]>([]);
+  const [chargesCursor, setChargesCursor] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [direct, setDirect] = useState(false);
@@ -37,6 +45,7 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
   const [done, setDone] = useState<string | null>(null);
 
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
+  const visibleCharges = cursorPage(charges, chargesCursor);
   const walletState = useRef({ address, networkMismatch });
   // Mirrored in an effect: only the signing flow reads it (event handler /
   // async callback), never render.
@@ -161,9 +170,9 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
         if (reason) throw new Error(reason);
       };
       check();
-      const hash = await payflow.subscribe(address, async (xdr) => {
+      const hash = await payflow.subscribe(address, async (xdr, description) => {
         check();
-        return signXdr(xdr);
+        return signXdr(xdr, description);
       }, subscribePlanId, limit);
       setDone(hash);
       setMaxCharges("");
@@ -211,7 +220,8 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
         {charges.length === 0 ? (
           <Empty>{tr("No charges settled against this plan yet.")}</Empty>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr>
@@ -224,7 +234,7 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
                 </tr>
               </thead>
               <tbody>
-                {charges.map((c) => (
+                {visibleCharges.map((c) => (
                   <tr key={c.txHash} className="border-t border-edge">
                     <td className="py-2">{c.mandateId}</td>
                     <td className="py-2">
@@ -240,7 +250,18 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
                 ))}
               </tbody>
             </table>
-          </div>
+            </div>
+            {charges.length > TABLE_PAGE_SIZE && (
+              <Suspense fallback={null}>
+                <PaginationControl
+                  cursor={chargesCursor}
+                  limit={TABLE_PAGE_SIZE}
+                  total={charges.length}
+                  onCursorChange={setChargesCursor}
+                />
+              </Suspense>
+            )}
+          </>
         )}
       </Panel>
 

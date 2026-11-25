@@ -413,11 +413,11 @@ function SubscribeInner() {
     try {
       const hash = await payflow.deposit(
         address,
-        async (xdr) => {
+        async (xdr, description) => {
           if (walletState.current.address !== address || walletState.current.networkMismatch) {
             throw new Error(tr("Wallet changed. Check your wallet and try again."));
           }
-          return signXdr(xdr);
+          return signXdr(xdr, description);
         },
         plan.token,
         amount,
@@ -461,13 +461,13 @@ function SubscribeInner() {
       if (reason) throw new Error(reason);
       const hash = await payflow.subscribe(
         address,
-        async (xdr) => {
+        async (xdr, description) => {
           if (walletState.current.address !== address || walletState.current.networkMismatch) {
             throw new Error(tr("Wallet changed. Check your wallet and try again."));
           }
           const closed = planAvailability(latest).reason;
           if (closed) throw new Error(closed);
-          return signXdr(xdr);
+          return signXdr(xdr, description);
         },
         plan.id,
         limit,

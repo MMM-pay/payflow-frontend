@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { withInlineScriptHashes, applyCspToExport } from "../scripts/apply-csp.mjs";
+import { applyCspToExport, withInlineScriptHashes } from "../scripts/apply-csp.mjs";
 
 describe("static export CSP", () => {
   it("hashes inline scripts and injects the policy before them", () => {

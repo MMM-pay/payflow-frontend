@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import {
   XLM,
+  approveWalletSigning,
   connectTestWallet,
   getMandate,
   getNextPlanId,
@@ -60,6 +61,7 @@ test("merchant publishes a plan", async ({ page }) => {
   await page.locator("#price").fill("1");
   await page.locator("#plan-name").fill("E2E Coffee");
   await page.getByRole("button", { name: "Publish plan", exact: true }).click();
+  await approveWalletSigning(page);
 
   await expect(page.getByText("Done. Transaction")).toBeVisible({ timeout: 60_000 });
 
@@ -89,6 +91,7 @@ test("subscriber deposits into the vault", async ({ page }) => {
   // deposit field by id.
   await page.locator("#amount").fill("5");
   await page.getByRole("button", { name: "Deposit", exact: true }).click();
+  await approveWalletSigning(page);
 
   await expect(page.getByText("Done. Transaction")).toBeVisible({ timeout: 60_000 });
   expect(await getVaultBalance(contracts, subscriber.publicKey)).toBe(5n * XLM);
@@ -106,6 +109,7 @@ test("subscriber opens a mandate", async ({ page }) => {
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByText("Subscribe to E2E Coffee?")).toBeVisible();
   await dialog.getByRole("button", { name: "Confirm and sign" }).click();
+  await approveWalletSigning(page);
 
   await expect(page.getByText("Subscribed. Transaction")).toBeVisible({ timeout: 60_000 });
 
@@ -134,6 +138,7 @@ test("subscriber cancels the mandate", async ({ page }) => {
     .getByRole("dialog")
     .getByRole("button", { name: "Confirm cancellation" })
     .click();
+  await approveWalletSigning(page);
 
   await expect(page.getByText("Cancelled", { exact: true })).toBeVisible({
     timeout: 60_000,

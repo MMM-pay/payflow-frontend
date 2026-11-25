@@ -72,6 +72,14 @@ export async function connectTestWallet(page: Page, address: string) {
   await expect(page.getByTitle(new RegExp(`^${address}`))).toBeVisible({ timeout: 20_000 });
 }
 
+/** Approve the app's action-specific review before the wallet signs. */
+export async function approveWalletSigning(page: Page) {
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Continue to wallet" })
+    .click();
+}
+
 /** A read-only contract simulation, the same shape the app uses. */
 export async function readContract<T>(
   contracts: LocalContracts,

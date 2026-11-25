@@ -2,7 +2,7 @@
 
 import { useI18n } from "@/i18n/provider";
 
-import { Suspense, startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 // `/base` is the SDK without the RPC client or transaction builder: StrKey is
@@ -86,6 +86,7 @@ import { computeVaultRunway } from "@/lib/runway";
 
 import { loadTokenMeta, metaFor, useTokenMetas } from "@/lib/token";
 import { VirtualList } from "@/components/VirtualList";
+import { cursorPage, TABLE_PAGE_SIZE } from "@/lib/pagination";
 import { AmountInput } from "@/components/AmountInput";
 import { ConfirmDialog, confirmTitle } from "@/components/ConfirmDialog";
 import { observeContractRecord } from "@/lib/contract-compat";
@@ -121,6 +122,12 @@ type PaymentsState =
   | { status: "error"; message: string }
   | { status: "data"; rows: PaymentRecord[] };
 
+const PaginationControl = lazy(() =>
+  import("@/components/Pagination").then((module) => ({
+    default: module.Pagination,
+  })),
+);
+
 /**
  * Past charges with a receipt per row.
  *
@@ -139,6 +146,9 @@ function PaymentHistoryPanel({
 }) {
   const { t: tr, translateMessage } = useI18n();
   const [busyHash, setBusyHash] = useState<string | null>(null);
+  const [cursor, setCursor] = useState(0);
+  const visibleRows =
+    state.status === "data" ? cursorPage(state.rows, cursor) : [];
 
   async function download(record: PaymentRecord) {
     setBusyHash(record.row.txHash);
@@ -175,60 +185,72 @@ function PaymentHistoryPanel({
       ) : state.rows.length === 0 ? (
         <Empty title={tr("No charges yet")}>{tr("Charges appear here with a downloadable receipt once they settle on-chain.")}</Empty>
       ) : (
-        <div
-          className="overflow-x-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-          role="region"
-          aria-label={tr("Payment history table")}
-          tabIndex={0}
-        >
-          <table className="w-full min-w-[640px] text-left text-sm">
-            <caption className="sr-only">{tr("Charges settled against your subscriptions, newest first.")}</caption>
-            <thead>
-              <tr className="border-b border-edge text-muted">
-                <th scope="col" className="py-2 pr-3 font-medium">{tr("Subscription")}</th>
-                <th scope="col" className="py-2 pr-3 font-medium">{tr("Ledger")}</th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Amount")}</th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Fee")}</th>
-                <th scope="col" className="py-2 text-right font-medium">{tr("Receipt")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {state.rows.map((record) => {
-                const { row } = record;
-                const label = tr("Receipt for charge {0} on subscription #{1}", {
-                  "0": row.txHash.slice(0, 8),
-                  "1": row.mandateId,
-                });
-                return (
-                  <tr key={`${row.mandateId}:${row.txHash}`} className="border-b border-edge last:border-0">
-                    <th scope="row" className="py-2 pr-3 font-medium">#{row.mandateId}</th>
-                    <td className="py-2 pr-3 tabular-nums text-muted">#{row.ledger}</td>
-                    <td className="py-2 pr-3 text-right tabular-nums">{row.amount} {row.token}</td>
-                    <td className="py-2 pr-3 text-right tabular-nums text-muted">{row.fee} {row.token}</td>
-                    <td className="py-2">
-                      <div className="flex flex-wrap items-center justify-end gap-2">
-                        <Link
-                          href={`/receipt/?tx=${encodeURIComponent(row.txHash)}&mandate=${row.mandateId}`}
-                          className="btn-ghost text-xs"
-                          aria-label={tr("Open {0}", { "0": label })}
-                        >{tr("View")}</Link>
-                        <button
-                          type="button"
-                          className="btn-ghost text-xs"
-                          disabled={busyHash === row.txHash}
-                          aria-label={tr("Download {0}", { "0": label })}
-                          onClick={() => void download(record)}
-                        >
-                          {busyHash === row.txHash ? tr("Preparing…") : tr("Download")}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <>
+          <div
+            className="overflow-x-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            role="region"
+            aria-label={tr("Payment history table")}
+            tabIndex={0}
+          >
+            <table className="w-full min-w-[640px] text-left text-sm">
+              <caption className="sr-only">{tr("Charges settled against your subscriptions, newest first.")}</caption>
+              <thead>
+                <tr className="border-b border-edge text-muted">
+                  <th scope="col" className="py-2 pr-3 font-medium">{tr("Subscription")}</th>
+                  <th scope="col" className="py-2 pr-3 font-medium">{tr("Ledger")}</th>
+                  <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Amount")}</th>
+                  <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Fee")}</th>
+                  <th scope="col" className="py-2 text-right font-medium">{tr("Receipt")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleRows.map((record) => {
+                  const { row } = record;
+                  const label = tr("Receipt for charge {0} on subscription #{1}", {
+                    "0": row.txHash.slice(0, 8),
+                    "1": row.mandateId,
+                  });
+                  return (
+                    <tr key={`${row.mandateId}:${row.txHash}`} className="border-b border-edge last:border-0">
+                      <th scope="row" className="py-2 pr-3 font-medium">#{row.mandateId}</th>
+                      <td className="py-2 pr-3 tabular-nums text-muted">#{row.ledger}</td>
+                      <td className="py-2 pr-3 text-right tabular-nums">{row.amount} {row.token}</td>
+                      <td className="py-2 pr-3 text-right tabular-nums text-muted">{row.fee} {row.token}</td>
+                      <td className="py-2">
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                          <Link
+                            href={`/receipt/?tx=${encodeURIComponent(row.txHash)}&mandate=${row.mandateId}`}
+                            className="btn-ghost text-xs"
+                            aria-label={tr("Open {0}", { "0": label })}
+                          >{tr("View")}</Link>
+                          <button
+                            type="button"
+                            className="btn-ghost text-xs"
+                            disabled={busyHash === row.txHash}
+                            aria-label={tr("Download {0}", { "0": label })}
+                            onClick={() => void download(record)}
+                          >
+                            {busyHash === row.txHash ? tr("Preparing…") : tr("Download")}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {state.rows.length > TABLE_PAGE_SIZE && (
+            <Suspense fallback={null}>
+              <PaginationControl
+                cursor={cursor}
+                limit={TABLE_PAGE_SIZE}
+                total={state.rows.length}
+                onCursorChange={setCursor}
+              />
+            </Suspense>
+          )}
+        </>
       )}
     </Panel>
   );
@@ -330,6 +352,13 @@ function AccountInner() {
   useEffect(() => {
     addressRef.current = viewAddress;
   }, [viewAddress]);
+  // Once the page unmounts no address is current, so every guarded callback
+  // returns instead of setting state on a page that is gone.
+  useEffect(() => {
+    return () => {
+      addressRef.current = null;
+    };
+  }, []);
 
   // The vault holds the configured token; each mandate carries the token it
   // was opened against, which the indexer does not report.
