@@ -10,17 +10,16 @@ import { config } from "@/lib/config";
 import { useNetwork } from "@/lib/network";
 import { AddressLink, Panel, Stat, TxLink } from "@/components/ui";
 import { SubscriberGuide } from "@/components/SubscriberGuide";
-import{ shortAddress } from "@/lib/format";
-import { metaFor, useTokenMetas } from "@/lib/token";
+import { shortAddress, XLM, type TokenMeta } from "@/lib/format";
+import { loadTokenMeta } from "@/lib/token";
 
 export default function HomePage() {
   const { t: tr, formatAmount, formatDate } = useI18n();
   const [stats, setStats] = useState<ProtocolStats | null>(null);
   const [contractPlanCount, setContractPlanCount] = useState<number | null>(null);
   const [recentCharges, setRecentCharges] = useState<RecentCharge[] | null>(null);
+  const [tokenMeta, setTokenMeta] = useState<TokenMeta>(XLM);
   const [loaded, setLoaded] = useState(false);
-  const metas = useTokenMetas([config.contracts.token]);
-  const tokenMeta = metaFor(metas, config.contracts.token);
   const { network } = useNetwork();
 
   useEffect(() => {
@@ -43,6 +42,18 @@ export default function HomePage() {
     };
     void load();
   }, []);
+
+  useEffect(() => {
+    if (!recentCharges?.length) return;
+
+    let active = true;
+    void loadTokenMeta(config.contracts.token).then((meta) => {
+      if (active) setTokenMeta(meta);
+    });
+    return () => {
+      active = false;
+    };
+  }, [recentCharges]);
 
   return (
     <div className="space-y-10">

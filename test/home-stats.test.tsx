@@ -12,6 +12,10 @@ const chainMock = vi.hoisted(() => ({
   chainProtocolStats: vi.fn(),
 }));
 
+const tokenMock = vi.hoisted(() => ({
+  loadTokenMeta: vi.fn(),
+}));
+
 vi.mock("@/lib/api", () => ({
   api: apiMock,
 }));
@@ -21,14 +25,14 @@ vi.mock("@/lib/chain", () => ({
 }));
 
 vi.mock("@/lib/token", () => ({
-  useTokenMetas: () => new Map(),
-  metaFor: () => ({ symbol: "XLM", decimals: 7 }),
+  loadTokenMeta: tokenMock.loadTokenMeta,
 }));
 
 describe("Home page protocol stats (#14)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     apiMock.recentCharges.mockResolvedValue({ charges: [] });
+    tokenMock.loadTokenMeta.mockResolvedValue({ symbol: "USDC", decimals: 6 });
   });
 
   afterEach(() => {
@@ -56,6 +60,7 @@ describe("Home page protocol stats (#14)", () => {
 
     // Crucial acceptance criterion: No extra RPC calls when the API is available
     expect(chainMock.chainProtocolStats).not.toHaveBeenCalled();
+    expect(tokenMock.loadTokenMeta).not.toHaveBeenCalled();
   });
 
   it("falls back to reading plan count from contract state when API returns null", async () => {
@@ -93,5 +98,30 @@ describe("Home page protocol stats (#14)", () => {
     expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(3);
     expect(screen.queryByText("from contract")).toBeNull();
     expect(screen.queryByText("Recent activity")).toBeNull();
+    expect(tokenMock.loadTokenMeta).not.toHaveBeenCalled();
+  });
+
+  it("loads token metadata only when there are recent charges to format", async () => {
+    apiMock.stats.mockResolvedValue(null);
+    apiMock.recentCharges.mockResolvedValue({
+      charges: [
+        {
+          tx_hash: "tx-hash",
+          plan_name: "Coffee",
+          amount: "2500000",
+          ledger: 42,
+          timestamp: 1_700_000_000,
+          plan_id: 1,
+        },
+      ],
+    });
+    chainMock.chainProtocolStats.mockResolvedValue({ plans: 8 });
+
+    render(<HomePage />);
+
+    await waitFor(() => {
+      expect(tokenMock.loadTokenMeta).toHaveBeenCalledOnce();
+    });
+    expect(await screen.findByText("2.5 USDC")).toBeTruthy();
   });
 });
