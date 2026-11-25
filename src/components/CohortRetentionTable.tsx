@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import {
+  describeCohortRetention,
   formatRetentionPercent,
   parseCohortRetention,
   retentionColorClass,
@@ -52,6 +53,10 @@ export function CohortRetentionTable({ merchant, apiConfigured }: CohortRetentio
     };
   }, [apiConfigured, merchant]);
 
+  // The grid's colour bands are decoration; this is the same information as
+  // text, so it is computed once here and read out in two places below.
+  const summary = state.status === "data" ? describeCohortRetention(state.data.cohorts) : "";
+
   return (
     <Panel
       title="Cohort retention"
@@ -87,10 +92,13 @@ export function CohortRetentionTable({ merchant, apiConfigured }: CohortRetentio
           aria-label="Cohort retention table"
           tabIndex={0}
         >
+          {/* The figures the tinted cells encode, as sentences. Visible, not
+              just announced: a summary is useful to everyone. */}
+          <p className="mb-3 text-sm text-muted">{summary}</p>
           <table className="w-full text-left text-sm">
             <caption className="sr-only">
-              Cohort retention: percentage of subscribers from each signup month still active after
-              0, 1, 2, ... months
+              {summary} Columns are months since signup; each cell is the percentage of that
+              cohort still subscribed in that month.
             </caption>
             <thead>
               <tr className="border-b border-edge text-muted">
@@ -102,7 +110,7 @@ export function CohortRetentionTable({ merchant, apiConfigured }: CohortRetentio
                 </th>
                 {Array.from({ length: state.data.maxAge + 1 }, (_, i) => (
                   <th key={i} scope="col" className="py-2 px-2 text-center font-medium min-w-[4rem]">
-                    {i === 0 ? "Month 0" : `+${i}m`}
+                    {i === 0 ? "Month 0" : `Month ${i}`}
                   </th>
                 ))}
               </tr>
@@ -124,13 +132,21 @@ export function CohortRetentionTable({ merchant, apiConfigured }: CohortRetentio
                         }`}
                       >
                         {percent !== undefined ? (
-                          <span aria-label={`${percent}% retained after ${monthIndex} months`}>
+                          <>
                             {formatRetentionPercent(percent)}
-                          </span>
+                            {/* An aria-label on a bare span is ignored by
+                                several screen readers; real text is not. */}
+                            <span className="sr-only">
+                              {monthIndex === 0
+                                ? " in the signup month"
+                                : ` retained after ${monthIndex} month${monthIndex === 1 ? "" : "s"}`}
+                            </span>
+                          </>
                         ) : (
-                          <span className="text-muted" aria-label="Data not yet available">
-                            —
-                          </span>
+                          <>
+                            <span className="text-muted">—</span>
+                            <span className="sr-only">Data not yet available</span>
+                          </>
                         )}
                       </td>
                     );
