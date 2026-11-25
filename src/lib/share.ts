@@ -4,23 +4,21 @@ import { config } from "./config";
  * Shareable links.
  *
  * A merchant sends a customer to one plan, not to the whole catalogue. The
- * link is a query parameter on the subscribe page — `/subscribe/?plan=12` —
- * because the app is a static export: every route is one prebuilt file, so
- * per-plan state has to arrive at runtime rather than as a path segment.
+ * link opens that plan's own route — `/plans/12/` — so crawlers can read its
+ * per-plan Open Graph image instead of the generic catalogue preview.
  *
  * The base path is part of the link. On GitHub Pages the app is served from
  * `/payflow-frontend`, and a link without it lands on 404.
  */
 
-/** The absolute link that opens one plan on the subscribe page. */
-export function subscribeLink(
+export function planLink(
   origin: string,
   planId: number | bigint,
   basePath: string = config.basePath,
 ): string {
   const host = origin.replace(/\/+$/, "");
   const path = basePath.replace(/\/+$/, "");
-  return `${host}${path}/subscribe/?plan=${planId}`;
+  return `${host}${path}/plans/${planId}/`;
 }
 
 /**

@@ -1,14 +1,10 @@
+import de from "./de.json";
 import en from "./en.json";
 import fr from "./fr.json";
 import ar from "./ar.json";
 import { formatNumber, type Locale } from "./format";
 export type Translation = (key: string, values?: Record<string, unknown>) => string;
-const catalogs: Record<Locale, Record<string, string>> = { en: en as Record<string, string>, fr: fr as Record<string, string>, ar: ar as Record<string, string> };
-const english: Record<string, string> = en;
-/** English is the fallback while an RTL catalog is still being translated. */
-function catalogFor(locale: Locale): Record<string, string> {
-  return locale === "en" ? english : { ...english, ...catalogs[locale] };
-}
+const catalogs: Record<Locale, Record<string, string>> = { en, fr, de };
 export function createTranslation(locale: Locale): Translation {
   const catalog = catalogFor(locale);
   return (key, values = {}) => (catalog[key] ?? key).replace(/\{(\w+)\}/g, (match, name: string) => {
