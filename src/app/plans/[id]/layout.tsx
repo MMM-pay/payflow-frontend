@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { PAGES, pageMetadata } from "@/lib/metadata";
+import { planPageMetadata } from "@/lib/metadata";
 
 /**
  * The canonical link has to name the plan, not the route: a crawler that
@@ -12,7 +12,7 @@ export async function generateMetadata({
   params: Promise<{ id: string }>;
 }): Promise<Metadata> {
   const { id } = await params;
-  return pageMetadata(PAGES.plan, { path: `/plans/${id}/` });
+  return planPageMetadata(id);
 }
 
 export default function PlanLayout({ children }: { children: React.ReactNode }) {

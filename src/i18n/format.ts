@@ -1,6 +1,7 @@
 import { fromStroops, XLM, type TokenMeta } from "@/lib/format";
-export type Locale = "en" | "fr";
-export const localeTag = (locale: Locale) => locale === "fr" ? "fr-FR" : "en-GB";
+export type Locale = "en" | "fr" | "de";
+export const localeTag = (locale: Locale) =>
+  locale === "fr" ? "fr-FR" : locale === "de" ? "de-DE" : "en-GB";
 export function formatNumber(value: number | bigint, locale: Locale): string {
   return new Intl.NumberFormat(localeTag(locale)).format(value);
 }
@@ -23,7 +24,7 @@ export function formatWhen(seconds: number, locale: Locale, now = Date.now()): s
   if (!seconds) return "—";
   const delta = seconds * 1000 - now;
   const minutes = Math.round(Math.abs(delta) / 60_000);
-  if (minutes < 1) return locale === "fr" ? (delta >= 0 ? "échéance immédiate" : "à l’instant") : (delta >= 0 ? "due now" : "just now");
+  if (minutes < 1) return locale === "fr" ? (delta >= 0 ? "échéance immédiate" : "à l’instant") : locale === "de" ? (delta >= 0 ? "sofort fällig" : "gerade eben") : (delta >= 0 ? "due now" : "just now");
   const hours = Math.round(minutes / 60);
   const [count, unit]: [number, Intl.RelativeTimeFormatUnit] = minutes < 60 ? [minutes, "minute"] : hours < 24 ? [hours, "hour"] : [Math.round(hours / 24), "day"];
   return new Intl.RelativeTimeFormat(localeTag(locale), { numeric: "always" }).format(delta < 0 ? -count : count, unit);
@@ -39,6 +40,16 @@ export function formatPeriod(seconds: number, locale: Locale): string {
     if (seconds >= size && seconds % size === 0) {
       const count = seconds / size;
       if (locale === "fr") return count === 1 ? `par ${singular}` : `${feminine ? "toutes" : "tous"} les ${formatNumber(count, locale)} ${plural}`;
+      if (locale === "de") {
+        const german = {
+          year: ["Jahr", "Jahre"], month: ["Monat", "Monate"],
+          week: ["Woche", "Wochen"], day: ["Tag", "Tage"],
+          hour: ["Stunde", "Stunden"], minute: ["Minute", "Minuten"],
+          second: ["Sekunde", "Sekunden"],
+        } as const;
+        const [one, many] = german[en];
+        return count === 1 ? `pro ${one}` : `alle ${formatNumber(count, locale)} ${many}`;
+      }
       return count === 1 && size !== 1 ? `per ${en}` : size === 1 ? `every ${count}s` : `every ${formatNumber(count, locale)} ${en}s`;
     }
   }
@@ -53,7 +64,8 @@ export function formatUsdString(value: string, locale: Locale): string {
   if (locale === "en") return value;
   const match = /^(< )?\$(\d+)\.(\d{2})$/.exec(value);
   if (!match) return value;
-  return `${match[1] ?? ""}${formatNumber(BigInt(match[2]!), locale)},${match[3]}\u00a0$US`;
+  const currency = locale === "de" ? "$" : "$US";
+  return `${match[1] ?? ""}${formatNumber(BigInt(match[2]!), locale)},${match[3]}\u00a0${currency}`;
 }
 export function formatTokenValue(raw: string | bigint, locale: Locale, digits = 4, decimals = 7): string {
   return formatAmount(raw, locale, { symbol: "", decimals }, digits).trimEnd();

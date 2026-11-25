@@ -6,7 +6,7 @@ import * as localized from "./format";
 import { presentation } from "./presentation";
 import { createTranslation, translateMessage } from "./translate";
 export const LOCALE_STORAGE_KEY = "payflow.locale";
-export const isLocale = (value: unknown): value is localized.Locale => value === "en" || value === "fr";
+export const isLocale = (value: unknown): value is localized.Locale => value === "en" || value === "fr" || value === "de";
 function makeValue(locale: localized.Locale, setLocale: (value: localized.Locale) => void) {
   return {
     ...presentation(locale),
