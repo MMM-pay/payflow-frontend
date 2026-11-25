@@ -7,7 +7,7 @@ import Link from "next/link";
 
 import dynamic from "next/dynamic";
 import { api, checkWebhookUrl, type ApiChargeAttempt, type ApiMandate, type ApiPlan, type ApiWebhook, type MerchantSummary, type StreamEvent } from "@/lib/api";
-import { buildCsv, buildMonthlyRevenueCsv, downloadCsv, exportFilename, monthlyRevenueFilename, type ChargeRow, type MonthlyRevenueRow } from "@/lib/csv";
+import { buildCsv, buildMonthlyRevenueCsv, buildSubscribersCsv, downloadCsv, exportFilename, monthlyRevenueFilename, subscribersFilename, type ChargeRow, type MonthlyRevenueRow, type SubscriberRow } from "@/lib/csv";
 import { fillBuckets, parseRevenue, type BucketSize, type RevenuePoint } from "@/lib/revenue";
 import { parseMerchantChurn, type MerchantChurnMonth } from "@/lib/churn";
 import { endMandatesSequentially, type EndOutcome, chainMerchantMandatesPage, chainMerchantSummary, chainPlanSubscriberCount, chainPlansOf, chainUnpaidMandates, endable, mandateFunding, mergeMandates, MERCHANT_MANDATE_PAGE_SIZE, type UnpaidMandate } from "@/lib/chain";
@@ -60,7 +60,7 @@ import{ feeSplit, fromStroops, type FeeSplit, type TokenMeta } from "@/lib/forma
 import { metaFor, useTokenMetas } from "@/lib/token";
 import { supportsTrials, TRIAL_OPTIONS } from "@/lib/trial";
 import { CUSTOM_PERIOD, DEFAULT_PERIOD, PERIOD_PRESETS, PERIOD_UNITS, checkCustomPeriod, checkPeriodSeconds, type PeriodCheck } from "@/lib/period";
-import { countOpenMandates, filterAndSortPlans, type PlanActiveOption } from "@/lib/plans";
+import { countOpenMandates, filterAndSortPlans, planDisplayName } from "@/lib/plans";
 import { formatUsdEstimate, formatUsdcEstimate, useXlmUsdPrice } from "@/lib/price";
 import { AmountInput } from "@/components/AmountInput";
 import { CopyButton } from "@/components/CopyButton";
@@ -1050,11 +1050,14 @@ export default function MerchantPage() {
   const { checkAmount, t: tr, formatPeriod, translateMessage, unitLabel, trialBadge, formatTokenValue, discountBadge, formatUsdString, formatNumber } = useI18n();
   const { address, networkMismatch, signXdr, connect, connecting } = useWallet();
   const [plans, setPlans] = useState<ApiPlan[] | null>(null);
-  // Filter state for the merchant's own plan listing. Search is by name, and
-  // the token/status filters narrow the same list without hiding its counts.
+  // Filter state for the merchant's own plan listing. Search is by name, the
+  // token filter narrows the same list, and the active/archive tab decides
+  // whether live or deactivated plans are shown.
   const [planQuery, setPlanQuery] = useState("");
   const [planToken, setPlanToken] = useState("all");
-  const [planActive, setPlanActive] = useState<PlanActiveOption>("all");
+  // Deactivated plans live in their own tab instead of being mixed into the
+  // listing merchants use to manage live plans.
+  const [planView, setPlanView] = useState<"active" | "archive">("active");
   const [mandates, setMandates] = useState<ApiMandate[] | null>(null);
   const [unpaidMandates, setUnpaidMandates] = useState<import("@/lib/chain").UnpaidMandate[] | null>(null);
   const [subscribersTab, setSubscribersTab] = useState<"all" | "unpaid">("all");
@@ -1083,6 +1086,10 @@ export default function MerchantPage() {
   const [moreError, setMoreError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [monthlyExporting, setMonthlyExporting] = useState(false);
+  // Independent of the batch-end selection: a merchant may want to export a
+  // subscriber they would never end, so the two sets stay separate.
+  const [exportSelected, setExportSelected] = useState<Set<number>>(new Set());
+  const [exportingSubscribers, setExportingSubscribers] = useState(false);
   const [feeBps, setFeeBps] = useState<number | null>(null);
   const [bucketSize, setBucketSize] = useState<BucketSize>("day");
   /**
@@ -1227,10 +1234,15 @@ export default function MerchantPage() {
         sort: "oldest",
         query: planQuery,
         token: planToken,
-        active: planActive,
+        active: planView === "active" ? "active" : "inactive",
       }),
-    [plans, planQuery, planToken, planActive],
+    [plans, planQuery, planToken, planView],
   );
+  const activePlanCount = useMemo(
+    () => (plans ?? []).filter((plan) => plan.active === 1).length,
+    [plans],
+  );
+  const archivedPlanCount = (plans ?? []).length - activePlanCount;
   /** Tokens present on this merchant's plans, keeping a URL-selected one visible. */
   const planTokenOptions = useMemo(() => {
     const ids = [...new Set((plans ?? []).map((plan) => plan.token))];
@@ -1418,6 +1430,10 @@ export default function MerchantPage() {
     // Drop selections for mandates that no longer exist or are no longer endable.
     const endableIds = new Set(rows.filter(endable).map((r) => r.id));
     setSelected((prev) => new Set([...prev].filter((id) => endableIds.has(id))));
+    // Export selection follows the same rule: a mandate that vanished from a
+    // refresh must not be exported from stale state.
+    const mandateIds = new Set(rows.map((r) => r.id));
+    setExportSelected((prev) => new Set([...prev].filter((id) => mandateIds.has(id))));
 
     // Load unpaid mandates
     try {
@@ -1801,6 +1817,77 @@ export default function MerchantPage() {
       const allSelected = ids.length > 0 && ids.every((id) => prev.has(id));
       return allSelected ? new Set() : new Set(ids);
     });
+  }
+
+  /** Toggle one subscriber's export checkbox. */
+  function toggleExportSelected(id: number) {
+    setExportSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  /** Select every subscriber for export, or clear the whole selection. */
+  function toggleExportSelectAll(ids: number[]) {
+    setExportSelected((prev) => {
+      const allSelected = ids.length > 0 && ids.every((id) => prev.has(id));
+      return allSelected ? new Set() : new Set(ids);
+    });
+  }
+
+  /**
+   * Export the selected subscribers (one row per mandate) as CSV.
+   *
+   * Reads only data already on the page, so no signature or backend call is
+   * involved; a malformed amount is caught rather than written as "NaN".
+   */
+  function exportSelectedSubscribers() {
+    if (!address) return;
+    setExportingSubscribers(true);
+    setError(null);
+    try {
+      if (exportSelected.size === 0) {
+        setError(tr("Select at least one subscriber to export."));
+        return;
+      }
+      const rows: SubscriberRow[] = (mandates ?? [])
+        .filter((m) => exportSelected.has(m.id))
+        .map((m) => {
+          const meta = metaFor(metas, m.token ?? config.contracts.token);
+          const plan = (plans ?? []).find((p) => p.id === m.plan_id);
+          const next = Number.isFinite(m.next_charge) && m.next_charge > 0
+            ? new Date(m.next_charge * 1000).toISOString()
+            : "—";
+          return {
+            mandateId: m.id,
+            subscriber: m.subscriber,
+            planId: m.plan_id,
+            planName: plan ? planDisplayName(plan) : `Plan #${m.plan_id}`,
+            status: m.status,
+            amount: fromStroops(m.amount, meta.decimals, meta.decimals),
+            token: meta.symbol,
+            periodSeconds: m.period,
+            chargesMade: m.charges_made,
+            maxCharges: m.max_charges,
+            nextCharge: next,
+          };
+        });
+      if (rows.length === 0) {
+        setError(tr("None of the selected subscribers are still listed. Refresh and try again."));
+        return;
+      }
+      downloadCsv(
+        buildSubscribersCsv(rows),
+        subscribersFilename(address, new Date().toISOString().slice(0, 10)),
+      );
+      setExportSelected(new Set());
+    } catch {
+      setError(tr("Could not build the subscriber export. Nothing was downloaded."));
+    } finally {
+      setExportingSubscribers(false);
+    }
   }
 
   /**
@@ -2430,66 +2517,111 @@ export default function MerchantPage() {
           >{tr("Use the form above to publish your first plan — it is written straight to the contract, so it works with or without the indexer. Subscribers can open a mandate against it as soon as it confirms.")}</Empty>
         ) : (
           <div className="space-y-3">
-            <div className="flex flex-wrap items-end gap-3 rounded-lg border border-edge bg-surface/50 p-3">
-              <div className="w-full sm:w-auto sm:min-w-[14rem] sm:flex-1">
-                <Search
-                  id="merchant-plan-search"
-                  value={planQuery}
-                  onChange={setPlanQuery}
-                  label={tr("Search plans by name")}
-                  placeholder={tr("Search by name")}
-                />
-              </div>
-
-              <div className="flex items-center gap-2">
-                <label htmlFor="merchant-plan-token" className="whitespace-nowrap text-sm font-medium text-muted">{tr("Token:")}</label>
-                <select
-                  id="merchant-plan-token"
-                  className="input py-1 px-2.5 text-sm"
-                  value={planToken}
-                  onChange={(e) => setPlanToken(e.target.value)}
+            <div className="rounded-lg border border-edge bg-surface/50 p-3">
+              <div className="mb-3 flex flex-wrap items-center gap-3">
+                <div
+                  className="flex rounded-lg border border-edge bg-surface/30"
+                  role="tablist"
+                  aria-label={tr("Plan views")}
                 >
-                  <option value="all">{tr("All tokens")}</option>
-                  {planTokenOptions.map((id) => (
-                    <option key={id} value={id}>
-                      {metaFor(metas, id).symbol}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <label htmlFor="merchant-plan-active" className="whitespace-nowrap text-sm font-medium text-muted">{tr("Status:")}</label>
-                <select
-                  id="merchant-plan-active"
-                  className="input py-1 px-2.5 text-sm"
-                  value={planActive}
-                  onChange={(e) => setPlanActive(e.target.value as PlanActiveOption)}
-                >
-                  <option value="all">{tr("All plans")}</option>
-                  <option value="active">{tr("Active")}</option>
-                  <option value="inactive">{tr("Inactive")}</option>
-                </select>
-              </div>
-
-              <span className="ml-auto text-xs text-muted" aria-live="polite">{tr("Showing")}{" "}{formatNumber(filteredPlans.length)}{" "}{tr("of")}{" "}{formatNumber(plans.length)}{" "}{tr("plans")}</span>
-            </div>
-
-            {filteredPlans.length === 0 ? (
-              <Empty
-                title={tr("No plans match these filters")}
-                action={
                   <button
                     type="button"
-                    className="btn-ghost"
-                    onClick={() => {
-                      setPlanQuery("");
-                      setPlanToken("all");
-                      setPlanActive("all");
-                    }}
-                  >{tr("Reset filters")}</button>
-                }
-              >{tr("No plan name, token or status matches the current filters. Clear them to see every plan.")}</Empty>
+                    role="tab"
+                    id="merchant-plans-active-tab"
+                    aria-selected={planView === "active"}
+                    aria-controls="merchant-plans-panel"
+                    className={`rounded-l-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                      planView === "active"
+                        ? "bg-accent text-white"
+                        : "text-muted hover:text-fg"
+                    }`}
+                    onClick={() => setPlanView("active")}
+                  >
+                    {tr("Active")}{" "}
+                    <span className="tabular-nums">({formatNumber(activePlanCount)})</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    id="merchant-plans-archive-tab"
+                    aria-selected={planView === "archive"}
+                    aria-controls="merchant-plans-panel"
+                    className={`rounded-r-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                      planView === "archive"
+                        ? "bg-accent text-white"
+                        : "text-muted hover:text-fg"
+                    }`}
+                    onClick={() => setPlanView("archive")}
+                  >
+                    {tr("Archive")}{" "}
+                    <span className="tabular-nums">({formatNumber(archivedPlanCount)})</span>
+                  </button>
+                </div>
+                <span className="ml-auto text-xs text-muted" aria-live="polite">{tr("Showing")}{" "}{formatNumber(filteredPlans.length)}{" "}{tr("of")}{" "}{formatNumber(plans.length)}{" "}{tr("plans")}</span>
+              </div>
+
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="w-full sm:w-auto sm:min-w-[14rem] sm:flex-1">
+                  <Search
+                    id="merchant-plan-search"
+                    value={planQuery}
+                    onChange={setPlanQuery}
+                    label={tr("Search plans by name")}
+                    placeholder={tr("Search by name")}
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <label htmlFor="merchant-plan-token" className="whitespace-nowrap text-sm font-medium text-muted">{tr("Token:")}</label>
+                  <select
+                    id="merchant-plan-token"
+                    className="input py-1 px-2.5 text-sm"
+                    value={planToken}
+                    onChange={(e) => setPlanToken(e.target.value)}
+                  >
+                    <option value="all">{tr("All tokens")}</option>
+                    {planTokenOptions.map((id) => (
+                      <option key={id} value={id}>
+                        {metaFor(metas, id).symbol}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div
+              role="tabpanel"
+              id="merchant-plans-panel"
+              aria-labelledby={planView === "active" ? "merchant-plans-active-tab" : "merchant-plans-archive-tab"}
+            >
+            {filteredPlans.length === 0 ? (
+              planView === "archive" && archivedPlanCount === 0 ? (
+                <Empty title={tr("No archived plans")}>{tr("Deactivated plans move here, so the active list only shows plans you can still sell. Deactivate a plan to archive it.")}</Empty>
+              ) : planView === "active" && activePlanCount === 0 ? (
+                <Empty
+                  title={tr("No active plans")}
+                  action={
+                    <button type="button" className="btn-ghost" onClick={() => setPlanView("archive")}>
+                      {tr("Open archive")}
+                    </button>
+                  }
+                >{tr("Every plan is deactivated. Open the archive to review or reactivate them.")}</Empty>
+              ) : (
+                <Empty
+                  title={tr("No plans match these filters")}
+                  action={
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => {
+                        setPlanQuery("");
+                        setPlanToken("all");
+                      }}
+                    >{tr("Reset filters")}</button>
+                  }
+                >{tr("No plan name or token matches the current filters. Clear them to see every plan.")}</Empty>
+              )
             ) : (
           <VirtualList
             items={filteredPlans}
@@ -2748,6 +2880,7 @@ export default function MerchantPage() {
             }}
           />
             )}
+            </div>
           </div>
         )}
       </Panel>
@@ -2827,6 +2960,33 @@ export default function MerchantPage() {
           aria-labelledby="subscribers-all-tab"
           hidden={subscribersTab !== "all"}
         >
+        {mandates !== null && mandates.length > 0 && (
+          <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-edge p-3">
+            <span className="text-sm text-muted" aria-live="polite">
+              {tr("{0} selected for export", { "0": exportSelected.size })}
+            </span>
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-muted">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-accent"
+                checked={mandates.length > 0 && mandates.every((m) => exportSelected.has(m.id))}
+                onChange={() => toggleExportSelectAll(mandates.map((m) => m.id))}
+                aria-label={tr("Select all subscribers for export")}
+              />
+              {tr("Select all")}
+            </label>
+            <button
+              type="button"
+              className="btn-ghost"
+              disabled={exportingSubscribers || exportSelected.size === 0}
+              onClick={() => void exportSelectedSubscribers()}
+            >
+              {exportingSubscribers
+                ? tr("Exporting…")
+                : tr("Export selected ({0})", { "0": exportSelected.size })}
+            </button>
+          </div>
+        )}
         {mandates !== null && mandates.some(endable) && (
           <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-edge p-3">
             <span className="text-sm text-muted" aria-live="polite">
@@ -2932,6 +3092,14 @@ export default function MerchantPage() {
                             />
                           </>
                         )}
+                        <input
+                          id={`export-mandate-${m.id}`}
+                          type="checkbox"
+                          className="h-4 w-4 accent-accent"
+                          checked={exportSelected.has(m.id)}
+                          onChange={() => toggleExportSelected(m.id)}
+                          aria-label={tr("Select subscription #{0} for export", { "0": m.id })}
+                        />
                         <Link
                           href={`/mandates/?id=${m.id}`}
                           className="font-medium hover:underline text-soft focus:outline-none focus:ring-1 focus:ring-accent rounded"

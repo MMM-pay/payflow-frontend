@@ -966,6 +966,14 @@ function SubscribeInner() {
                       : tr("{0} charges, then the mandate completes.", { "0": confirmation.limit })}
                 </dd>
               </div>
+              {confirmation.totalCommitment !== null && (
+                <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                  <dt className="text-muted">{tr("Total authorised")}</dt>
+                  <dd className="font-medium tabular-nums">
+                    {formatAmount(confirmation.totalCommitment, pendingMeta)}
+                  </dd>
+                </div>
+              )}
               <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
                 <dt className="text-muted">{tr("First charge")}</dt>
                 <dd>
@@ -974,7 +982,24 @@ function SubscribeInner() {
                     : `${formatDate(confirmation.firstChargeAt)} (${formatWhen(confirmation.firstChargeAt)})`}
                 </dd>
               </div>
+              {confirmation.lastChargeAt !== null && (
+                <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                  <dt className="text-muted">{tr("Final charge")}</dt>
+                  <dd>
+                    <time dateTime={new Date(confirmation.lastChargeAt * 1000).toISOString()}>
+                      {formatDate(confirmation.lastChargeAt)} ({formatWhen(confirmation.lastChargeAt)})
+                    </time>
+                  </dd>
+                </div>
+              )}
             </dl>
+            {!confirmation.openEnded && confirmation.lastChargeAt !== null && confirmation.totalCommitment !== null && (
+              <p className="mt-4 rounded-lg border border-edge/80 bg-fg/[0.02] p-3 text-sm text-muted">
+                {confirmation.limit === 1
+                  ? tr("This cap ends the mandate automatically: its only charge is due {0} ({1}). Once that charge settles, no further charges are taken and the mandate completes — there is nothing left to cancel.", { "0": formatDate(confirmation.lastChargeAt), "1": formatWhen(confirmation.lastChargeAt) })
+                  : tr("This cap ends the mandate automatically: the final charge is number {0} of the {1} authorised in total, due {2} ({3}). After it settles, no further charges are taken and the mandate completes. Cancel from your account page before then to stop it sooner.", { "0": confirmation.limit, "1": formatAmount(confirmation.totalCommitment, pendingMeta), "2": formatDate(confirmation.lastChargeAt), "3": formatWhen(confirmation.lastChargeAt) })}
+              </p>
+            )}
             {confirmation.fee === null && !feeLoading && (
               <p className="mt-3 text-xs text-muted">
                 {tr("The protocol fee could not be read from the contract right now. It is still taken from the amount above when the charge settles.")}
