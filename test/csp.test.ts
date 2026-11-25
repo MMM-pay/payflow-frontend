@@ -1,6 +1,18 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { applyCspToExport, withInlineScriptHashes } from "../scripts/apply-csp.mjs";
+import { applyCspToExport, withCsp } from "../scripts/apply-csp.mjs";
+
+function digest(contents: string) {
+  return createHash("sha256").update(contents, "utf8").digest("base64");
+}
+
+function cspFrom(html: string) {
+  const match = html.match(
+    /<meta http-equiv="Content-Security-Policy" content="([^"]+)">/,
+  );
+  expect(match).not.toBeNull();
+  return match?.[1] ?? "";
+}
 
 describe("static export CSP", () => {
   it("hashes inline scripts and injects the policy before them", () => {

@@ -895,7 +895,7 @@ function DiscountForm({
   onCancel: () => void;
   onApply: (bps: number, charges: number) => void;
 }) {
-  const { t: tr, formatAmount } = useI18n();
+  const { t: tr, formatAmount, translateMessage } = useI18n();
   const [percent, setPercent] = useState("10");
   const [charges, setCharges] = useState("3");
   const bpsCheck = checkDiscountBps(percent);
@@ -994,7 +994,7 @@ function RefundForm({
   onCancel: () => void;
   onConfirm: (amount: bigint) => void;
 }) {
-  const { checkAmount, t: tr, formatAmount } = useI18n();
+  const { checkAmount, t: tr, formatAmount, translateMessage } = useI18n();
   const amountCheck = checkAmount(amount, meta.decimals);
   const maxRefundStroops = maxRefund;
   const refundInvalid = !amountCheck.ok || amountCheck.stroops > maxRefundStroops;

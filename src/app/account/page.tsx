@@ -2125,7 +2125,7 @@ function AccountInner() {
                                 className="mt-1 text-sm text-danger"
                               >
                                 {transferDisplayError}
-                              </InlineError>
+                              </p>
                             )}
                           </div>
                           <button

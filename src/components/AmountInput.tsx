@@ -58,7 +58,7 @@ export function AmountInput({
   invalid?: boolean;
   onBlur?: () => void;
 }) {
-  const { locale, amountError, t: tr } = useI18n();
+  const { locale, amountError, translateMessage, t: tr } = useI18n();
   const previousLocale = useRef(locale);
   useEffect(() => {
     if (previousLocale.current === locale) return;
