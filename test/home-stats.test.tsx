@@ -75,4 +75,23 @@ describe("Home page protocol stats (#14)", () => {
     // Contract badge / hint appears
     expect(screen.getByText("from contract")).toBeTruthy();
   });
+
+  it("shows the indexer error state when both API calls fail", async () => {
+    // api.ts normally fails soft, but the page must also survive a rejected
+    // promise (proxy 502, aborted request) instead of leaving "…" forever.
+    apiMock.stats.mockRejectedValue(new Error("502 Bad Gateway"));
+    apiMock.recentCharges.mockRejectedValue(new Error("502 Bad Gateway"));
+    chainMock.chainProtocolStats.mockRejectedValue(new Error("RPC unavailable"));
+
+    render(<HomePage />);
+
+    expect(
+      await screen.findByText(/The indexer is unreachable, so historical activity counters require the indexer/i),
+    ).toBeTruthy();
+    // The contract fallback failed too, so the counters say so rather than
+    // inventing zeroes.
+    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(3);
+    expect(screen.queryByText("from contract")).toBeNull();
+    expect(screen.queryByText("Recent activity")).toBeNull();
+  });
 });

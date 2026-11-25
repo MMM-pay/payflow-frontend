@@ -731,4 +731,27 @@ describe("MerchantPage deactivate all plans", () => {
     await waitFor(() => expect(payflowMock.setPlanActive).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
+
+  it("shows the churn error state instead of misleading counts when the API report is inconsistent", async () => {
+    // The backend answers, but its totals do not add up (net should be
+    // started - cancelled - ended - completed). The dashboard must hide the
+    // report rather than present counts it cannot trust.
+    apiMock.merchantChurn.mockResolvedValue({
+      merchant: MERCHANT,
+      bucket: "month",
+      buckets: [
+        { bucket: "2026-10", started: 3, cancelled: 1, ended: 0, completed: 0, net: 99 },
+      ],
+    });
+
+    render(<MerchantPage />);
+
+    expect(
+      await screen.findByText(/The backend returned an incomplete or inconsistent churn report/i),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("heading", { name: "Monthly subscriber activity" }),
+    ).toBeTruthy();
+    expect(screen.queryByText("99")).toBeNull();
+  });
 });

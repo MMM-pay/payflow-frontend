@@ -211,6 +211,19 @@ describe("Mandate details page (/mandates/?id=N) (#10)", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
+  it("shows an error notice when both the indexer and the contract read fail", async () => {
+    apiMock.mandate.mockRejectedValue(new Error("indexer down"));
+    chainMock.chainMandate.mockRejectedValue(new Error("RPC unavailable"));
+
+    render(<MandatesPage />);
+
+    expect(await screen.findByText("RPC unavailable")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+    // No fabricated mandate details behind the error.
+    expect(screen.queryByText("Mandate #1")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Cancel subscription/i })).toBeNull();
+  });
+
   it("keeps the dialog open with the error on a failed cancel, and lets a retry succeed", async () => {
     walletMock.address = "GSUBSCRIBER1234567890";
     apiMock.mandate.mockResolvedValue(mockMandate());
