@@ -54,7 +54,9 @@ const payflowMock = vi.hoisted(() => ({
 const endMandatesMock = vi.hoisted(() => vi.fn());
 
 const chainMock = vi.hoisted(() => ({
+  MERCHANT_MANDATE_PAGE_SIZE: 50,
   chainMandatesFor: vi.fn(),
+  chainMerchantMandatesPage: vi.fn(async () => ({ rows: [], total: 0 })),
   chainMerchantSummary: vi.fn(),
   chainPlansOf: vi.fn(),
   chainPlanSubscriberCount: vi.fn(),
@@ -526,7 +528,11 @@ describe("MerchantPage deactivate all plans", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "Deactivate all active plans?" });
     expect(dialog.textContent).toContain("This will deactivate 2 active plans");
-    expect(dialog.textContent).toContain("Affected open subscriptions: 2 mandates");
+    // The impact count arrives with the mandate page, one read after the
+    // plans; wait for it rather than racing the dialog's first paint.
+    await waitFor(() =>
+      expect(dialog.textContent).toContain("Affected open subscriptions: 2 mandates"),
+    );
   });
 
   it("calls deactivate_page for each page and shows progress", async () => {
@@ -607,7 +613,9 @@ describe("MerchantPage deactivate all plans", () => {
     second.resolve("tx-hash");
     await waitFor(() => expect(screen.getByText("All active plans deactivated.")).toBeTruthy());
     expect(payflowMock.deactivatePage).toHaveBeenCalledTimes(2);
-  });
+    // Sixty plan cards plus the mandate page is a heavy render; under the full
+    // suite it can exceed the default 5s budget even though it is deterministic.
+  }, 20_000);
 
   it("hides the button when there are no active plans", async () => {
     apiMock.plans.mockResolvedValue({
@@ -689,7 +697,7 @@ describe("MerchantPage deactivate all plans", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "Deactivate" })[0]!);
 
     const dialog = await screen.findByRole("dialog", { name: "Deactivate plan Plan 1?" });
-    expect(dialog.textContent).toContain("1 open subscription");
+    await waitFor(() => expect(dialog.textContent).toContain("1 open subscription"));
   });
 
   it("deactivates a single plan from its own dialog", async () => {

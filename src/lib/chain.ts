@@ -250,6 +250,85 @@ export async function chainMandatesFor(
   return mandates.map(mandateToApi).sort((a, b) => b.id - a.id);
 }
 
+/** How many mandates one "Load more" step reads. Matches the contract's MAX_PAGE. */
+export const MERCHANT_MANDATE_PAGE_SIZE = MAX_PAGE;
+
+/**
+ * The slice of an oldest-first index that holds the `offset`-th newest `limit`
+ * ids, as `[start, limit]`, or null when the index is exhausted.
+ *
+ * The contract's index is oldest first, while the dashboard lists newest
+ * first, so "load more" walks backwards from the end: page 0 is the newest
+ * `limit` ids, page 1 the `limit` before those, and so on. Exported for tests.
+ */
+export function indexWindow(
+  count: number,
+  offset: number,
+  limit: number,
+): [number, number] | null {
+  const safeCount = Number.isFinite(count) ? Math.max(0, Math.trunc(count)) : 0;
+  const safeOffset = Number.isFinite(offset) ? Math.max(0, Math.trunc(offset)) : 0;
+  const safeLimit = Number.isFinite(limit) ? Math.max(0, Math.trunc(limit)) : 0;
+  if (safeLimit === 0) return null;
+  const end = Math.max(0, safeCount - safeOffset);
+  const start = Math.max(0, end - safeLimit);
+  return end > start ? [start, end - start] : null;
+}
+
+/**
+ * Append a page to the rows already shown, by mandate id.
+ *
+ * Load-more is offset based, and a subscription opened while the merchant is
+ * paging shifts every offset by one. Keying by id means a mandate that slides
+ * into the next page is updated, not listed twice; rows are kept newest first
+ * so the list stays in the order the dashboard has always shown.
+ * Exported for tests.
+ */
+export function mergeMandates(
+  existing: ApiMandate[],
+  incoming: ApiMandate[],
+): ApiMandate[] {
+  const byId = new Map<number, ApiMandate>();
+  for (const mandate of existing) byId.set(mandate.id, mandate);
+  for (const mandate of incoming) byId.set(mandate.id, mandate);
+  return [...byId.values()].sort((a, b) => b.id - a.id);
+}
+
+/** A page of a merchant's mandates read from contract state. */
+export interface MandatePage {
+  rows: ApiMandate[];
+  /**
+   * How many mandates the merchant has in total. Null when the contract
+   * cannot say (an old deployment without `merchant_mandate_count`), in which
+   * case the caller keeps the "Load more" control until a page comes back short.
+   */
+  total: number | null;
+}
+
+/**
+ * Read one page of a merchant's mandates from contract state, newest first.
+ *
+ * Unlike `chainMandatesFor`, this reads exactly one index window, so a
+ * merchant with more subscribers than the old fixed probe can page through
+ * all of them instead of only ever seeing the newest ones.
+ */
+export async function chainMerchantMandatesPage(
+  source: string,
+  merchant: string,
+  offset = 0,
+  limit = MERCHANT_MANDATE_PAGE_SIZE,
+): Promise<MandatePage> {
+  const count = await payflow.merchantMandateCount(source, merchant);
+  const window = indexWindow(count, offset, limit);
+  if (!window) return { rows: [], total: count };
+  const ids = await payflow.merchantMandates(source, merchant, window[0], window[1]);
+  const mandates = await settledValues(ids.map((id) => payflow.getMandate(source, id)));
+  return {
+    rows: mandates.map(mandateToApi).sort((a, b) => b.id - a.id),
+    total: count,
+  };
+}
+
 /**
  * Read a single mandate from contract state.
  */

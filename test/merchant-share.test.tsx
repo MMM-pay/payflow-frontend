@@ -155,10 +155,10 @@ describe("MerchantPage share links", () => {
     fireEvent.click(screen.getByRole("button", { name: /show qr/i }));
 
     const link = await screen.findByText(
-      /\/payflow-frontend\/subscribe\/\?plan=1$/,
+      /\/payflow-frontend\/plans\/1\/$/,
     );
     expect(link.textContent).toBe(
-      `${window.location.origin}/payflow-frontend/subscribe/?plan=1`,
+      `${window.location.origin}/payflow-frontend/plans/1/`,
     );
   });
 
@@ -176,7 +176,7 @@ describe("MerchantPage share links", () => {
       [...path.matchAll(/M(\d+) (\d+)/g)].map((m) => `${m[1]},${m[2]}`),
     );
     const expected = qrMatrix(
-      `${window.location.origin}/payflow-frontend/subscribe/?plan=1`,
+      `${window.location.origin}/payflow-frontend/plans/1/`,
     )
       .flatMap((row, y) => row.map((dark, x) => (dark ? `${x},${y}` : null)))
       .filter((v): v is string => v !== null);

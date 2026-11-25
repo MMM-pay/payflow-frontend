@@ -2,7 +2,7 @@
 
 import { useI18n } from "@/i18n/provider";
 
-import { Suspense, startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 // `/base` is the SDK without the RPC client or transaction builder: StrKey is
@@ -86,6 +86,7 @@ import { computeVaultRunway } from "@/lib/runway";
 
 import { loadTokenMeta, metaFor, useTokenMetas } from "@/lib/token";
 import { VirtualList } from "@/components/VirtualList";
+import { cursorPage, TABLE_PAGE_SIZE } from "@/lib/pagination";
 import { AmountInput } from "@/components/AmountInput";
 import { ConfirmDialog, confirmTitle } from "@/components/ConfirmDialog";
 import { observeContractRecord } from "@/lib/contract-compat";
@@ -119,6 +120,12 @@ type PaymentsState =
   | { status: "error"; message: string }
   | { status: "data"; rows: PaymentRecord[] };
 
+const PaginationControl = lazy(() =>
+  import("@/components/Pagination").then((module) => ({
+    default: module.Pagination,
+  })),
+);
+
 /**
  * Past charges with a receipt per row.
  *
@@ -137,6 +144,9 @@ function PaymentHistoryPanel({
 }) {
   const { t: tr, translateMessage } = useI18n();
   const [busyHash, setBusyHash] = useState<string | null>(null);
+  const [cursor, setCursor] = useState(0);
+  const visibleRows =
+    state.status === "data" ? cursorPage(state.rows, cursor) : [];
 
   async function download(record: PaymentRecord) {
     setBusyHash(record.row.txHash);
@@ -173,60 +183,72 @@ function PaymentHistoryPanel({
       ) : state.rows.length === 0 ? (
         <Empty title={tr("No charges yet")}>{tr("Charges appear here with a downloadable receipt once they settle on-chain.")}</Empty>
       ) : (
-        <div
-          className="overflow-x-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-          role="region"
-          aria-label={tr("Payment history table")}
-          tabIndex={0}
-        >
-          <table className="w-full min-w-[640px] text-left text-sm">
-            <caption className="sr-only">{tr("Charges settled against your subscriptions, newest first.")}</caption>
-            <thead>
-              <tr className="border-b border-edge text-muted">
-                <th scope="col" className="py-2 pr-3 font-medium">{tr("Subscription")}</th>
-                <th scope="col" className="py-2 pr-3 font-medium">{tr("Ledger")}</th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Amount")}</th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Fee")}</th>
-                <th scope="col" className="py-2 text-right font-medium">{tr("Receipt")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {state.rows.map((record) => {
-                const { row } = record;
-                const label = tr("Receipt for charge {0} on subscription #{1}", {
-                  "0": row.txHash.slice(0, 8),
-                  "1": row.mandateId,
-                });
-                return (
-                  <tr key={`${row.mandateId}:${row.txHash}`} className="border-b border-edge last:border-0">
-                    <th scope="row" className="py-2 pr-3 font-medium">#{row.mandateId}</th>
-                    <td className="py-2 pr-3 tabular-nums text-muted">#{row.ledger}</td>
-                    <td className="py-2 pr-3 text-right tabular-nums">{row.amount} {row.token}</td>
-                    <td className="py-2 pr-3 text-right tabular-nums text-muted">{row.fee} {row.token}</td>
-                    <td className="py-2">
-                      <div className="flex flex-wrap items-center justify-end gap-2">
-                        <Link
-                          href={`/receipt/?tx=${encodeURIComponent(row.txHash)}&mandate=${row.mandateId}`}
-                          className="btn-ghost text-xs"
-                          aria-label={tr("Open {0}", { "0": label })}
-                        >{tr("View")}</Link>
-                        <button
-                          type="button"
-                          className="btn-ghost text-xs"
-                          disabled={busyHash === row.txHash}
-                          aria-label={tr("Download {0}", { "0": label })}
-                          onClick={() => void download(record)}
-                        >
-                          {busyHash === row.txHash ? tr("Preparing…") : tr("Download")}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <>
+          <div
+            className="overflow-x-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            role="region"
+            aria-label={tr("Payment history table")}
+            tabIndex={0}
+          >
+            <table className="w-full min-w-[640px] text-left text-sm">
+              <caption className="sr-only">{tr("Charges settled against your subscriptions, newest first.")}</caption>
+              <thead>
+                <tr className="border-b border-edge text-muted">
+                  <th scope="col" className="py-2 pr-3 font-medium">{tr("Subscription")}</th>
+                  <th scope="col" className="py-2 pr-3 font-medium">{tr("Ledger")}</th>
+                  <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Amount")}</th>
+                  <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Fee")}</th>
+                  <th scope="col" className="py-2 text-right font-medium">{tr("Receipt")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleRows.map((record) => {
+                  const { row } = record;
+                  const label = tr("Receipt for charge {0} on subscription #{1}", {
+                    "0": row.txHash.slice(0, 8),
+                    "1": row.mandateId,
+                  });
+                  return (
+                    <tr key={`${row.mandateId}:${row.txHash}`} className="border-b border-edge last:border-0">
+                      <th scope="row" className="py-2 pr-3 font-medium">#{row.mandateId}</th>
+                      <td className="py-2 pr-3 tabular-nums text-muted">#{row.ledger}</td>
+                      <td className="py-2 pr-3 text-right tabular-nums">{row.amount} {row.token}</td>
+                      <td className="py-2 pr-3 text-right tabular-nums text-muted">{row.fee} {row.token}</td>
+                      <td className="py-2">
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                          <Link
+                            href={`/receipt/?tx=${encodeURIComponent(row.txHash)}&mandate=${row.mandateId}`}
+                            className="btn-ghost text-xs"
+                            aria-label={tr("Open {0}", { "0": label })}
+                          >{tr("View")}</Link>
+                          <button
+                            type="button"
+                            className="btn-ghost text-xs"
+                            disabled={busyHash === row.txHash}
+                            aria-label={tr("Download {0}", { "0": label })}
+                            onClick={() => void download(record)}
+                          >
+                            {busyHash === row.txHash ? tr("Preparing…") : tr("Download")}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {state.rows.length > TABLE_PAGE_SIZE && (
+            <Suspense fallback={null}>
+              <PaginationControl
+                cursor={cursor}
+                limit={TABLE_PAGE_SIZE}
+                total={state.rows.length}
+                onCursorChange={setCursor}
+              />
+            </Suspense>
+          )}
+        </>
       )}
     </Panel>
   );
@@ -273,6 +295,7 @@ function AccountInner() {
   // The mandate whose date picker is open, and the date typed into it.
   const [pauseFor, setPauseFor] = useState<number | null>(null);
   const [pauseDate, setPauseDate] = useState("");
+  const [pauseError, setPauseError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [capFor, setCapFor] = useState<number | null>(null);
@@ -324,6 +347,13 @@ function AccountInner() {
   useEffect(() => {
     addressRef.current = viewAddress;
   }, [viewAddress]);
+  // Once the page unmounts no address is current, so every guarded callback
+  // returns instead of setting state on a page that is gone.
+  useEffect(() => {
+    return () => {
+      addressRef.current = null;
+    };
+  }, []);
 
   // The vault holds the configured token; each mandate carries the token it
   // was opened against, which the indexer does not report.
@@ -1016,6 +1046,7 @@ function AccountInner() {
     setPauseFor(mandateId);
     const week = new Date(Date.now() + 7 * 86_400_000);
     setPauseDate(week.toISOString().slice(0, 10));
+    setPauseError(null);
     setConfirmCancel(null);
     setError(null);
   }
@@ -1024,13 +1055,16 @@ function AccountInner() {
     if (!address || isReadOnly) return;
     const until = parsePauseDate(pauseDate);
     if (until === null) {
-      setError(tr("Pick a date for the mandate to resume on."));
+      setPauseError(tr("Pick a date for the mandate to resume on."));
+      document.getElementById(`pause-until-${mandateId}`)?.focus();
       return;
     }
     if (until * 1000 <= Date.now()) {
-      setError(tr("Pick a date in the future."));
+      setPauseError(tr("Pick a date in the future."));
+      document.getElementById(`pause-until-${mandateId}`)?.focus();
       return;
     }
+    setPauseError(null);
     await run(`pause-until-${mandateId}`, () =>
       payflow.pauseUntil(address, signXdr, mandateId, until),
     );
@@ -1358,6 +1392,7 @@ function AccountInner() {
                     : tr("Accepts 5, 5.0 — and 5,0 where commas are decimals.")
                 }
                 hideError={withdrawError !== null}
+                invalid={withdrawError !== null}
                 describedBy={withdrawError ? "withdraw-amount-error" : undefined}
               />
               {withdrawError && (
@@ -1483,7 +1518,7 @@ function AccountInner() {
                   disabled={busy !== null}
                 />
                 {recipientDisplayError && (
-                  <p id="fund-recipient-error" className="mt-1 text-sm text-danger">
+                  <p id="fund-recipient-error" role="alert" className="mt-1 text-sm text-danger">
                     {translateMessage(recipientDisplayError)}
                   </p>
                 )}
@@ -1929,7 +1964,12 @@ function AccountInner() {
                                 min={minPauseDate()}
                                 value={pauseDate}
                                 disabled={busy !== null}
-                                onChange={(e) => setPauseDate(e.target.value)}
+                                aria-invalid={pauseError !== null || undefined}
+                                aria-describedby={pauseError ? `pause-until-error-${m.id}` : undefined}
+                                onChange={(e) => {
+                                  setPauseDate(e.target.value);
+                                  setPauseError(null);
+                                }}
                               />
                               <button
                                 type="button"
@@ -1945,8 +1985,20 @@ function AccountInner() {
                                 type="button"
                                 className="btn-ghost"
                                 disabled={busy !== null}
-                                onClick={() => setPauseFor(null)}
+                                onClick={() => {
+                                  setPauseFor(null);
+                                  setPauseError(null);
+                                }}
                               >{tr("Back")}</button>
+                              {pauseError && (
+                                <p
+                                  id={`pause-until-error-${m.id}`}
+                                  role="alert"
+                                  className="w-full text-xs text-danger"
+                                >
+                                  {pauseError}
+                                </p>
+                              )}
                             </>
                           ) : (
                             <button
@@ -2053,6 +2105,7 @@ function AccountInner() {
                             {transferDisplayError && (
                               <p
                                 id={`transfer-to-error-${m.id}`}
+                                role="alert"
                                 className="mt-1 text-sm text-danger"
                               >
                                 {transferDisplayError}
@@ -2102,7 +2155,12 @@ function AccountInner() {
                           inputMode="numeric"
                           className="input mt-1 w-full"
                           value={capAmount}
-                          onChange={(e) => setCapAmount(e.target.value)}
+                          onChange={(e) => {
+                            setCapAmount(e.target.value);
+                            setCapError(null);
+                          }}
+                          aria-invalid={capError !== null || undefined}
+                          aria-describedby={capError ? `cap-error-${m.id}` : undefined}
                           disabled={busy !== null}
                         />
                       </div>
@@ -2118,12 +2176,15 @@ function AccountInner() {
                         type="button"
                         className="btn-ghost"
                         disabled={busy !== null}
-                        onClick={() => setCapFor(null)}
+                        onClick={() => {
+                          setCapFor(null);
+                          setCapError(null);
+                        }}
                       >
                         Close
                       </button>
                       {capError && (
-                        <p className="w-full text-xs text-rose-300" role="alert">
+                        <p id={`cap-error-${m.id}`} className="w-full text-xs text-danger" role="alert">
                           {capError}
                         </p>
                       )}
@@ -2203,6 +2264,8 @@ function AccountInner() {
         confirmLabel={tr("Cancel subscriptions")}
         busy={busy === "cancel-all"}
         busyLabel={tr("Cancelling…")}
+        confirmDisabled={networkMismatch}
+        error={error ?? undefined}
         danger
       >
         <p className="text-muted">

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { useEffect } from "react";
-import { act, cleanup, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SIGNATURE_CANCELLED_MESSAGE } from "@/lib/signature-error";
 import {
@@ -585,6 +585,53 @@ describe("WalletProvider connection and signing lifecycle", () => {
     expect(result.current.walletNetwork).toBe(PUBLIC_PASSPHRASE);
     expect(kit.openModal).not.toHaveBeenCalled();
     await expect(result.current.signXdr("UNSIGNED")).rejects.toThrow("correct network");
+    expect(kit.signTransaction).not.toHaveBeenCalled();
+  });
+
+  it("rechecks the wallet network immediately before signing", async () => {
+    kit.getNetwork
+      .mockResolvedValueOnce({ networkPassphrase: TESTNET_PASSPHRASE })
+      .mockResolvedValueOnce({ networkPassphrase: PUBLIC_PASSPHRASE });
+    const { result } = mountWallet();
+    await act(async () => result.current.connect());
+
+    await expect(result.current.signXdr("UNSIGNED")).rejects.toThrow("correct network");
+    await waitFor(() => expect(result.current.networkMismatch).toBe(true));
+    expect(kit.signTransaction).not.toHaveBeenCalled();
+  });
+
+  it("shows an action explanation and only opens the wallet after confirmation", async () => {
+    const { result } = mountWallet();
+    await act(async () => result.current.connect());
+
+    let signing!: Promise<string>;
+    act(() => {
+      signing = result.current.signXdr("UNSIGNED", "deposit tokens into a vault");
+    });
+
+    const dialog = await screen.findByRole("dialog", { name: "Review this wallet action?" });
+    expect(dialog.textContent).toContain(
+      "This transaction will deposit tokens into a vault.",
+    );
+    expect(kit.signTransaction).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue to wallet" }));
+    await expect(signing).resolves.toBe("SIGNED_XDR");
+    expect(kit.signTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not ask the wallet to sign when the action explanation is cancelled", async () => {
+    const { result } = mountWallet();
+    await act(async () => result.current.connect());
+
+    let signing!: Promise<string>;
+    act(() => {
+      signing = result.current.signXdr("UNSIGNED", "deposit tokens into a vault");
+    });
+    await screen.findByRole("dialog", { name: "Review this wallet action?" });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await expect(signing).rejects.toThrow(SIGNATURE_CANCELLED_MESSAGE);
     expect(kit.signTransaction).not.toHaveBeenCalled();
   });
 
