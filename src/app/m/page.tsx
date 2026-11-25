@@ -140,9 +140,9 @@ function MerchantCatalogue() {
       {direct && (
         <Notice tone="info">{tr("Reading plans directly from the contract — the indexer is not reachable, so this list may be capped at the merchant's newest plans.")}</Notice>
       )}
-      {error && <Notice tone="error">{translateMessage(error)}</Notice>}
+      {error && <Notice tone="error" role="alert">{translateMessage(error)}</Notice>}
       {done && (
-        <Notice tone="ok">{tr("Subscribed. Transaction")}{" "}<TxLink hash={done} />
+        <Notice tone="ok" role="status">{tr("Subscribed. Transaction")}{" "}<TxLink hash={done} />
         </Notice>
       )}
 

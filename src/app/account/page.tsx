@@ -1557,7 +1557,7 @@ function AccountInner() {
         subtitle={tr("Deposits, withdrawals and debits behind your balance.")}
       >
         {history === null ? (
-          <Empty>{tr("Loading history…")}</Empty>
+          <SkeletonRows rows={3} label={tr("Loading history")} />
         ) : history.length === 0 ? (
           indexerAvailable ? (
             <Empty
