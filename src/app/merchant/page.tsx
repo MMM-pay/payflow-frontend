@@ -3,12 +3,10 @@
 import { useI18n } from "@/i18n/provider";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 
 import { api, checkWebhookUrl, type ApiChargeAttempt, type ApiMandate, type ApiPlan, type ApiWebhook, type MerchantSummary, type StreamEvent } from "@/lib/api";
-import { RevenueChart } from "@/components/RevenueChart";
-import { WebhookDeliveryHistory } from "@/components/WebhookDeliveryHistory";
-import { CohortRetentionTable } from "@/components/CohortRetentionTable";
 import { buildCsv, buildMonthlyRevenueCsv, downloadCsv, exportFilename, monthlyRevenueFilename, type ChargeRow, type MonthlyRevenueRow } from "@/lib/csv";
 import { fillBuckets, parseRevenue, type BucketSize, type RevenuePoint } from "@/lib/revenue";
 import { parseMerchantChurn, type MerchantChurnMonth } from "@/lib/churn";
@@ -91,6 +89,28 @@ import { NotificationCentre } from "@/components/NotificationCentre";
 import { evaluateMerchantNotifications } from "@/lib/notifications";
 import { subscribeLink } from "@/lib/share";
 
+function MerchantFeatureLoading({ label }: { label: string }) {
+  const { t: tr } = useI18n();
+  return (
+    <span role="status" aria-busy="true" className="sr-only">
+      {tr(label)}
+    </span>
+  );
+}
+
+const RevenueChart = dynamic(
+  () => import("@/components/RevenueChart").then((module) => module.RevenueChart),
+  { loading: () => <MerchantFeatureLoading label="Loading revenue chart…" /> },
+);
+const CohortRetentionTable = dynamic(
+  () => import("@/components/CohortRetentionTable").then((module) => module.CohortRetentionTable),
+  { loading: () => <MerchantFeatureLoading label="Loading cohort retention data…" /> },
+);
+const WebhookDeliveryHistory = dynamic(
+  () => import("@/components/WebhookDeliveryHistory").then((module) => module.WebhookDeliveryHistory),
+  { loading: () => <MerchantFeatureLoading label="Loading delivery history…" /> },
+);
+
 const PERIOD_OPTIONS = [
   { label: "Every minute (demo)", value: 60 },
   { label: "Daily", value: 86_400 },
@@ -123,12 +143,12 @@ function FeePreview({
   meta: TokenMeta;
   usdEstimate?: string | null;
 }) {
-  const { t: tr, formatAmount, formatFeeBps } = useI18n();
+  const { t: tr, formatFeeBps } = useI18n();
   return (
-    <span>{tr("Subscriber pays")}{" "}{formatAmount(split.gross, meta)}
+    <span>{tr("Subscriber pays")}{" "}<Money amount={split.gross} meta={meta} />
       {usdEstimate ? ` (≈ ${usdEstimate})` : ""}{" "}{tr("· protocol fee")}{" "}
-      {formatAmount(split.fee, meta)} ({formatFeeBps(feeBps)}{tr(") · you receive")}{" "}
-      {formatAmount(split.net, meta)}.
+      <Money amount={split.fee} meta={meta} /> ({formatFeeBps(feeBps)}{tr(") · you receive")}{" "}
+      <Money amount={split.net} meta={meta} />.
     </span>
   );
 }
@@ -904,7 +924,7 @@ function DiscountForm({
       )}
 
       {bpsCheck.ok && chargesCheck.ok && (
-        <p className="mt-2 text-sm text-muted">{tr("Subscriber pays")}{" "}{formatAmount(discountedAmount(amount, bpsCheck.bps), meta)}{" "}{tr("for the next")}{" "}{chargesCheck.charges === 1 ?tr("charge") :tr("{0} charges", { "0": chargesCheck.charges })},{" "}{tr("then")}{" "}{formatAmount(amount, meta)}.
+        <p className="mt-2 text-sm text-muted">{tr("Subscriber pays")}{" "}<Money amount={discountedAmount(amount, bpsCheck.bps)} meta={meta} />{" "}{tr("for the next")}{" "}{chargesCheck.charges === 1 ?tr("charge") :tr("{0} charges", { "0": chargesCheck.charges })},{" "}{tr("then")}{" "}<Money amount={amount} meta={meta} />.
           {discountedAmount(amount, bpsCheck.bps) === 0n && (
             <>{" "}{tr("This discount rounds the charge down to zero, which the vault cannot debit.")}</>
           )}
@@ -983,7 +1003,7 @@ function RefundForm({
         </p>
       )}
       {amountCheck.ok && amountCheck.stroops > maxRefundStroops && (
-        <p id="refund-amount-error" className="mt-2 text-sm text-danger">{tr("Refund cannot exceed")}{" "}{formatAmount(maxRefundStroops, meta)}.
+        <p id="refund-amount-error" className="mt-2 text-sm text-danger">{tr("Refund cannot exceed")}{" "}<Money amount={maxRefundStroops} meta={meta} />.
         </p>
       )}
     </div>
@@ -1961,8 +1981,8 @@ export default function MerchantPage() {
           label={tr("Collected")}
           loading={summary === null}
           value={
-            summary?.totalCollected
-              ? formatTokenValue(summary.totalCollected, 4, tokenMeta.decimals)
+            summary?.totalCollected != null
+              ? <Money amount={summary.totalCollected} meta={tokenMeta} digits={4} />
               : "—"
           }
           hint={tr("{0}, net of protocol fee", { "0": tokenMeta.symbol })}
@@ -2364,7 +2384,7 @@ export default function MerchantPage() {
                       )}
                     </div>
                     <div className="mt-1 text-sm text-muted">
-                      {formatTokenValue(p.amount, 4, meta.decimals)} {meta.symbol}{" "}
+                      <Money amount={p.amount} meta={meta} digits={4} />{" "}
                       {usdEstimate && (
                         <span
                           className="tabular-nums"
@@ -2405,8 +2425,7 @@ export default function MerchantPage() {
                             <div className="flex gap-1">
                               <dt>{tr("Collected")}</dt>
                               <dd className="font-medium text-foreground tabular-nums">
-                                {formatTokenValue(stats.total_collected!, 4, meta.decimals)}{" "}
-                                {meta.symbol}
+                                <Money amount={stats.total_collected!} meta={meta} digits={4} />
                               </dd>
                             </div>
                             <div className="flex gap-1">
@@ -2788,18 +2807,13 @@ export default function MerchantPage() {
                         )}
                       </div>
                       <div className="mt-1 text-xs text-muted">
-                        {formatTokenValue(m.amount, 4, meta.decimals)} {meta.symbol}{" "}
+                        <Money amount={m.amount} meta={meta} digits={4} />{" "}
                         {formatPeriod(m.period)} · {formatNumber(m.charges_made)}{" "}{tr("settled · next")}{" "}
                         {m.status === "Active" ? <TimeAgo value={m.next_charge} /> : "—"}
                       </div>
                       {badge && (
                         <div className="mt-1 text-xs text-accent">{tr("Subscriber pays")}{" "}
-                          {formatTokenValue(
-                            discountedAmount(BigInt(m.amount), Number(m.discount_bps)),
-                            4,
-                            meta.decimals,
-                          )}{" "}
-                          {meta.symbol}{" "}{tr("while the discount runs")}{remaining === null
+                          <Money amount={discountedAmount(BigInt(m.amount), Number(m.discount_bps))} meta={meta} digits={4} />{" "}{tr("while the discount runs")}{remaining === null
                             ? ""
                             : remaining === 0
                               ?tr(" — the discount has run out")
@@ -2811,7 +2825,7 @@ export default function MerchantPage() {
                         {balance === null ? (
                           <span className="text-muted">{tr("Vault balance —")}</span>
                         ) : short ? (
-                          <span className="text-danger">{tr("Short by")}{" "}{formatTokenValue(funding.shortfall)} {meta.symbol}
+                          <span className="text-danger">{tr("Short by")}{" "}<Money amount={funding.shortfall} meta={meta} digits={4} />
                           </span>
                         ) : (
                           <span className="text-accent">{tr("Funded")}</span>
@@ -2834,7 +2848,7 @@ export default function MerchantPage() {
                             {busy === `charge-${m.id}` ?tr("Charging…") : short ?tr("Short on funds") :tr("Charge now")}
                           </button>
                           {short && (
-                            <span className="text-xs text-danger">{tr("Subscriber vault short by")}{" "}{formatTokenValue(funding.shortfall)} {meta.symbol}
+                            <span className="text-xs text-danger">{tr("Subscriber vault short by")}{" "}<Money amount={funding.shortfall} meta={meta} digits={4} />
                             </span>
                           )}
                         </>
@@ -3043,12 +3057,12 @@ export default function MerchantPage() {
                           )}
                         </div>
                         <div className="mt-1 text-sm text-muted">
-                          {formatTokenValue(m.amount, 4, meta.decimals)} {meta.symbol}{" "}
+                          <Money amount={m.amount} meta={meta} digits={4} />{" "}
                           {formatPeriod(m.period)} · {formatNumber(m.charges_made)}{" "}{tr("settled")}</div>
                         <div className="mt-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2">
                           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
                             <div className="text-sm">
-                              <span className="font-medium text-danger">{tr("Short by")}{" "}{formatTokenValue(unpaid.shortfall, 4, meta.decimals)} {meta.symbol}
+                              <span className="font-medium text-danger">{tr("Short by")}{" "}<Money amount={unpaid.shortfall} meta={meta} digits={4} />
                               </span>
                             </div>
                             <div className="text-xs text-muted">{tr("Overdue for")}{" "}{overdueText}

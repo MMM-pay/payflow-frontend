@@ -92,9 +92,10 @@ describe("ReceiptPage component", () => {
     expect(screen.getByText(/Charge 1 of 12 · Ledger #54321/)).toBeTruthy();
 
     // Amounts
-    expect(screen.getAllByText("2.5 XLM").length).toBeGreaterThan(0);
-    expect(screen.getByText("-0.025 XLM")).toBeTruthy();
-    expect(screen.getByText("2.475 XLM")).toBeTruthy();
+    const amounts = screen.getAllByTestId("money-amount").map((amount) => amount.getAttribute("aria-label"));
+    expect(amounts.filter((amount) => amount === "2.5 XLM")).toHaveLength(2);
+    expect(amounts).toContain("minus 0.025 XLM");
+    expect(amounts).toContain("2.475 XLM");
 
     // Print button
     const printBtn = screen.getByRole("button", { name: /Print this receipt/i });

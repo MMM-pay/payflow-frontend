@@ -15,6 +15,7 @@ import { payflow } from "@/lib/lazy-payflow";
 import { useWallet } from "@/lib/wallet";
 
 import { AddressLink, Badge, Empty, Notice, Panel, TxLink } from "@/components/ui";
+import { Money } from "@/components/Money";
 
 type ChargeRow = PlanCharge;
 
@@ -23,7 +24,7 @@ interface PlanPageClientProps {
 }
 
 export function PlanPageClient({ planId }: PlanPageClientProps) {
-  const { t: tr, formatPeriod, translateMessage, formatTokenValue } = useI18n();
+  const { t: tr, formatPeriod, translateMessage } = useI18n();
   const { address, networkMismatch, signXdr } = useWallet();
   const wanted = Number(planId);
   const [plan, setPlan] = useState<ApiPlan | null>(null);
@@ -188,7 +189,8 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
           <div>
             <label className="label">{tr("Price")}</label>
             <div className="text-2xl font-semibold tabular-nums">
-              {formatTokenValue(plan.amount)}{" "}{tr("XLM")}</div>
+              <Money amount={plan.amount} />
+            </div>
           </div>
           <div>
             <label className="label">{tr("Billing period")}</label>

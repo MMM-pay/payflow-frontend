@@ -36,6 +36,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ContractVersionNotice } from "@/components/ContractVersionNotice";
 import { DepositCoverageInput } from "@/components/DepositCoverageInput";
 import { LoadingButton } from "@/components/LoadingButton";
+import { Money } from "@/components/Money";
 
 /** Remaining seats in words, without inventing a count the source cannot provide. */
 function seatsLabel(plan: ApiPlan, now: number, tr: Translation): string {
@@ -64,7 +65,7 @@ function ComparisonTable({
   metas: Map<string, TokenMeta>;
   now: number;
 }) {
-  const { t: tr, formatPeriod, formatAmount, formatTokenValue, formatTrialLength, formatNumber } = useI18n();
+  const { t: tr, formatPeriod, formatTrialLength, formatNumber } = useI18n();
   return (
     <div
       className="mt-3 overflow-x-auto rounded-lg border border-edge"
@@ -91,8 +92,7 @@ function ComparisonTable({
               const meta = metaFor(metas, plan.token);
               return (
                 <td key={plan.id} className="px-3 py-2 tabular-nums">
-                  {formatTokenValue(plan.amount, 4, meta.decimals)}{" "}
-                  <span className="text-xs text-muted">{meta.symbol}</span>
+                  <Money amount={plan.amount} meta={meta} digits={4} />
                 </td>
               );
             })}
@@ -113,7 +113,7 @@ function ComparisonTable({
               const monthly = planMonthlyEquivalent(plan);
               return (
                 <td key={plan.id} className="px-3 py-2 tabular-nums">
-                  {monthly === null ? "—" : formatAmount(monthly, meta)}
+                  {monthly === null ? "—" : <Money amount={monthly} meta={meta} />}
                 </td>
               );
             })}
@@ -156,7 +156,7 @@ function ComparisonTable({
 }
 
 function SubscribeInner() {
-  const { t: tr, formatPeriod, formatDate, formatWhen, translateMessage, formatTrialLength, trialBadge, formatTokenValue, formatUsdString, formatNumber, formatAmount, formatFeeBps } = useI18n();
+  const { t: tr, formatPeriod, formatDate, formatWhen, translateMessage, formatTrialLength, trialBadge, formatUsdString, formatNumber, formatFeeBps } = useI18n();
   const searchParams = useSearchParams();
   const sortParam = (searchParams?.get("sort") as PlanSortOption) || "newest";
   // A shared link (?plan=12) shows that one plan instead of the catalogue.
@@ -780,8 +780,7 @@ function SubscribeInner() {
                       <div>
                         <div className="flex flex-wrap items-baseline gap-2">
                           <div className="text-2xl font-semibold tabular-nums">
-                            {formatTokenValue(plan.amount, 4, meta.decimals)}{" "}
-                            <span className="text-sm font-normal text-muted">{meta.symbol}</span>
+                            <Money amount={plan.amount} meta={meta} digits={4} />
                           </div>
                           {usdEstimate && (
                             <span
@@ -862,7 +861,7 @@ function SubscribeInner() {
                               </div>
                               <div className="flex items-center justify-between text-muted">
                                 <span>{tr("Vault balance")}</span>
-                                <span className="tabular-nums font-medium text-fg">{formatTokenValue(currentBal, 4, meta.decimals)} {meta.symbol}</span>
+                                <span className="tabular-nums font-medium text-fg"><Money amount={currentBal} meta={meta} digits={4} /></span>
                               </div>
                             </div>
 
@@ -935,7 +934,7 @@ function SubscribeInner() {
               <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
                 <dt className="text-muted">{tr("Amount")}</dt>
                 <dd className="font-medium tabular-nums">
-                  {formatAmount(confirmation.gross, pendingMeta)}
+                  <Money amount={confirmation.gross} meta={pendingMeta} />
                 </dd>
               </div>
               <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
@@ -949,7 +948,7 @@ function SubscribeInner() {
                     ? feeLoading
                       ? tr("Checking…")
                       : tr("Unavailable")
-                    : `${formatAmount(confirmation.fee, pendingMeta)} (${formatFeeBps(confirmation.feeBps)})`}
+                    : <><Money amount={confirmation.fee} meta={pendingMeta} /> ({formatFeeBps(confirmation.feeBps)})</>}
                 </dd>
               </div>
               <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">

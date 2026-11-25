@@ -48,7 +48,7 @@ export function Stat({
 }: {
   label: string;
   value: ReactNode;
-  hint?: string;
+  hint?: ReactNode;
   loading?: boolean;
 }) {
   const { t: tr, formatNumber } = useI18n();
@@ -198,9 +198,17 @@ export function TimeAgo({ value }: { value: number }) {
  * out loud in the tooltip and to screen readers, never implied to be vetted.
  * When no name resolves, this is just the address, exactly as before.
  */
-export function MerchantAccount({ value }: { value: string }) {
+export function MerchantAccount({
+  value,
+  resolvedName,
+}: {
+  value: string;
+  /** A name resolved by the caller; supplying one skips the external lookup. */
+  resolvedName?: string | null;
+}) {
   const { t: tr } = useI18n();
-  const name = useOrgName(value);
+  const lookedUpName = useOrgName(resolvedName === undefined ? value : null);
+  const name = resolvedName ?? lookedUpName;
   return (
     <span className="inline-flex max-w-full flex-wrap items-center gap-x-1.5 align-middle">
       {name && (

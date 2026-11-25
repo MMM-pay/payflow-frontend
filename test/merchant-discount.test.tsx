@@ -291,7 +291,8 @@ describe("MerchantPage discount", () => {
     fireEvent.change(percent, { target: { value: "20" } });
 
     // 1 XLM at 20% off is 0.8 XLM, in the token's own scale.
-    expect(screen.getByText(/Subscriber pays 0.8 XLM/)).toBeTruthy();
-    expect(screen.getByText(/then 1 XLM/)).toBeTruthy();
+    const preview = screen.getByText(/Subscriber pays/);
+    expect(preview.textContent).toContain("0.8 XLM");
+    expect(preview.textContent).toContain("then 1 XLM");
   });
 });

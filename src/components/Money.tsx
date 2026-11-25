@@ -15,7 +15,7 @@ export interface MoneyProps {
   meta?: TokenMeta;
   /** Custom symbol override if meta is omitted. */
   symbol?: string;
-  /** Maximum fractional digits to show. Defaults to 4. */
+  /** Maximum fractional digits to show. Defaults to the token's precision. */
   digits?: number;
   /** Whether the amount is currently loading. */
   loading?: boolean;
@@ -64,10 +64,10 @@ export function parseMoneyValue(raw: string | bigint | number | null | undefined
     if (typeof raw === "bigint") {
       b = raw;
     } else if (typeof raw === "number") {
-      if (!Number.isFinite(raw)) {
+      if (!Number.isSafeInteger(raw)) {
         return { valid: false, value: null, isZero: false, isNegative: false, isPositive: false };
       }
-      b = BigInt(Math.trunc(raw));
+      b = BigInt(raw);
     } else {
       const trimmed = String(raw).trim();
       if (!/^[+-]?\d+$/.test(trimmed)) {
@@ -97,7 +97,7 @@ export function Money({
   amount,
   meta = XLM,
   symbol,
-  digits = 4,
+  digits,
   loading = false,
   signDisplay = "auto",
   tone = "auto",
@@ -151,12 +151,20 @@ export function Money({
   // 5. Normal amount rendering (positive, zero, or negative/refund)
   const tokenSymbol = symbol ?? meta.symbol;
   const tokenDecimals = meta.decimals;
+  const precision = Number.isFinite(tokenDecimals)
+    ? Math.min(18, Math.max(0, Math.trunc(tokenDecimals)))
+    : 7;
+  const maxFractionDigits = Number.isFinite(digits)
+    ? Math.min(precision, Math.max(0, Math.trunc(digits ?? precision)))
+    : precision;
   const absValue = parsed.isNegative ? -parsed.value : parsed.value;
 
-  const canonical = fromStroops(absValue, digits, tokenDecimals);
+  const canonical = fromStroops(absValue, maxFractionDigits, tokenDecimals);
   const [, whole = "0", fraction] = /^(\d+)(?:\.(\d+))?$/.exec(canonical) ?? [];
 
-  const decimalSeparator = locale === "fr" ? "," : ".";
+  const decimalSeparator =
+    new Intl.NumberFormat(locale).formatToParts(1.1).find((part) => part.type === "decimal")
+      ?.value ?? ".";
   const formattedNumber = `${formatNumber(BigInt(whole))}${fraction ? decimalSeparator + fraction : ""}`;
 
   // Sign resolution

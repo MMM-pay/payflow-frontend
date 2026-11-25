@@ -27,9 +27,10 @@ import {
   TxLink,
 } from "@/components/ui";
 import { ConfirmDialog, confirmTitle } from "@/components/ConfirmDialog";
+import { Money } from "@/components/Money";
 
 function MandateDetailsInner() {
-  const { t: tr, formatPeriod, formatDate, formatAmount, translateMessage, formatTokenValue, formatNumber } = useI18n();
+  const { t: tr, formatPeriod, formatDate, translateMessage, formatNumber } = useI18n();
   const searchParams = useSearchParams();
   const idParam = searchParams?.get("id");
   const mandateId =
@@ -238,7 +239,7 @@ function MandateDetailsInner() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Stat
           label={tr("Recurring amount")}
-          value={`${fromStroops(currentAmount, 4, tokenMeta.decimals)} ${tokenMeta.symbol}`}
+          value={<Money amount={currentAmount} meta={tokenMeta} digits={4} />}
           hint={hasDiscount ?tr("Discount active ({0}% off)", { "0": discBps / 100 }) : formatPeriod(mandate.period)}
         />
         <Stat
@@ -254,7 +255,7 @@ function MandateDetailsInner() {
         <Stat
           label={tr("Protocol fee")}
           value={`${mandate.fee_bps / 100}%`}
-          hint={`${formatTokenValue(feeAmount, 4, tokenMeta.decimals)} ${tokenMeta.symbol}`}
+          hint={<Money amount={feeAmount} meta={tokenMeta} digits={4} />}
         />
       </div>
 
@@ -285,12 +286,12 @@ function MandateDetailsInner() {
           </div>
           <div className="flex flex-wrap items-center justify-between py-2.5">
             <span className="text-muted">{tr("Net to merchant per charge")}</span>
-            <span>{formatTokenValue(netAmount, 4, tokenMeta.decimals)} {tokenMeta.symbol}</span>
+            <span><Money amount={netAmount} meta={tokenMeta} digits={4} /></span>
           </div>
           {vaultBalance !== null && (
             <div className="flex flex-wrap items-center justify-between py-2.5">
               <span className="text-muted">{tr("Subscriber vault balance")}</span>
-              <span>{formatAmount(vaultBalance, tokenMeta)}</span>
+              <span><Money amount={vaultBalance} meta={tokenMeta} /></span>
             </div>
           )}
           {mandate.last_charge > 0 && (
@@ -488,10 +489,10 @@ function MandateDetailsInner() {
                       #{formatNumber(c.charges_made)}
                     </td>
                     <td className="py-3 px-4 font-medium tabular-nums">
-                      {formatTokenValue(c.amount, 4, tokenMeta.decimals)} {tokenMeta.symbol}
+                      <Money amount={c.amount} meta={tokenMeta} digits={4} />
                     </td>
                     <td className="py-3 px-4 text-muted tabular-nums">
-                      {formatTokenValue(c.fee, 4, tokenMeta.decimals)} {tokenMeta.symbol}
+                      <Money amount={c.fee} meta={tokenMeta} digits={4} />
                     </td>
                     <td className="py-3 pl-4">
                       <TxLink hash={c.tx_hash} />

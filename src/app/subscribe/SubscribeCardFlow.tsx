@@ -13,6 +13,7 @@ import { metaFor } from "@/lib/token";
 import type { TokenMeta } from "@/lib/format";
 import { planAvailability } from "@/lib/availability";
 import { TxLink } from "@/components/ui";
+import { Money } from "@/components/Money";
 
 export function SubscribeCardFlow({
   plan,
@@ -142,7 +143,7 @@ export function SubscribeCardFlow({
         <span>{tr("Subscription Flow")}</span>
         {address && !loadingBalance && (
           <span>
-            {tr("Vault Balance:")} <strong className="tabular-nums text-fg">{formatAmount(vaultBalance ?? 0n, meta)}</strong>
+            {tr("Vault Balance:")} <strong className="tabular-nums text-fg"><Money amount={vaultBalance ?? 0n} meta={meta} /></strong>
           </span>
         )}
       </div>

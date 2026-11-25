@@ -43,7 +43,7 @@ export function SyncLagIndicator({
   className = "",
 }: SyncLagIndicatorProps) {
   const { t: tr, formatNumber } = useI18n();
-  const hookState = useBackendSyncLag();
+  const hookState = useBackendSyncLag({ enabled: stateProp === undefined });
 
   const isCatchingUp = stateProp?.isCatchingUp ?? hookState.isCatchingUp;
   const lag = stateProp?.lag !== undefined ? stateProp.lag : hookState.lag;

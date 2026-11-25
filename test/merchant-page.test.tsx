@@ -129,6 +129,27 @@ afterEach(() => {
 const PLAN_TOKEN_XLM = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
 const PLAN_TOKEN_USDC = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA";
 
+describe("MerchantPage amount rendering", () => {
+  it("preserves a zero collected total", async () => {
+    chainMock.chainMerchantSummary.mockReturnValue({
+      merchant: MERCHANT,
+      activeMandates: 0,
+      totalCollected: 0n,
+      chargeCount: 0,
+      mrr: "0",
+    });
+
+    render(<MerchantPage />);
+
+    const collected = screen.getByText("Collected").closest(".panel");
+    await waitFor(() => {
+      expect(
+        collected?.querySelector('[data-testid="money-amount"]')?.getAttribute("aria-label"),
+      ).toBe("0 XLM");
+    });
+  });
+});
+
 describe("MerchantPage plan search and filters (#300)", () => {
   beforeEach(() => {
     apiMock.plans.mockResolvedValue({
