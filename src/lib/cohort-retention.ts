@@ -1,3 +1,5 @@
+import { chartFillClass } from "./chart-theme";
+
 /**
  * One cohort in the retention grid: a signup month and how many subscribers
  * from that cohort remained active in each subsequent month.
@@ -117,15 +119,18 @@ export function formatRetentionPercent(value: number): string {
 }
 
 /**
- * Generate a CSS background color for a retention cell based on the percentage.
- * Higher retention gets darker/more saturated colors.
- * Returns a Tailwind-compatible class or inline style hint.
+ * Theme-aware fill classes for a retention cell.
+ *
+ * Retention is a chart: its colours must follow the active theme, including a
+ * manual light/dark choice. Tailwind's `dark:` variants only follow the OS, so
+ * these resolve through the `--chart-*` token palette instead, which both the
+ * media query and `data-theme` selectors update.
  */
 export function retentionColorClass(percent: number): string {
-  if (percent >= 90) return "bg-green-100 dark:bg-green-950";
-  if (percent >= 70) return "bg-green-50 dark:bg-green-900/50";
-  if (percent >= 50) return "bg-yellow-50 dark:bg-yellow-900/50";
-  if (percent >= 30) return "bg-orange-50 dark:bg-orange-900/50";
-  if (percent > 0) return "bg-red-50 dark:bg-red-900/50";
-  return "bg-gray-50 dark:bg-gray-900/50";
+  if (percent >= 90) return chartFillClass(0);
+  if (percent >= 70) return chartFillClass(1);
+  if (percent >= 50) return chartFillClass(2);
+  if (percent >= 30) return chartFillClass(3);
+  if (percent > 0) return chartFillClass(3);
+  return chartFillClass(4);
 }
