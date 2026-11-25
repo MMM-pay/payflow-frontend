@@ -54,6 +54,18 @@ export interface Confirmation {
   limit: number;
   /** True when the mandate has no charge cap and runs until cancelled. */
   openEnded: boolean;
+  /**
+   * Unix seconds of the last charge the cap authorises, or null when the
+   * mandate is open-ended. Charges fall on the first one plus whole periods,
+   * so a cap of N ends one period before the (N + 1)th would have fallen due.
+   */
+  lastChargeAt: number | null;
+  /**
+   * Gross total the cap authorises, or null when the mandate is open-ended.
+   * A bigint like every other amount here: a cap can multiply past the range
+   * a JavaScript number represents exactly.
+   */
+  totalCommitment: bigint | null;
   /** Trial length in seconds; 0 when there is none or it cannot be told. */
   trialSeconds: number;
   /** Unix seconds of the first charge: now, or the end of the trial. */
@@ -90,6 +102,12 @@ export function confirmationFor({
   const trial = trialSeconds(plan);
   const rate = feeBps === null ? null : clampFeeBps(feeBps);
   const split = rate === null ? null : feeSplit(gross, rate);
+  const openEnded = limit === 0;
+  // A plan with a malformed non-positive period cannot stretch a cap over
+  // time; treat every authorised charge as falling on the first one rather
+  // than reporting an earlier "last" charge than the first.
+  const period = Number.isFinite(plan.period) && plan.period > 0 ? plan.period : 0;
+  const firstChargeAt = now + trial;
 
   return {
     gross,
@@ -98,10 +116,12 @@ export function confirmationFor({
     feeBps: rate,
     periodSeconds: plan.period,
     limit,
-    openEnded: limit === 0,
+    openEnded,
     trialSeconds: trial,
-    firstChargeAt: now + trial,
+    firstChargeAt,
     firstChargeDueNow: trial === 0,
+    lastChargeAt: openEnded ? null : firstChargeAt + (limit - 1) * period,
+    totalCommitment: openEnded ? null : gross * BigInt(limit),
   };
 }
 

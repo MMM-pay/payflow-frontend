@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   buildCsv,
   buildPaymentsCsv,
+  buildSubscribersCsv,
   exportFilename,
   paymentsFilename,
+  subscribersFilename,
   type ChargeRow,
   type PaymentRow,
+  type SubscriberRow,
 } from "@/lib/csv";
 import { shortAddress } from "@/lib/format";
 
@@ -114,6 +117,58 @@ describe("exportFilename", () => {
     expect(name).toContain("2026-01-01");
     expect(name).toContain("2026-01-31");
     expect(name).toMatch(/\.csv$/);
+  });
+});
+
+describe("buildSubscribersCsv", () => {
+  const subscriber = (over: Partial<SubscriberRow> = {}): SubscriberRow => ({
+    mandateId: 7,
+    subscriber: "GAB6QFLXQD73URCC3EXU2WOQHIAREPCGMSIMKF5PFLLI5TR6HTMNDTIE",
+    planId: 2,
+    planName: "Monthly Software",
+    status: "Active",
+    amount: "5",
+    token: "XLM",
+    periodSeconds: 2_592_000,
+    chargesMade: 3,
+    maxCharges: 12,
+    nextCharge: "2026-02-01T00:00:00.000Z",
+    ...over,
+  });
+
+  it("writes one row per selected subscriber with its plan and cap", () => {
+    const csv = buildSubscribersCsv([
+      subscriber(),
+      subscriber({ mandateId: 8, subscriber: "sub-b.testnet", maxCharges: 0 }),
+    ]);
+    const lines = csv.split("\n");
+    expect(lines[0]).toBe(
+      "mandate id,subscriber,plan id,plan name,status,amount,token,period seconds,charges made,max charges,next charge",
+    );
+    expect(lines).toHaveLength(3);
+    expect(lines[1]).toBe(
+      `7,GAB6QFLXQD73URCC3EXU2WOQHIAREPCGMSIMKF5PFLLI5TR6HTMNDTIE,2,Monthly Software,Active,5,XLM,2592000,3,12,2026-02-01T00:00:00.000Z`,
+    );
+    expect(lines[2]).toContain(",0,");
+  });
+
+  it("escapes a plan name containing a comma", () => {
+    const csv = buildSubscribersCsv([subscriber({ planName: "Pro, annual" })]);
+    expect(csv).toContain('"Pro, annual"');
+  });
+
+  it("handles an empty selection with just the header", () => {
+    expect(buildSubscribersCsv([])).toBe(
+      "mandate id,subscriber,plan id,plan name,status,amount,token,period seconds,charges made,max charges,next charge",
+    );
+  });
+});
+
+describe("subscribersFilename", () => {
+  it("includes the short merchant address and export date", () => {
+    const address = "merchant.testnet";
+    const name = subscribersFilename(address, "2026-11-25");
+    expect(name).toBe(`payflow-subscribers-${shortAddress(address)}-2026-11-25.csv`);
   });
 });
 

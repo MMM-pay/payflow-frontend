@@ -17,6 +17,21 @@ export interface UseStreamOptions {
   enabled?: boolean;
 }
 
+export interface StreamUpdate {
+  address: string;
+  role: "subscriber" | "merchant";
+  event: StreamEvent;
+}
+
+const streamListeners = new Set<(update: StreamUpdate) => void>();
+
+export function subscribeToStreamEvents(
+  listener: (update: StreamUpdate) => void,
+): () => void {
+  streamListeners.add(listener);
+  return () => streamListeners.delete(listener);
+}
+
 /**
  * Manages an SSE connection to the backend with automatic reconnection
  * and tab visibility handling.
@@ -118,12 +133,15 @@ export function useStream({
     };
 
     es.onmessage = (evt) => {
+      let event: StreamEvent;
       try {
-        const event = JSON.parse(evt.data) as StreamEvent;
-        onEvent(event);
+        event = JSON.parse(evt.data) as StreamEvent;
       } catch {
         // Ignore malformed messages
+        return;
       }
+      onEvent(event);
+      streamListeners.forEach((listener) => listener({ address, role, event }));
     };
 
     es.onerror = () => {

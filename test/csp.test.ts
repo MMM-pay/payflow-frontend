@@ -92,4 +92,15 @@ describe("static export CSP", () => {
       "No Next.js export pages found",
     );
   });
+
+  it("skips hash injection when CSP is disabled for a test build", async () => {
+    const previous = process.env.NEXT_PUBLIC_DISABLE_CSP;
+    process.env.NEXT_PUBLIC_DISABLE_CSP = "1";
+    try {
+      await expect(applyCspToExport("/nonexistent-test-export")).resolves.toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env.NEXT_PUBLIC_DISABLE_CSP;
+      else process.env.NEXT_PUBLIC_DISABLE_CSP = previous;
+    }
+  });
 });

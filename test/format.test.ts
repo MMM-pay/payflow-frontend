@@ -13,6 +13,7 @@ import {
   formatPeriod,
   formatWhen,
   fromStroops,
+  MAX_AMOUNT_STROOPS,
   MAX_FEE_BPS,
   minPauseDate,
   normaliseAmountInput,
@@ -260,6 +261,19 @@ describe("checkAmount", () => {
     });
     expect(checkAmount("1.0000001", 7).ok).toBe(true);
     expect(checkAmount("5.5", 0)).toEqual({ ok: false, message: "At most 0 decimal places." });
+  });
+
+  it("rejects an amount above the contract's i128 range", () => {
+    // bigint can hold it, but `nativeToScVal(..., "i128")` cannot, so the form
+    // must refuse it before the user signs a transaction that cannot encode.
+    expect(checkAmount(MAX_AMOUNT_STROOPS.toString(), 0)).toEqual({
+      ok: true,
+      stroops: MAX_AMOUNT_STROOPS,
+    });
+    expect(checkAmount((MAX_AMOUNT_STROOPS + 1n).toString(), 0)).toEqual({
+      ok: false,
+      message: "Amount is too large.",
+    });
   });
 
   it("agrees with toStroops for the token's decimals too", () => {
@@ -568,6 +582,14 @@ describe("normaliseAmountInput", () => {
     expect(normaliseAmountInput("5.5")).toBe("5.5");
     expect(amountError("5.5", 0)).toMatch(/at most 0 decimal places/i);
   });
+
+  it("keeps a leading minus so a negative is rejected, not flipped positive", () => {
+    expect(normaliseAmountInput("-5")).toBe("-5");
+    expect(normaliseAmountInput("-1,5")).toBe("-1,5");
+    // A minus anywhere else is still junk, not part of the amount.
+    expect(normaliseAmountInput("1-2")).toBe("12");
+    expect(amountError("-5")).toMatch(/positive number/i);
+  });
 });
 
 describe("amountError", () => {
@@ -588,6 +610,13 @@ describe("amountError", () => {
     expect(amountError("abc")).toMatch(/positive number/i);
     expect(amountError("1,00000001")).toMatch(/decimal places/i);
     expect(amountError("1,5", 0)).toMatch(/decimal places/i);
+  });
+
+  it("reports an amount that overflows the token's i128 range", () => {
+    expect(amountError(MAX_AMOUNT_STROOPS.toString(), 0)).toBeNull();
+    expect(amountError((MAX_AMOUNT_STROOPS + 1n).toString(), 0)).toBe(
+      "Amount is too large.",
+    );
   });
 });
 

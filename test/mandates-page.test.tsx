@@ -149,6 +149,43 @@ describe("Mandate details page (/mandates/?id=N) (#10)", () => {
     expect(screen.getByRole("button", { name: /Cancel subscription/i })).toBeTruthy();
   });
 
+  it("pages API-backed charge history with a zero-based offset", async () => {
+    apiMock.mandate.mockResolvedValue(mockMandate());
+    apiMock.charges.mockResolvedValue({
+      charges: Array.from({ length: 11 }, (_, index) => ({
+        mandate_id: 1,
+        subscriber: "GSUBSCRIBER1234567890",
+        merchant: "GMERCHANT9876543210",
+        plan_id: 42,
+        amount: "10000000",
+        fee: "100000",
+        charges_made: index + 1,
+        ledger: 10000 + index,
+        tx_hash: String(index).padStart(64, "0"),
+      })),
+    });
+    payflowMock.getPlan.mockResolvedValue({
+      id: 42n,
+      merchant: "GMERCHANT9876543210",
+      name: "Gold Tier",
+      token: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+      amount: 10000000n,
+      period: 2592000n,
+      active: true,
+    });
+
+    render(<MandatesPage />);
+    expect(await screen.findByText("Mandate #1")).toBeTruthy();
+    expect(screen.getByText("#10000")).toBeTruthy();
+    expect(screen.getByText("#10009")).toBeTruthy();
+    expect(screen.queryByText("#10010")).toBeNull();
+    expect(await screen.findByText("Showing 1–10 of 11")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(await screen.findByText("#10010")).toBeTruthy();
+    expect(screen.queryByText("#10000")).toBeNull();
+  });
+
   it("falls back to contract state when indexer is not configured (contract-only mode)", async () => {
     apiMock.isConfigured.mockReturnValue(false);
     chainMock.chainMandate.mockResolvedValue(mockMandate({ id: 99, charges_made: 5 }));

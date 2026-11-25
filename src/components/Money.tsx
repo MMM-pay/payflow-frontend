@@ -156,7 +156,7 @@ export function Money({
   const canonical = fromStroops(absValue, digits, tokenDecimals);
   const [, whole = "0", fraction] = /^(\d+)(?:\.(\d+))?$/.exec(canonical) ?? [];
 
-  const decimalSeparator = locale === "fr" ? "," : ".";
+  const decimalSeparator = locale === "fr" || locale === "de" ? "," : ".";
   const formattedNumber = `${formatNumber(BigInt(whole))}${fraction ? decimalSeparator + fraction : ""}`;
 
   // Sign resolution

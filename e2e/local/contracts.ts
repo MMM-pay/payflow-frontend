@@ -48,9 +48,9 @@ export function loadContracts(): LocalContracts {
   }
 }
 
-/** A `window` property the app's test wallet module reads at boot. */
+/** A `window` property the app's test wallet module reads when the modal opens. */
 export async function installTestWallet(page: Page, secret: string, networkPassphrase: string) {
-  await page.addInitScript(
+  await page.evaluate(
     ({ secretKey, passphrase }) => {
       (window as unknown as Record<string, unknown>).__PAYFLOW_E2E_WALLET__ = {
         secret: secretKey,
@@ -70,6 +70,14 @@ export async function connectTestWallet(page: Page, address: string) {
   await page.getByText("E2E test wallet", { exact: true }).click();
   // The header's address button carries the full address in its title.
   await expect(page.getByTitle(new RegExp(`^${address}`))).toBeVisible({ timeout: 20_000 });
+}
+
+/** Approve the app's action-specific review before the wallet signs. */
+export async function approveWalletSigning(page: Page) {
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Continue to wallet" })
+    .click();
 }
 
 /** A read-only contract simulation, the same shape the app uses. */
