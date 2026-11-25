@@ -86,6 +86,7 @@ import { ConfirmDialog, confirmTitle } from "@/components/ConfirmDialog";
 import { observeContractRecord } from "@/lib/contract-compat";
 import { ContractVersionNotice } from "@/components/ContractVersionNotice";
 import { SyncLagIndicator } from "@/components/SyncLagIndicator";
+import { StaleDataNotice } from "@/components/StaleDataNotice";
 import { Money } from "@/components/Money";
 import { NotificationCentre } from "@/components/NotificationCentre";
 import { evaluateMerchantNotifications } from "@/lib/notifications";
@@ -1090,6 +1091,9 @@ export default function MerchantPage() {
 
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  // When the projections on this page were last received, for staleness.
+  const [lastLoadedAt, setLastLoadedAt] = useState<number | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   // Ids of mandates ticked for the "End selected" batch action.
   const [selected, setSelected] = useState<Set<number>>(new Set());
   // Whether the batch-end confirmation dialog is open.
@@ -1255,6 +1259,7 @@ export default function MerchantPage() {
 
   const load = useCallback(async () => {
     if (!address) return;
+    setRefreshing(true);
     const [p, m, s] = await Promise.all([
       api.plans(address),
       api.mandatesFor(address),
@@ -1377,6 +1382,8 @@ export default function MerchantPage() {
       if (settled[i]?.status === "fulfilled") b[sub] = settled[i].value;
     });
     setBalances(b);
+    setLastLoadedAt(Date.now());
+    setRefreshing(false);
   }, [address]);
 
   // SSE stream for live updates (payflow-backend#19)
@@ -1976,6 +1983,12 @@ export default function MerchantPage() {
 
       <ContractVersionNotice />
       <SyncLagIndicator />
+      <StaleDataNotice
+        fetchedAt={lastLoadedAt}
+        refreshing={refreshing}
+        onRefresh={() => { void load(); }}
+        className="mb-4"
+      />
       <NotificationCentre
         address={address}
         notifications={evaluateMerchantNotifications({

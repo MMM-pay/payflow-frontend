@@ -775,5 +775,14 @@
   "Section {0} of {1}: {2}": "Section {0} of {1}: {2}",
   "Press": "Press",
   "or": "or",
-  "to jump between sections.": "to jump between sections."
+  "to jump between sections.": "to jump between sections.",
+  "Refreshing…": "Refreshing…",
+  "Refresh": "Refresh",
+  "Could not refresh. Showing figures last updated {0}.": "Could not refresh. Showing figures last updated {0}.",
+  "Could not load these figures. Try again.": "Could not load these figures. Try again.",
+  "Loading figures…": "Loading figures…",
+  "These figures have not loaded yet.": "These figures have not loaded yet.",
+  "These figures are up to date.": "These figures are up to date.",
+  "These figures were last updated {0}. Refresh to see the latest activity.": "These figures were last updated {0}. Refresh to see the latest activity.",
+  "These figures may be out of date. Refresh to see the latest activity.": "These figures may be out of date. Refresh to see the latest activity."
 }

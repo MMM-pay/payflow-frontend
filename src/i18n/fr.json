@@ -775,5 +775,14 @@
   "Section {0} of {1}: {2}": "Section {0} sur {1} : {2}",
   "Press": "Appuyez sur",
   "or": "ou",
-  "to jump between sections.": "pour passer d’une section à l’autre."
+  "to jump between sections.": "pour passer d’une section à l’autre.",
+  "Refreshing…": "Actualisation…",
+  "Refresh": "Actualiser",
+  "Could not refresh. Showing figures last updated {0}.": "Impossible d’actualiser. Affichage des chiffres mis à jour {0}.",
+  "Could not load these figures. Try again.": "Impossible de charger ces chiffres. Réessayez.",
+  "Loading figures…": "Chargement des chiffres…",
+  "These figures have not loaded yet.": "Ces chiffres ne sont pas encore chargés.",
+  "These figures are up to date.": "Ces chiffres sont à jour.",
+  "These figures were last updated {0}. Refresh to see the latest activity.": "Ces chiffres ont été mis à jour {0}. Actualisez pour voir l’activité la plus récente.",
+  "These figures may be out of date. Refresh to see the latest activity.": "Ces chiffres peuvent être obsolètes. Actualisez pour voir l’activité la plus récente."
 }

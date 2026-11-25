@@ -91,6 +91,7 @@ import { ConfirmDialog, confirmTitle } from "@/components/ConfirmDialog";
 import { observeContractRecord } from "@/lib/contract-compat";
 import { ContractVersionNotice } from "@/components/ContractVersionNotice";
 import { SyncLagIndicator } from "@/components/SyncLagIndicator";
+import { StaleDataNotice } from "@/components/StaleDataNotice";
 import { Money } from "@/components/Money";
 import { NotificationCentre } from "@/components/NotificationCentre";
 import { evaluateSubscriberNotifications } from "@/lib/notifications";
@@ -276,6 +277,9 @@ function AccountInner() {
   const [pauseDate, setPauseDate] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  // When the projections on this page were last received, for staleness.
+  const [lastLoadedAt, setLastLoadedAt] = useState<number | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [capFor, setCapFor] = useState<number | null>(null);
   const [capAmount, setCapAmount] = useState("");
   const [capError, setCapError] = useState<string | null>(null);
@@ -361,6 +365,7 @@ function AccountInner() {
   const load = useCallback(async () => {
     addressRef.current = viewAddress;
     if (!viewAddress) return;
+    setRefreshing(true);
     const who = viewAddress;
     const [bal, res, hist] = await Promise.allSettled([
       payflow.vaultBalance(source, who, config.contracts.token),
@@ -423,6 +428,10 @@ function AccountInner() {
         setMissingTrustlines(missing);
       }
     }
+    if (addressRef.current === who) {
+      setLastLoadedAt(Date.now());
+    }
+    setRefreshing(false);
   }, [viewAddress, source, configuredTokens]);
 
   // SSE stream for live updates (payflow-backend#19)
@@ -473,6 +482,8 @@ function AccountInner() {
       setError(null);
       setDone(null);
       setExporting(false);
+      setLastLoadedAt(null);
+      setRefreshing(false);
     });
     void load();
   }, [load]);
@@ -1306,6 +1317,12 @@ function AccountInner() {
 
       <ContractVersionNotice />
       <SyncLagIndicator />
+      <StaleDataNotice
+        fetchedAt={lastLoadedAt}
+        refreshing={refreshing}
+        onRefresh={() => { void load(); }}
+        className="mb-4"
+      />
       <NotificationCentre
         address={address}
         notifications={evaluateSubscriberNotifications({
