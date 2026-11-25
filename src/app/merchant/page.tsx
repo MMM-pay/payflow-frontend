@@ -408,7 +408,7 @@ function ChargeAttemptsHistory({
       {expanded && (
         <div id={`attempts-${mandateId}`} className="mt-2 rounded-lg border border-edge p-3">
           {loading ? (
-            <p className="text-sm text-muted">{tr("Loading charge attempts…")}</p>
+            <SkeletonRows rows={1} label={tr("Loading charge attempts")} />
           ) : attempts === null ? (
             <Notice tone="info">{tr("Charge attempt history is not available. The backend does not serve this endpoint yet, or the feature has not been deployed to this network.")}</Notice>
           ) : attempts.length === 0 ? (

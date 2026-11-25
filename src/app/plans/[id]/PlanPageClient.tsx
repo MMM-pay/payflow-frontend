@@ -15,7 +15,7 @@ import { config } from "@/lib/config";
 import { payflow } from "@/lib/lazy-payflow";
 import { useWallet } from "@/lib/wallet";
 
-import { AddressLink, Badge, Empty, Notice, Panel, TxLink } from "@/components/ui";
+import { AddressLink, Badge, Empty, Notice, Panel, SkeletonPlanDetail, TxLink } from "@/components/ui";
 import { cursorPage, TABLE_PAGE_SIZE } from "@/lib/pagination";
 
 const PaginationControl = lazy(() =>
@@ -115,11 +115,7 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
   }, [load]);
 
   if (loading) {
-    return (
-      <Panel title={tr("Plan")}>
-        <Empty>{tr("Loading plan…")}</Empty>
-      </Panel>
-    );
+    return <SkeletonPlanDetail label={tr("Loading plan")} />;
   }
 
   if (!plan) {
@@ -188,9 +184,9 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
       {direct && (
         <Notice tone="info">{tr("Reading this plan directly from the contract — the indexer is not reachable, so charge history may be incomplete.")}</Notice>
       )}
-      {error && <Notice tone="error">{translateMessage(error)}</Notice>}
+      {error && <Notice tone="error" role="alert">{translateMessage(error)}</Notice>}
       {done && (
-        <Notice tone="ok">{tr("Subscribed. Transaction")}{" "}<TxLink hash={done} />
+        <Notice tone="ok" role="status">{tr("Subscribed. Transaction")}{" "}<TxLink hash={done} />
         </Notice>
       )}
 
@@ -281,6 +277,16 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
               onChange={(e) => setMaxCharges(e.target.value)}
               aria-invalid={!chargeLimitCheck.ok || undefined}
               aria-describedby={!chargeLimitCheck.ok ? "plan-charge-limit-error" : undefined}
+              onKeyDown={(e) => {
+                // Enter is the natural keyboard submit for the only field in
+                // this form; without it a keyboard user must tab past it to
+                // reach Subscribe.
+                if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+                e.preventDefault();
+                if (!busy && address && !networkMismatch && unavailable === null) {
+                  void subscribe();
+                }
+              }}
             />
             {!chargeLimitCheck.ok && (
               <p id="plan-charge-limit-error" role="alert" className="mt-1 text-sm text-danger">

@@ -166,6 +166,25 @@ describe("static import graph", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("keeps the telemetry collector out of every static import graph", () => {
+    // PerformanceObserver setup and payload code must be requested on idle
+    // after first paint (#331), never bundled into a route's first load.
+    // TelemetryLoader is allowed to name it only inside `import(...)`.
+    const offenders: string[] = [];
+    for (const file of sourceFiles(SRC)) {
+      for (const specifier of staticImports(readFileSync(file, "utf8"))) {
+        if (
+          specifier === "@/lib/telemetry-client" ||
+          specifier === "./telemetry-client" ||
+          specifier === "../telemetry-client"
+        ) {
+          offenders.push(`${file} statically imports ${specifier}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
   it("keeps the SDK-bound payflow module out of every static import graph", () => {
     const offenders: string[] = [];
     for (const file of sourceFiles(SRC)) {

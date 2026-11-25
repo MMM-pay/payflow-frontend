@@ -25,12 +25,20 @@ export function Panel({
   actions?: ReactNode;
 }) {
   const { t: tr } = useI18n();
+  const titleId = useId();
   return (
-    <section className="panel" id={id}>
+    <section
+      className="panel"
+      id={id}
+      // Naming the section after its heading lets screen-reader users jump
+      // between the panels of a long page (a plan card, a form, a table)
+      // instead of hearing one undifferentiated run of content.
+      aria-labelledby={title ? titleId : undefined}
+    >
       {(title || actions) && (
         <header className="mb-4 flex flex-wrap items-start justify-between gap-4">
           <div>
-            {title && <h2 className="text-base font-semibold">{tr(title)}</h2>}
+            {title && <h2 id={titleId} className="text-base font-semibold">{tr(title)}</h2>}
             {subtitle && <p className="mt-1 text-sm text-muted">{tr(subtitle)}</p>}
           </div>
           {actions}
@@ -195,6 +203,50 @@ export function SkeletonPlanCards({ cards = 4, label = "Loading plans" }: { card
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+/**
+ * Placeholder matching the plan detail page: the plan summary panel, the
+ * charge table and the subscribe form. Reserving those three blocks keeps the
+ * page from jumping when the data arrives, which is what the loading state is
+ * for (#304).
+ */
+export function SkeletonPlanDetail({ label = "Loading plan" }: { label?: string }) {
+  const { t: tr } = useI18n();
+  return (
+    <div role="status" aria-busy="true">
+      <span className="sr-only">{typeof label === "string" ? tr(label) : label}…</span>
+      <div aria-hidden="true" className="space-y-6">
+        <div className="panel">
+          <Skeleton className="h-6 w-40" />
+          <div className="mt-4 grid gap-4 sm:grid-cols-3">
+            {Array.from({ length: 4 }, (_, i) => (
+              <div key={i} className="space-y-1.5">
+                <Skeleton className="h-3 w-20" />
+                <Skeleton className="h-6 w-32" />
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="panel">
+          <Skeleton className="h-6 w-36" />
+          <div className="mt-4 space-y-3">
+            {Array.from({ length: 3 }, (_, i) => (
+              <Skeleton key={i} className="h-10 w-full rounded-lg" />
+            ))}
+          </div>
+        </div>
+        <div className="panel">
+          <Skeleton className="h-6 w-48" />
+          <Skeleton className="mt-2 h-4 w-full max-w-prose" />
+          <div className="mt-4 flex flex-wrap items-end gap-3">
+            <Skeleton className="h-[38px] w-52 max-w-full rounded-lg" />
+            <Skeleton className="h-[38px] w-28 rounded-lg" />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -430,7 +482,20 @@ export function TxLink({ hash }: { hash: string }) {
   );
 }
 
-export function Notice({ tone, children }: { tone: "error" | "ok" | "info" | "warn"; children: ReactNode }) {
+export function Notice({
+  tone,
+  children,
+  role,
+}: {
+  tone: "error" | "ok" | "info" | "warn";
+  children: ReactNode;
+  /**
+   * Use `alert` for a failure the user is waiting on (it is announced at
+   * once) and `status` for a non-urgent update. Omitted, a notice is ordinary
+   * content and is only read when reached by navigation.
+   */
+  role?: "alert" | "status";
+}) {
   const { translateMessage } = useI18n();
   const tones = {
     error: "border-danger/40 bg-danger/10 text-danger",
@@ -439,7 +504,7 @@ export function Notice({ tone, children }: { tone: "error" | "ok" | "info" | "wa
     warn: "border-warn/40 bg-warn/10 text-warn",
   } as const;
   return (
-    <div className={`rounded-lg border px-3 py-2 text-sm ${tones[tone]}`}>
+    <div role={role} className={`rounded-lg border px-3 py-2 text-sm ${tones[tone]}`}>
       {typeof children === "string" ? translateMessage(children) : children}
     </div>
   );
