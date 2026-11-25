@@ -78,6 +78,15 @@ export async function fetchHomeDomain(address: string): Promise<string> {
 /** Default stellar.toml reader: one timed GET, `null` on any failure. */
 async function fetchToml(url: string): Promise<string | null> {
   try {
+    const origin = new URL(url).origin;
+    const allowed = config.stellarTomlOrigins.includes(origin) ||
+      (typeof window !== "undefined" && origin === window.location.origin);
+    if (!allowed) return null;
+  } catch {
+    return null;
+  }
+
+  try {
     const res = await fetch(url, {
       cache: "no-store",
       signal: AbortSignal.timeout(TOML_TIMEOUT_MS),

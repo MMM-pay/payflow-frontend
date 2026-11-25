@@ -14,6 +14,9 @@ import { defineConfig } from "@playwright/test";
  */
 export default defineConfig({
   testDir: "./e2e",
+  // The local-network suite needs a running Stellar network and the app built
+  // against it; it runs from playwright.e2e.config.ts, not here.
+  testIgnore: ["local/**"],
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : [["list"]],

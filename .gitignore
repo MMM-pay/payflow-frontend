@@ -11,6 +11,9 @@ next-env.d.ts
 public/embed/
 test-results/
 playwright-report/
+
+# Local-network e2e run: deployed contract ids and ephemeral keys.
+.e2e/
 .DS_Store
 
 # Drawn by scripts/generate-og.mjs before every build.

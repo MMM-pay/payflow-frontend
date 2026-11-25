@@ -36,7 +36,9 @@ for (const { name, path } of PAGES) {
       await expect(page.getByRole("main")).toBeVisible();
       // toHaveScreenshot retries until two consecutive frames are identical,
       // so hydration and the mocked reads settle before the comparison.
-      await expect(page).toHaveScreenshot(`${name}.png`, { fullPage: true });
+      // Viewport-sized (not fullPage) screenshots keep dimensions stable across
+      // environments where font metrics shift document height.
+      await expect(page).toHaveScreenshot(`${name}.png`);
     });
   });
 }

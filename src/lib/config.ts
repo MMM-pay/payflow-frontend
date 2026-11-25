@@ -46,6 +46,20 @@ const rpcUrls = parseRpcUrls(
   process.env.NEXT_PUBLIC_SOROBAN_RPC_URL ?? DEFAULT_RPC_URL,
 );
 
+function httpsOrigins(value: string | undefined): string[] {
+  return (value ?? "")
+    .split(",")
+    .map((entry) => {
+      try {
+        const url = new URL(entry.trim());
+        return url.protocol === "https:" ? url.origin : "";
+      } catch {
+        return "";
+      }
+    })
+    .filter(Boolean);
+}
+
 export interface ClassicAsset {
   code: string;
   issuer: string;
@@ -80,6 +94,8 @@ export interface NetworkConfig {
   /** Wallet-kit style name: "TESTNET" or "PUBLIC". */
   network: string;
   apiUrl: string;
+  /** https origins allowed to serve stellar.toml files to the in-app resolver. */
+  stellarTomlOrigins: readonly string[];
   /**
    * Source account used for read-only contract simulation before a wallet is
    * connected. Simulation never touches this account — it only has to exist on
@@ -137,7 +153,11 @@ const TESTNET: NetworkConfig = {
   networkPassphrase:
     process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015",
   network: "TESTNET",
-  apiUrl: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080",
+  apiUrl:
+    process.env.NEXT_PUBLIC_API_URL === undefined
+      ? "http://localhost:8080"
+      : process.env.NEXT_PUBLIC_API_URL.trim(),
+  stellarTomlOrigins: httpsOrigins(process.env.NEXT_PUBLIC_STELLAR_TOML_ORIGINS),
   /**
    * Source account used for read-only contract simulation before a wallet is
    * connected. Simulation never touches this account — it only has to exist on
@@ -192,6 +212,7 @@ const MAINNET: NetworkConfig = {
     "Public Global Stellar Network ; September 2015",
   network: "PUBLIC",
   apiUrl: process.env.NEXT_PUBLIC_MAINNET_API_URL ?? "",
+  stellarTomlOrigins: httpsOrigins(process.env.NEXT_PUBLIC_STELLAR_TOML_ORIGINS),
   readSource: process.env.NEXT_PUBLIC_MAINNET_READ_SOURCE ?? "",
   contracts: {
     planRegistry: process.env.NEXT_PUBLIC_MAINNET_PLAN_REGISTRY_ID ?? "",
@@ -374,6 +395,9 @@ export const config = {
   },
   get apiUrl() {
     return currentNetwork.apiUrl;
+  },
+  get stellarTomlOrigins() {
+    return currentNetwork.stellarTomlOrigins;
   },
   get readSource() {
     return currentNetwork.readSource;

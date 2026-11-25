@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { AddressLink, Notice, Skeleton, TxLink } from "@/components/ui";
-import { loadReceipt, parseReceiptParams, type ReceiptData } from "@/lib/receipt";
+import { downloadReceipt, loadReceipt, parseReceiptParams, type ReceiptData } from "@/lib/receipt";
 
 function ReceiptSkeleton() {
   const { t: tr } = useI18n();
@@ -111,6 +111,29 @@ function ReceiptContent() {
           href="/"
           className="text-sm text-muted transition hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         >{tr("← Back to overview")}</Link>
+        <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => downloadReceipt(receipt)}
+          className="btn-ghost inline-flex items-center gap-2"
+          aria-label={tr("Download this receipt")}
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="h-4 w-4"
+            aria-hidden="true"
+          >
+            <path d="M12 3v12" />
+            <path d="m7 10 5 5 5-5" />
+            <path d="M5 21h14" />
+          </svg>
+          <span>{tr("Download")}</span>
+        </button>
         <button
           type="button"
           onClick={() => window.print()}
@@ -133,6 +156,7 @@ function ReceiptContent() {
           </svg>
           <span>{tr("Print receipt")}</span>
         </button>
+        </div>
       </div>
 
       {/* Contract-only explanation banner when API data is unavailable */}

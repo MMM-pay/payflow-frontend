@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import MandatesPage from "@/app/mandates/page";
 import type { ApiMandate } from "@/lib/api";
@@ -197,8 +197,8 @@ describe("Mandate details page (/mandates/?id=N) (#10)", () => {
     const cancelBtn = screen.getByRole("button", { name: /Cancel subscription/i });
     fireEvent.click(cancelBtn);
 
-    expect(screen.getByText(/Confirm cancellation\?/i)).toBeTruthy();
-    const confirmBtn = screen.getByRole("button", { name: /Yes, cancel/i });
+    const dialog = await screen.findByRole("dialog", { name: "Cancel subscription?" });
+    const confirmBtn = within(dialog).getByRole("button", { name: "Confirm cancellation" });
     fireEvent.click(confirmBtn);
 
     await waitFor(() => {
@@ -208,5 +208,32 @@ describe("Mandate details page (/mandates/?id=N) (#10)", () => {
         1,
       );
     });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("keeps the dialog open with the error on a failed cancel, and lets a retry succeed", async () => {
+    walletMock.address = "GSUBSCRIBER1234567890";
+    apiMock.mandate.mockResolvedValue(mockMandate());
+    apiMock.charges.mockResolvedValue({ charges: [] });
+    payflowMock.cancel
+      .mockRejectedValueOnce(new Error("host error: insufficient fee"))
+      .mockResolvedValueOnce("tx-cancel-123");
+
+    render(<MandatesPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Mandate #1")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Cancel subscription/i }));
+    const dialog = await screen.findByRole("dialog", { name: "Cancel subscription?" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm cancellation" }));
+
+    await waitFor(() => expect(dialog.textContent).toContain("host error: insufficient fee"));
+
+    // Still open: a retry can be made without re-stating the confirmation.
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm cancellation" }));
+    await waitFor(() => expect(payflowMock.cancel).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 });

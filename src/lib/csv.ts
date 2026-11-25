@@ -144,6 +144,44 @@ export function paymentsFilename(
   return `payflow-payments-${address}-${from}_to_${to}.csv`;
 }
 
+/** One row of a per-month revenue summary for bookkeeping. */
+export interface MonthlyRevenueRow {
+  /** Month in `YYYY-MM` form (UTC). */
+  month: string;
+  /** Number of charges settled in that month. */
+  charges: number;
+  /** Gross amount, decimal string in the token's smallest unit. */
+  gross: string;
+  /** Protocol fee, decimal string. */
+  fee: string;
+  /** Net amount (gross - fee), decimal string. */
+  net: string;
+}
+
+const MONTHLY_REVENUE_HEADER = ["month", "charges", "gross", "fee", "net"];
+
+/** Serialize monthly revenue rows to CSV. */
+export function buildMonthlyRevenueCsv(rows: MonthlyRevenueRow[]): string {
+  const lines = [MONTHLY_REVENUE_HEADER.map(escapeCsv).join(",")];
+  for (const row of rows) {
+    lines.push(
+      [row.month, row.charges, row.gross, row.fee, row.net]
+        .map(escapeCsv)
+        .join(","),
+    );
+  }
+  return lines.join("\\n");
+}
+
+/** Filename for a monthly revenue summary export. */
+export function monthlyRevenueFilename(
+  address: string,
+  from: string,
+  to: string,
+): string {
+  return `payflow-monthly-revenue-${shortAddress(address)}-${from}_to_${to}.csv`;
+}
+
 /** Download CSV text as a file in the browser. */
 export function downloadCsv(csv: string, filename: string): void {
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });

@@ -1,5 +1,6 @@
 import { config } from "./config";
 import { parseWebhookDeliveries } from "./webhook-deliveries";
+import { merchantAuthToken } from "./sep10";
 
 export interface ApiPlan {
   id: number;
@@ -358,9 +359,13 @@ export type StreamEvent =
  * allowed to fail: the UI falls back to reading contract state directly so the
  * app still works when the backend is down.
  */
-async function get<T>(path: string): Promise<T | null> {
+async function get<T>(path: string, options?: { headers?: Record<string, string> }): Promise<T | null> {
+  if (!apiConfigured()) return null;
   try {
-    const res = await fetch(`${config.apiUrl}${path}`, { cache: "no-store" });
+    const res = await fetch(`${config.apiUrl}${path}`, {
+      cache: "no-store",
+      headers: options?.headers,
+    });
     if (!res.ok) return null;
     return (await res.json()) as T;
   } catch {
@@ -446,12 +451,13 @@ async function timeline(mandateId: number): Promise<ApiTimelinePage | null> {
   return { events: validEvents };
 }
 
-async function post<T>(path: string, body: unknown): Promise<T | null> {
+async function post<T>(path: string, body: unknown, options?: { headers?: Record<string, string> }): Promise<T | null> {
+  if (!apiConfigured()) return null;
   try {
     const res = await fetch(`${config.apiUrl}${path}`, {
       method: "POST",
       cache: "no-store",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(body),
     });
     if (!res.ok) return null;
@@ -461,11 +467,13 @@ async function post<T>(path: string, body: unknown): Promise<T | null> {
   }
 }
 
-async function del(path: string): Promise<boolean> {
+async function del(path: string, options?: { headers?: Record<string, string> }): Promise<boolean> {
+  if (!apiConfigured()) return false;
   try {
     const res = await fetch(`${config.apiUrl}${path}`, {
       method: "DELETE",
       cache: "no-store",
+      headers: options?.headers,
     });
     return res.ok;
   } catch {
@@ -473,9 +481,28 @@ async function del(path: string): Promise<boolean> {
   }
 }
 
+/**
+ * The `Authorization: Bearer <token>` header for a merchant-only request, or an
+ * empty object when no SEP-10 session could be established (no wallet bound, a
+ * different account connected, or the backend does not serve SEP-10). An empty
+ * object leaves the request exactly as it was before SEP-10, so the public demo
+ * and backends that have not shipped #141 keep working.
+ */
+async function merchantAuthHeaders(
+  merchant: string,
+): Promise<Record<string, string>> {
+  const token = await merchantAuthToken(merchant);
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function apiConfigured(): boolean {
+  return process.env.NEXT_PUBLIC_API_URL === undefined ||
+    Boolean(process.env.NEXT_PUBLIC_API_URL.trim());
+}
+
 export const api = {
   /** Whether the backend URL was explicitly supplied for this build. */
-  isConfigured: () => Boolean(process.env.NEXT_PUBLIC_API_URL?.trim()),
+  isConfigured: apiConfigured,
   stats: () => get<ProtocolStats>("/api/stats"),
   plans: (merchant?: string) =>
     get<{ plans: ApiPlan[] }>(`/api/plans${merchant ? `?merchant=${merchant}` : ""}`),
@@ -558,10 +585,14 @@ export const api = {
    * endpoint — the UI must hide the stats section rather than show stale zeros.
    */
   planStats: (planId: number) => get<ApiPlanStats>(`/api/plans/${planId}/stats`),
-  webhooks: (merchant: string) =>
-    get<{ webhooks: ApiWebhook[] }>(`/api/merchants/${merchant}/webhooks`).then(
-      (body) => body?.webhooks ?? null,
-    ),
+  webhooks: async (merchant: string) => {
+    const headers = await merchantAuthHeaders(merchant);
+    const body = await get<{ webhooks: ApiWebhook[] }>(
+      `/api/merchants/${merchant}/webhooks`,
+      { headers },
+    );
+    return body?.webhooks ?? null;
+  },
   /** Proposed authenticated read for payflow-backend#140. Never cache proofs. */
   webhookDeliveries: async (
     id: string,
@@ -590,12 +621,22 @@ export const api = {
    * signing secret, which the merchant must copy immediately — it is shown
    * once and never returned again.
    */
-  addWebhook: (merchant: string, body: { url: string; events: string[] }) =>
-    post<ApiWebhook>(`/api/merchants/${merchant}/webhooks`, body),
-  deleteWebhook: (merchant: string, id: string) =>
-    del(`/api/merchants/${merchant}/webhooks/${id}`),
-  testWebhook: (merchant: string, id: string) =>
-    post<{ ok: boolean }>(`/api/merchants/${merchant}/webhooks/${id}/test`, {}),
+  addWebhook: async (merchant: string, body: { url: string; events: string[] }) => {
+    const headers = await merchantAuthHeaders(merchant);
+    return post<ApiWebhook>(`/api/merchants/${merchant}/webhooks`, body, { headers });
+  },
+  deleteWebhook: async (merchant: string, id: string) => {
+    const headers = await merchantAuthHeaders(merchant);
+    return del(`/api/merchants/${merchant}/webhooks/${id}`, { headers });
+  },
+  testWebhook: async (merchant: string, id: string) => {
+    const headers = await merchantAuthHeaders(merchant);
+    return post<{ ok: boolean }>(
+      `/api/merchants/${merchant}/webhooks/${id}/test`,
+      {},
+      { headers },
+    );
+  },
   /**
    * Rotate a webhook's signing secret, proposed by payflow-backend#139.
    *
@@ -604,8 +645,14 @@ export const api = {
    * brief overlap period so the merchant can update their system without
    * missing events.
    */
-  rotateWebhookSecret: (merchant: string, id: string) =>
-    post<{ secret: string }>(`/api/merchants/${merchant}/webhooks/${id}/rotate-secret`, {}),
+  rotateWebhookSecret: async (merchant: string, id: string) => {
+    const headers = await merchantAuthHeaders(merchant);
+    return post<{ secret: string }>(
+      `/api/merchants/${merchant}/webhooks/${id}/rotate-secret`,
+      {},
+      { headers },
+    );
+  },
   /**
    * Recent charges across the protocol, proposed by payflow-backend#30.
    *

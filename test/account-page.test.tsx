@@ -434,15 +434,15 @@ describe("AccountPage", () => {
 
     // The irreversible write has not happened yet.
     expect(payflowMock.cancel).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Keep" })).toBeTruthy();
     expect(
-      screen.getByRole("button", {
-        name: "Confirm cancelling subscription #7",
-      }),
+      screen.getByRole("dialog", { name: "Cancel subscription #7?" }),
     ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Keep" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Confirm cancellation" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Keep" }));
     expect(payflowMock.cancel).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(
       screen.getByRole("button", { name: "Cancel subscription #7" }),
     ).toBeTruthy();
@@ -458,11 +458,7 @@ describe("AccountPage", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: "Cancel subscription #7" }),
     );
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "Confirm cancelling subscription #7",
-      }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Confirm cancellation" }));
 
     await waitFor(() =>
       expect(payflowMock.cancel).toHaveBeenCalledWith(
@@ -472,6 +468,32 @@ describe("AccountPage", () => {
       ),
     );
     expect(payflowMock.cancel).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("keeps the dialog open with the error on a failed cancel, and lets a retry succeed", async () => {
+    payflowMock.vaultBalance.mockResolvedValue(0n);
+    payflowMock.cancel
+      .mockRejectedValueOnce(new Error("host error: insufficient fee"))
+      .mockResolvedValueOnce("c0ffee");
+    apiMock.mandatesOf.mockResolvedValue({ mandates: [mandate()] });
+
+    render(<AccountPage />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Cancel subscription #7" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Confirm cancellation" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Cancel subscription #7?" });
+    await waitFor(() =>
+      expect(dialog.textContent).toContain("host error: insufficient fee"),
+    );
+
+    // The dialog stayed open for a retry instead of being dismissed.
+    fireEvent.click(screen.getByRole("button", { name: "Confirm cancellation" }));
+    await waitFor(() => expect(payflowMock.cancel).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
   it("keeps only one mandate in the confirming state at a time", async () => {
@@ -487,17 +509,10 @@ describe("AccountPage", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Cancel subscription #8" }));
 
-    expect(screen.getAllByRole("button", { name: "Keep" })).toHaveLength(1);
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
     expect(
-      screen.getByRole("button", {
-        name: "Confirm cancelling subscription #8",
-      }),
+      screen.getByRole("dialog", { name: "Cancel subscription #8?" }),
     ).toBeTruthy();
-    expect(
-      screen.queryByRole("button", {
-        name: "Confirm cancelling subscription #7",
-      }),
-    ).toBeNull();
   });
 
   it("renders the next six charges and their running total", async () => {
@@ -980,5 +995,145 @@ describe("AccountPage charge reminders (#174)", () => {
     await screen.findByText("Mandate #7");
 
     expect(screen.queryByRole("button", { name: "Remind me" })).toBeNull();
+  });
+});
+
+describe("AccountPage vault split, grouped subscriptions and receipts (#298, #297, #296)", () => {
+  beforeEach(() => {
+    payflowMock.vaultBalance.mockResolvedValue(50_000_000n); // 5 XLM
+    apiMock.vaultHistory.mockResolvedValue({ events: [] });
+    apiMock.charges.mockResolvedValue({ charges: [] });
+  });
+
+  it("splits the vault into committed and freely withdrawable amounts", async () => {
+    apiMock.mandatesOf.mockResolvedValue({
+      mandates: [mandate({ id: 7 }), mandate({ id: 8 })],
+    });
+
+    render(<AccountPage />);
+    await screen.findByText("Mandate #7");
+
+    // Two active mandates at 1 XLM each leave 3 of the 5 XLM free.
+    expect(
+      screen.getByText("Committed to subscriptions").parentElement?.textContent,
+    ).toContain("2 XLM");
+    expect(
+      screen.getByText("Freely withdrawable").parentElement?.textContent,
+    ).toContain("3 XLM");
+  });
+
+  it("reports a shortfall when commitments exceed the balance", async () => {
+    payflowMock.vaultBalance.mockResolvedValue(1_000_000n); // 0.1 XLM
+    apiMock.mandatesOf.mockResolvedValue({
+      mandates: [mandate({ id: 7 }), mandate({ id: 8 })],
+    });
+
+    render(<AccountPage />);
+    await screen.findByText("Mandate #7");
+
+    const free = screen.getByText("Freely withdrawable").parentElement;
+    expect(free?.textContent).toContain("0 XLM");
+    expect(
+      screen.getByText("Committed to subscriptions").parentElement?.textContent,
+    ).toContain("Short of the next charges by 1.9 XLM");
+  });
+
+  it("sections the subscription list into active, paused and ended", async () => {
+    apiMock.mandatesOf.mockResolvedValue({
+      mandates: [
+        mandate({ id: 1, status: "Active" }),
+        mandate({ id: 2, status: "Paused" }),
+        mandate({ id: 3, status: "Cancelled" }),
+        mandate({ id: 4, status: "Completed" }),
+      ],
+    });
+
+    render(<AccountPage />);
+    await screen.findByText("Mandate #1");
+
+    const active = screen.getByRole("region", { name: /Active subscriptions/ });
+    expect(within(active).getByText("Mandate #1")).toBeTruthy();
+    expect(within(active).queryByText("Mandate #2")).toBeNull();
+
+    const paused = screen.getByRole("region", { name: /Paused subscriptions/ });
+    expect(within(paused).getByText("Mandate #2")).toBeTruthy();
+
+    const ended = screen.getByRole("region", { name: /Ended subscriptions/ });
+    expect(within(ended).getByText("Mandate #3")).toBeTruthy();
+    expect(within(ended).getByText("Mandate #4")).toBeTruthy();
+  });
+
+  it("omits a section heading when that status has no subscriptions", async () => {
+    apiMock.mandatesOf.mockResolvedValue({
+      mandates: [mandate({ id: 1, status: "Active" })],
+    });
+
+    render(<AccountPage />);
+    await screen.findByText("Mandate #1");
+
+    expect(screen.queryByRole("region", { name: /Paused subscriptions/ })).toBeNull();
+    expect(screen.queryByRole("region", { name: /Ended subscriptions/ })).toBeNull();
+  });
+
+  it("lists past charges with a receipt link and downloads the receipt", async () => {
+    apiMock.mandatesOf.mockResolvedValue({ mandates: [mandate({ id: 7 })] });
+    apiMock.charges.mockResolvedValue({
+      charges: [
+        {
+          tx_hash: "aa11",
+          mandate_id: 7,
+          amount: "10000000",
+          fee: "100000",
+          charges_made: 1,
+          ledger: 100,
+        },
+      ],
+    });
+    payflowMock.server.getTransaction.mockResolvedValue({ createdAt: 1767225600 });
+
+    render(<AccountPage />);
+
+    const view = await screen.findByRole("link", {
+      name: /Receipt for charge aa11 on subscription #7/,
+    });
+    expect(view.getAttribute("href")).toBe("/receipt?tx=aa11&mandate=7");
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Download Receipt for charge aa11 on subscription #7/,
+      }),
+    );
+
+    await waitFor(() => expect(downloads).toHaveLength(1));
+    expect(downloads[0]!.name).toBe("payflow-receipt-7-aa11.html");
+    const html = await downloads[0]!.blob.text();
+    expect(html).toContain("1 XLM");
+    expect(html).toContain("0.01 XLM");
+    expect(html).toContain("aa11");
+    expect(html).toContain("1 Jan 2026");
+  });
+
+  it("shows an empty payment history instead of an empty table", async () => {
+    apiMock.mandatesOf.mockResolvedValue({ mandates: [mandate({ id: 7 })] });
+
+    render(<AccountPage />);
+
+    expect(await screen.findByText("No charges yet")).toBeTruthy();
+    expect(
+      screen.queryByRole("region", { name: "Payment history table" }),
+    ).toBeNull();
+  });
+
+  it("explains that receipts need the indexer in contract-only mode", async () => {
+    apiMock.mandatesOf.mockResolvedValue(null);
+    chainMock.chainMandatesOf.mockResolvedValue([mandate()]);
+
+    render(<AccountPage />);
+    await screen.findByText("Mandate #7");
+
+    expect(
+      await screen.findByText(/Payment history requires the payflow indexer/),
+    ).toBeTruthy();
+    expect(apiMock.charges).not.toHaveBeenCalled();
   });
 });

@@ -16,6 +16,12 @@ import { createWalletModules } from "./wallet-modules";
 import type { SignXdr } from "./payflow";
 import { translateSignatureError } from "./signature-error";
 import { fundWithFriendbot, readNativeAccount, type NativeAccount } from "./account";
+import {
+  clearMerchantSession,
+  getMerchantToken,
+  merchantSession,
+  setMerchantTokenProvider,
+} from "./sep10";
 
 export const STORAGE_KEY = "payflow.wallet";
 export const ACCOUNT_CHANGED_ERROR =
@@ -150,6 +156,16 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     addressRef.current = address;
   }, [address]);
 
+  // False once the provider has unmounted, so a lookup that resolves later
+  // does not set state on a provider that is gone.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   // Track in-flight checks to prevent duplicate concurrent queries.
   const syncingRef = useRef(false);
 
@@ -165,6 +181,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       return;
     }
     const result = await readNativeAccount(current);
+    if (!mountedRef.current) return; // the provider unmounted meanwhile
     if (addressRef.current !== current) return; // the wallet switched meanwhile
     if (result.state === "found") {
       setAccount({ state: "loaded", account: result.account });
@@ -207,6 +224,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const applyAccountChange = useCallback((newAddress: string) => {
     addressRef.current = newAddress;
     setAddress(newAddress);
+    // The token was minted for the previous account; drop it now so a request
+    // made for the new account cannot carry it. (The account-change effect
+    // below clears again, but mid-flight calls run before it does.)
+    clearMerchantSession();
     const stored = window.localStorage.getItem(STORAGE_KEY);
     const updated = updateStoredSessionAddress(stored, newAddress);
     if (updated) {
@@ -350,6 +371,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       // Some wallets have no disconnect concept; clearing local state is enough.
     }
     window.localStorage.removeItem(STORAGE_KEY);
+    // Drop the SEP-10 session now: the wallet is gone, so the token must not
+    // outlive it. The provider is also unbound by the account effect below.
+    clearMerchantSession();
     addressRef.current = null;
     setAddress(null);
     setWalletNetwork(null);
@@ -392,6 +416,35 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     },
     [address, networkMismatch, applyAccountChange],
   );
+
+  // Bind the SEP-10 merchant-session token provider to the connected account,
+  // and clear the in-memory session whenever the account changes or the wallet
+  // disconnects. A token minted for the previous account must never be
+  // attached to a request made after the change, so the previous session is
+  // dropped before the new one is bound. The token itself lives only in the
+  // module singleton (`merchantSession`), never in localStorage.
+  useEffect(() => {
+    if (!address) {
+      clearMerchantSession();
+      setMerchantTokenProvider(null);
+      return;
+    }
+    clearMerchantSession();
+    setMerchantTokenProvider((merchant) => {
+      // Only sign for the connected account: a subscriber viewing a merchant's
+      // page must not trigger a SEP-10 challenge for that merchant.
+      if (merchant !== address) return Promise.resolve(null);
+      return getMerchantToken(
+        {
+          address,
+          signXdr,
+          apiUrl: config.apiUrl,
+          networkPassphrase: config.networkPassphrase,
+        },
+        merchantSession,
+      );
+    });
+  }, [address, signXdr]);
 
   const value = useMemo<WalletState>(
     () => ({

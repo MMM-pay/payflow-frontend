@@ -108,6 +108,34 @@ All notable changes to payflow-frontend. The format follows
 
 ### Added
 
+- **A loading button for async writes (#413).** `LoadingButton` shows a
+  spinner, announces `aria-busy`, and refuses a second click synchronously —
+  ahead of React applying `disabled` — so a double click cannot open the same
+  wallet prompt or submit the same write twice. The subscribe deposit and
+  subscribe actions and the account deposit, withdraw and sponsor controls use
+  it.
+
+- **Contract-version drift is reported instead of silently ignored (#412).**
+  `src/lib/contract-compat.ts` compares decoded plans and mandates against the
+  fields and statuses this build knows. A newer contract is announced with an
+  informational notice on the subscribe, account and merchant pages; unknown
+  fields are ignored and an unknown status is shown verbatim, so the rest of
+  the page keeps working. Unmapped contract error codes count as drift too.
+
+- **Deposits can be entered in periods or token units (#408).** The subscribe
+  page's vault funding form keeps both fields in sync at the plan price:
+  editing periods fills the amount, and editing the amount derives the whole
+  periods it covers (rounded down). Integer conversions live in
+  `src/lib/deposit-amount.ts`; invalid drafts disable the deposit and explain
+  why.
+
+- **One confirmation dialog for the whole app (#407).** `ConfirmDialog` fixes
+  the title to a question, puts the safe "Cancel" first and the committing
+  action last, and uses a danger label only for irreversible actions. The
+  subscribe confirmation, merchant "Deactivate all plans" and account "Cancel
+  all" flows use it; inline confirmations on the mandates page now follow the
+  same order.
+
 - **Side-by-side plan comparison on the subscribe page (#175).** Tick up to
   three plans and open a table covering price, billing period, 30-day monthly
   equivalent, free trial, remaining seats and merchant. The monthly figure is

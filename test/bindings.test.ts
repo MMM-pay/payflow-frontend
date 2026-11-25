@@ -141,9 +141,10 @@ describe("generated contract bindings", () => {
     await client.setPaused(SUBSCRIBER, SIGN, 7n, true);
     await client.refund(MERCHANT, SIGN, 7n, 5_000_000n);
 
-    // `max_charges` is set with `set_max_charges`, so `subscribe` sends only
-    // the subscriber and the plan id.
-    expect(decoded(calls[0])).toEqual([SUBSCRIBER, 7n]);
+    // `subscribe(subscriber, plan_id, max_charges)` opens the mandate: the
+    // cap is part of the subscription itself, not a later call. Dropping it
+    // makes the contract reject the invocation with MismatchingParameterLen.
+    expect(decoded(calls[0])).toEqual([SUBSCRIBER, 7n, 12]);
     expect(calls[0]?.method).toBe("subscribe");
     // set_paused is a merchant-side call: the source is not an argument.
     expect(decoded(calls[1])).toEqual([7n, true]);

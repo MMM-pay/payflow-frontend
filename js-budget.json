@@ -7,6 +7,7 @@
     "/m": 250,
     "/merchant": 270,
     "/subscribe": 255,
-    "/plans": 250
+    "/plans": 250,
+    "/receipt": 245
   }
 }

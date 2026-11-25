@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import MerchantPage from "@/app/merchant/page";
 
 /**
@@ -124,6 +124,68 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+});
+
+const PLAN_TOKEN_XLM = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+const PLAN_TOKEN_USDC = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA";
+
+describe("MerchantPage plan search and filters (#300)", () => {
+  beforeEach(() => {
+    apiMock.plans.mockResolvedValue({
+      plans: [
+        { id: 1, merchant: MERCHANT, name: "Starter", token: PLAN_TOKEN_XLM, amount: "10000000", period: 2_592_000, active: 1, ledger: 0 },
+        { id: 2, merchant: MERCHANT, name: "Growth", token: PLAN_TOKEN_USDC, amount: "20000000", period: 2_592_000, active: 1, ledger: 0 },
+        { id: 3, merchant: MERCHANT, name: "Legacy", token: PLAN_TOKEN_USDC, amount: "30000000", period: 2_592_000, active: 0, ledger: 0 },
+      ],
+    });
+  });
+
+  it("filters the plan listing by name", async () => {
+    render(<MerchantPage />);
+    await screen.findByText("Starter");
+
+    fireEvent.change(screen.getByLabelText("Search plans by name"), {
+      target: { value: "grow" },
+    });
+
+    expect(screen.getByText("Growth")).toBeTruthy();
+    expect(screen.queryByText("Starter")).toBeNull();
+    expect(screen.queryByText("Legacy")).toBeNull();
+  });
+
+  it("filters by active status and token", async () => {
+    render(<MerchantPage />);
+    await screen.findByText("Starter");
+
+    fireEvent.change(screen.getByLabelText("Status:"), {
+      target: { value: "inactive" },
+    });
+    expect(screen.getByText("Legacy")).toBeTruthy();
+    expect(screen.queryByText("Starter")).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("Token:"), {
+      target: { value: PLAN_TOKEN_XLM },
+    });
+    expect(await screen.findByText("No plans match these filters")).toBeTruthy();
+  });
+
+  it("resets the filters from the empty state", async () => {
+    render(<MerchantPage />);
+    await screen.findByText("Starter");
+
+    fireEvent.change(screen.getByLabelText("Search plans by name"), {
+      target: { value: "nothing matches this" },
+    });
+    expect(await screen.findByText("No plans match these filters")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
+
+    expect(await screen.findByText("Starter")).toBeTruthy();
+    expect(
+      (screen.getByLabelText("Search plans by name") as HTMLInputElement).value,
+    ).toBe("");
+    expect((screen.getByLabelText("Status:") as HTMLSelectElement).value).toBe("all");
+  });
 });
 
 /** Type into the price field and return the Publish button. */
@@ -462,7 +524,7 @@ describe("MerchantPage deactivate all plans", () => {
     await waitForPlans();
     fireEvent.click(await screen.findByRole("button", { name: "Deactivate all plans" }));
 
-    const dialog = await screen.findByRole("dialog", { name: "Deactivate all active plans" });
+    const dialog = await screen.findByRole("dialog", { name: "Deactivate all active plans?" });
     expect(dialog.textContent).toContain("This will deactivate 2 active plans");
     expect(dialog.textContent).toContain("Affected open subscriptions: 2 mandates");
   });
@@ -477,8 +539,8 @@ describe("MerchantPage deactivate all plans", () => {
     await waitForPlans();
     fireEvent.click(await screen.findByRole("button", { name: "Deactivate all plans" }));
 
-    await screen.findByRole("dialog", { name: "Deactivate all active plans" });
-    fireEvent.click(screen.getByRole("button", { name: "Confirm: deactivate all" }));
+    await screen.findByRole("dialog", { name: "Deactivate all active plans?" });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm deactivation" }));
 
     // The call is in flight: the dialog shows the first page in progress.
     await waitFor(() =>
@@ -525,8 +587,8 @@ describe("MerchantPage deactivate all plans", () => {
     await screen.findByRole("button", { name: "Deactivate all plans" });
     fireEvent.click(screen.getByRole("button", { name: "Deactivate all plans" }));
 
-    await screen.findByRole("dialog", { name: "Deactivate all active plans" });
-    fireEvent.click(screen.getByRole("button", { name: "Confirm: deactivate all" }));
+    await screen.findByRole("dialog", { name: "Deactivate all active plans?" });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm deactivation" }));
 
     // First page, 50 plans, still in flight.
     await waitFor(() =>
@@ -590,8 +652,8 @@ describe("MerchantPage deactivate all plans", () => {
     await waitForPlans();
     fireEvent.click(await screen.findByRole("button", { name: "Deactivate all plans" }));
 
-    await screen.findByRole("dialog", { name: "Deactivate all active plans" });
-    fireEvent.click(screen.getByRole("button", { name: "Confirm: deactivate all" }));
+    await screen.findByRole("dialog", { name: "Deactivate all active plans?" });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm deactivation" }));
 
     // While a run is in flight the panel button cannot re-open the dialog.
     await waitFor(() => expect(payflowMock.deactivatePage).toHaveBeenCalled());
@@ -612,10 +674,61 @@ describe("MerchantPage deactivate all plans", () => {
     await waitForPlans();
     fireEvent.click(await screen.findByRole("button", { name: "Deactivate all plans" }));
 
-    await screen.findByRole("dialog", { name: "Deactivate all active plans" });
-    fireEvent.click(screen.getByRole("button", { name: "Confirm: deactivate all" }));
+    await screen.findByRole("dialog", { name: "Deactivate all active plans?" });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm deactivation" }));
 
     await waitFor(() => expect(screen.getByText("RPC error")).toBeTruthy());
     expect(screen.queryByText("All active plans deactivated.")).toBeNull();
+  });
+
+  it("opens a per-plan deactivation dialog with the open-subscription impact text", async () => {
+    setupActivePlans();
+    render(<MerchantPage />);
+
+    await waitForPlans();
+    fireEvent.click(screen.getAllByRole("button", { name: "Deactivate" })[0]!);
+
+    const dialog = await screen.findByRole("dialog", { name: "Deactivate plan Plan 1?" });
+    expect(dialog.textContent).toContain("1 open subscription");
+  });
+
+  it("deactivates a single plan from its own dialog", async () => {
+    setupActivePlans();
+    payflowMock.setPlanActive.mockResolvedValue("tx-hash");
+
+    render(<MerchantPage />);
+
+    await waitForPlans();
+    fireEvent.click(screen.getAllByRole("button", { name: "Deactivate" })[0]!);
+
+    const dialog = await screen.findByRole("dialog", { name: "Deactivate plan Plan 1?" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm: deactivate" }));
+
+    await waitFor(() =>
+      expect(payflowMock.setPlanActive).toHaveBeenCalledWith(MERCHANT, wallet.signXdr, 1, false),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("keeps the per-plan dialog open with the error on failure, and lets a retry succeed", async () => {
+    setupActivePlans();
+    payflowMock.setPlanActive
+      .mockRejectedValueOnce(new Error("host error: insufficient fee"))
+      .mockResolvedValueOnce("tx-hash");
+
+    render(<MerchantPage />);
+
+    await waitForPlans();
+    fireEvent.click(screen.getAllByRole("button", { name: "Deactivate" })[0]!);
+
+    const dialog = await screen.findByRole("dialog", { name: "Deactivate plan Plan 1?" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm: deactivate" }));
+
+    await waitFor(() => expect(dialog.textContent).toContain("host error: insufficient fee"));
+
+    // Still open: a retry can be made without re-stating the confirmation.
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm: deactivate" }));
+    await waitFor(() => expect(payflowMock.setPlanActive).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 });

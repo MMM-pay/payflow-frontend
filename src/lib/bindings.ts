@@ -349,7 +349,14 @@ export const subscriptionMethods = {
   subscribe: writeMethod<[planId: number | bigint, maxCharges: number]>(
     "subscribe",
     "subscription",
-    (source, planId) => [arg.address(source), arg.u64(planId)],
+    // The contract's `subscribe(subscriber, plan_id, max_charges)` takes three
+    // arguments; omitting `max_charges` makes the Wasm VM reject the call with
+    // MismatchingParameterLen. 0 keeps the mandate open-ended.
+    (source, planId, maxCharges) => [
+      arg.address(source),
+      arg.u64(planId),
+      arg.u32(maxCharges),
+    ],
   ),
   cancel: writeMethod<[mandateId: number | bigint]>(
     "cancel",

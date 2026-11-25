@@ -9,6 +9,7 @@ import type { ApiCharge, ApiMandate, ApiPlan, ApiVaultEvent, MerchantSummary } f
 import { availabilityInteger } from "./availability";
 import { fromStroops } from "./format";
 import { chargeShortfall } from "./schedule";
+import { observeContractRecord } from "./contract-compat";
 
 /**
  * Contract-only fallbacks for the lists the indexer normally serves.
@@ -27,6 +28,7 @@ const MAX_PLAN_PROBE = 24;
 const MAX_INDEX_READ = 2 * MAX_PAGE;
 
 function planToApi(plan: Plan): ApiPlan {
+  observeContractRecord("plan", plan);
   return {
     id: Number(plan.id),
     merchant: plan.merchant,
@@ -59,6 +61,10 @@ async function planWithAvailability(source: string, plan: Plan): Promise<ApiPlan
 
 /** Exported for tests. */
 export function mandateToApi(mandate: Mandate): ApiMandate {
+  // A contract newer than this build returns fields this page cannot show.
+  // Record that once here, where the raw record still exists, so the pages can
+  // say so instead of silently dropping the new behaviour.
+  observeContractRecord("mandate", mandate);
   return {
     id: Number(mandate.id),
     subscriber: mandate.subscriber,

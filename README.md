@@ -178,7 +178,7 @@ codes into sentences a user can act on.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). CI runs `lint`, `typecheck`, `test` and
+See [CONTRIBUTING.md](CONTRIBUTING.md) and the [testing guide](docs/testing.md). CI runs `lint`, `typecheck`, `test` and
 `build`. Changes are recorded in [CHANGELOG.md](CHANGELOG.md).
 
 Adding a route? [docs/adding-a-page.md](docs/adding-a-page.md) covers the file

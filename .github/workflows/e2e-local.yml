@@ -1,0 +1,108 @@
+name: E2E (local network)
+
+# End-to-end test against a real local Stellar network (payflow-frontend#117).
+#
+# The visual suite mocks RPC; this one does not. `stellar/quickstart` runs a
+# standalone network in the job, `e2e/local/deploy-contracts.mjs` deploys the
+# contracts from the payflow-contract release wasm, the app is built against
+# those ids, and Playwright drives the exported app through the Stellar
+# Wallets Kit with a generated keypair: publish a plan, deposit, subscribe,
+# cancel. Every step asserts the transaction notice the UI shows only once the
+# transaction is confirmed, then reads the same state back from the contract.
+#
+# Runs every PR in a separate job. Budget: under 15 minutes.
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-local-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  local-network:
+    name: e2e local network
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Port 8000 serves Horizon, Soroban RPC and Friendbot in local mode.
+      E2E_RPC_URL: http://127.0.0.1:8000/soroban/rpc
+      E2E_FRIENDBOT_URL: http://127.0.0.1:8000/friendbot
+      E2E_HORIZON_URL: http://127.0.0.1:8000
+      E2E_NETWORK_PASSPHRASE: Standalone Network ; February 2017
+      E2E_CONTRACT_RELEASE: v0.2.0
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+
+      # The browser the tests drive. Kept out of the timed part until it is
+      # needed, so a network start-up failure is reported first.
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Start Stellar quickstart (local)
+        run: |
+          docker run --rm -d \
+            --name stellar-local \
+            -p 8000:8000 \
+            stellar/quickstart:latest \
+            --local \
+            --limits unlimited
+          # Fail fast if the container dies instead of waiting out the timeout.
+          for i in $(seq 1 60); do
+            if [ "$(docker inspect -f '{{.State.Running}}' stellar-local)" != "true" ]; then
+              docker logs stellar-local
+              exit 1
+            fi
+            if curl -fsS -X POST -H 'content-type: application/json' \
+              -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' \
+              http://127.0.0.1:8000/soroban/rpc >/dev/null; then
+              echo "local network is up"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "local network did not start" >&2
+          docker logs stellar-local
+          exit 1
+
+      - name: Deploy contracts
+        # Downloads the release wasm, deploys the three contracts with their
+        # constructor args, wires the vault, funds both test accounts, and
+        # writes .e2e/contracts.json with the ids and ephemeral keys.
+        run: node e2e/local/deploy-contracts.mjs
+
+      - name: Export the build environment
+        run: node e2e/local/export-env.mjs >> "$GITHUB_ENV"
+
+      # Next inlines every NEXT_PUBLIC_* value in the export below, so this is
+      # the only build in the job. NEXT_PUBLIC_API_URL is empty: the suite
+      # proves contract-only mode.
+      - name: Build static export
+        run: npm run build
+
+      - name: Run end-to-end suite
+        run: npx playwright test --config playwright.e2e.config.ts
+
+      - name: Show the local network log on failure
+        if: failure()
+        run: docker logs stellar-local || true
+
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: e2e-local-results
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 7

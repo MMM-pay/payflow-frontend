@@ -170,10 +170,10 @@ describe("subscribe confirmation: gating the signature", () => {
     }
   });
 
-  it("closes on Go back, without signing", async () => {
+  it("closes on Cancel, without signing", async () => {
     const { button } = await openPage();
     const inside = within(openDialog(button));
-    fireEvent.click(inside.getByRole("button", { name: "Go back" }));
+    fireEvent.click(inside.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(mocks.subscribe).not.toHaveBeenCalled();
   });

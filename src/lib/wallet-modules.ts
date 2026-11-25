@@ -13,6 +13,15 @@ export async function createWalletModules(
 ): Promise<ModuleInterface[]> {
   // Includes xBull, Albedo, Lobstr and Hana, plus the existing default wallets.
   const modules = defaultModules();
+
+  // End-to-end builds (payflow-frontend#117) add a keypair-backed module the
+  // Playwright suite injects a secret for. The flag is inlined at build time,
+  // so a normal build of the app never carries it.
+  if (process.env.NEXT_PUBLIC_E2E_WALLET === "1") {
+    const { createE2EWalletModule } = await import("./e2e-wallet");
+    modules.unshift(createE2EWalletModule());
+  }
+
   const projectId = options.projectId?.trim();
   if (!projectId) return modules;
   // The kit's WalletConnect bridge supports these two Stellar namespaces only.

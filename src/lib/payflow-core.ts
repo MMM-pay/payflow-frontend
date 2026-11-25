@@ -15,6 +15,7 @@ import { isSignatureRejection, SIGNATURE_CANCELLED_MESSAGE } from "./signature-e
 // `/base` is the SDK without the RPC client or transaction builder: StrKey is
 // a self-contained checksum helper, so importing it must not cost a bundle.
 import { StrKey } from "@stellar/stellar-sdk/base";
+import { observeUnknownContractError } from "./contract-compat";
 
 export { mandateStatus };
 
@@ -147,6 +148,9 @@ export function decodeContractError(error: unknown, method: string): string {
         : "subscription";
     const known = ERRORS[scope]?.[code];
     if (known) return known;
+    // An unmapped variant usually means the contract was updated after this
+    // build. The message stays actionable, and the page adds a version notice.
+    observeUnknownContractError(scope, code);
     return `${method} failed with contract error #${code}.`;
   }
   if (/account not found/i.test(text)) {
