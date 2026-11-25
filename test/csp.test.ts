@@ -1,18 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { withCsp } from "../scripts/apply-csp.mjs";
-
-function digest(contents: string) {
-  return createHash("sha256").update(contents, "utf8").digest("base64");
-}
-
-function cspFrom(html: string) {
-  const match = html.match(
-    /<meta http-equiv="Content-Security-Policy" content="([^"]+)">/,
-  );
-  expect(match).not.toBeNull();
-  return match?.[1] ?? "";
-}
+import { withInlineScriptHashes, applyCspToExport } from "../scripts/apply-csp.mjs";
 
 describe("static export CSP", () => {
   it("hashes inline scripts and injects the policy before them", () => {
@@ -65,5 +53,16 @@ describe("static export CSP", () => {
     expect(() => withCsp("<html></html>")).toThrow(
       "Exported HTML is missing a <head> element.",
     );
+  });
+
+  it("skips hash injection when CSP is disabled for a test build", async () => {
+    const previous = process.env.NEXT_PUBLIC_DISABLE_CSP;
+    process.env.NEXT_PUBLIC_DISABLE_CSP = "1";
+    try {
+      await expect(applyCspToExport("/nonexistent-test-export")).resolves.toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env.NEXT_PUBLIC_DISABLE_CSP;
+      else process.env.NEXT_PUBLIC_DISABLE_CSP = previous;
+    }
   });
 });

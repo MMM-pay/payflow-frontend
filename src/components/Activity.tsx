@@ -9,6 +9,7 @@ import {
 } from "@/lib/api";
 import { config } from "@/lib/config";
 import { formatAmount, type TokenMeta } from "@/lib/format";
+import { subscribeToStreamEvents } from "@/lib/stream";
 import { useWallet } from "@/lib/wallet";
 import { Empty, Notice, Panel, SkeletonRows } from "@/components/ui";
 
@@ -213,6 +214,13 @@ export function Activity() {
       mounted.current = false;
       generation.current += 1;
     };
+  }, [address, refresh]);
+
+  useEffect(() => {
+    if (!address) return;
+    return subscribeToStreamEvents((update) => {
+      if (update.address === address) void refresh(address);
+    });
   }, [address, refresh]);
 
   const visibleItems = useMemo(

@@ -109,7 +109,10 @@ async function visitHtml(directory) {
 }
 
 export async function applyCspToExport(directory = "out") {
-  if (process.env.NEXT_PUBLIC_DISABLE_CSP === "1") return;
+  if (process.env.NEXT_PUBLIC_DISABLE_CSP === "1") {
+    console.info("[csp] disabled for this build; skipping hash injection");
+    return;
+  }
 
   const htmlFiles = await visitHtml(directory);
   if (htmlFiles.length === 0) {

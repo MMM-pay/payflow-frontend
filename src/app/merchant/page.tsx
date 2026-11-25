@@ -5,10 +5,8 @@ import { useI18n } from "@/i18n/provider";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
+import dynamic from "next/dynamic";
 import { api, checkWebhookUrl, type ApiChargeAttempt, type ApiMandate, type ApiPlan, type ApiWebhook, type MerchantSummary, type StreamEvent } from "@/lib/api";
-import { RevenueChart } from "@/components/RevenueChart";
-import { WebhookDeliveryHistory } from "@/components/WebhookDeliveryHistory";
-import { CohortRetentionTable } from "@/components/CohortRetentionTable";
 import { buildCsv, buildMonthlyRevenueCsv, downloadCsv, exportFilename, monthlyRevenueFilename, type ChargeRow, type MonthlyRevenueRow } from "@/lib/csv";
 import { fillBuckets, parseRevenue, type BucketSize, type RevenuePoint } from "@/lib/revenue";
 import { parseMerchantChurn, type MerchantChurnMonth } from "@/lib/churn";
@@ -66,7 +64,6 @@ import { countOpenMandates, filterAndSortPlans, type PlanActiveOption } from "@/
 import { formatUsdEstimate, formatUsdcEstimate, useXlmUsdPrice } from "@/lib/price";
 import { AmountInput } from "@/components/AmountInput";
 import { CopyButton } from "@/components/CopyButton";
-import { QrCode } from "@/components/QrCode";
 // Mirrors payflow.validatePlanName, kept here so the form can check a name
 // without the SDK-backed module in this route's first-load bundle.
 function validatePlanNameLocal(name: string): string | null {
@@ -90,7 +87,53 @@ import { StaleDataNotice } from "@/components/StaleDataNotice";
 import { Money } from "@/components/Money";
 import { NotificationCentre } from "@/components/NotificationCentre";
 import { evaluateMerchantNotifications } from "@/lib/notifications";
-import { subscribeLink } from "@/lib/share";
+import { planLink } from "@/lib/share";
+
+function RevenueChartSkeleton() {
+  const { t: tr } = useI18n();
+  return <SkeletonRows rows={2} label={tr("Loading revenue")} />;
+}
+
+function CohortRetentionSkeleton() {
+  return (
+    <Panel
+      title="Cohort retention"
+      subtitle="Percentage of each signup month's subscribers still active in subsequent months. Higher percentages indicate better retention."
+    >
+      <SkeletonRows rows={3} label="Loading cohort retention data" />
+    </Panel>
+  );
+}
+
+function WebhookHistorySkeleton() {
+  const { t: tr } = useI18n();
+  return <div className="mt-3"><SkeletonRows rows={2} label={tr("Loading history…")} /></div>;
+}
+
+function QrCodeSkeleton() {
+  const { t: tr } = useI18n();
+  return <div className="mt-3"><SkeletonRows rows={1} label={tr("Loading…")} /></div>;
+}
+
+const RevenueChart = dynamic(
+  () => import("@/components/RevenueChart").then((module) => module.RevenueChart),
+  { ssr: false, loading: () => <RevenueChartSkeleton /> },
+);
+
+const CohortRetentionTable = dynamic(
+  () => import("@/components/CohortRetentionTable").then((module) => module.CohortRetentionTable),
+  { ssr: false, loading: () => <CohortRetentionSkeleton /> },
+);
+
+const WebhookDeliveryHistory = dynamic(
+  () => import("@/components/WebhookDeliveryHistory").then((module) => module.WebhookDeliveryHistory),
+  { ssr: false, loading: () => <WebhookHistorySkeleton /> },
+);
+
+const QrCode = dynamic(
+  () => import("@/components/QrCode").then((module) => module.QrCode),
+  { ssr: false, loading: () => <QrCodeSkeleton /> },
+);
 
 const PERIOD_OPTIONS = [
   { label: "Every minute (demo)", value: 60 },
@@ -232,7 +275,9 @@ function ProfilePanel({
             aria-describedby={nameCheck.ok ? undefined : "profile-name-error"}
           />
           {!nameCheck.ok && (
-            <InlineError id="profile-name-error">{nameCheck.message}</InlineError>
+            <p id="profile-name-error" role="alert" className="mt-1 text-sm text-danger">
+              {nameCheck.message}
+            </p>
           )}
         </div>
         <div className="min-w-[16rem] flex-1">
@@ -251,7 +296,9 @@ function ProfilePanel({
             aria-describedby={urlCheck.ok ? undefined : "profile-url-error"}
           />
           {!urlCheck.ok && (
-            <InlineError id="profile-url-error">{urlCheck.message}</InlineError>
+            <p id="profile-url-error" role="alert" className="mt-1 text-sm text-danger">
+              {urlCheck.message}
+            </p>
           )}
         </div>
         <button
@@ -669,11 +716,13 @@ function WebhooksPanel({
                   }
                 />
                 {url.length > 0 && !urlCheck.ok && (
-                  <InlineError id="webhook-url-error">{urlCheck.message}</InlineError>
+                  <p id="webhook-url-error" role="alert" className="mt-1 text-sm text-danger">
+                    {translateMessage(urlCheck.message)}
+                  </p>
                 )}
               </div>
-              <div className="min-w-[14rem] flex-1">
-                <p className="text-sm font-medium mb-2">{tr("Events")}</p>
+              <fieldset className="min-w-[14rem] flex-1">
+                <legend className="text-sm font-medium mb-2">{tr("Events")}</legend>
                 <div className="space-y-1">
                   {WEBHOOK_EVENTS.map((option) => (
                     <label key={option.value} className="flex items-start gap-2">
@@ -687,7 +736,7 @@ function WebhooksPanel({
                     </label>
                   ))}
                 </div>
-              </div>
+              </fieldset>
               <button
                 type="button"
                 className="btn-primary"
@@ -705,12 +754,14 @@ function WebhooksPanel({
                 {showSecret.rotated ?tr("New signing secret (shown once)") :tr("Signing secret (shown once)")}
               </p>
               <div className="mt-2 flex items-end gap-2">
+                <label htmlFor="webhook-secret" className="sr-only">
+                  {tr("Copy the signing secret")}
+                </label>
                 <input
                   id="webhook-secret"
                   className="input mono flex-1"
                   readOnly
                   value={showSecret.secret}
-                  aria-label={tr("Copy the signing secret")}
                 />
                 <CopyButton value={showSecret.secret} label={tr("signing secret")} />
               </div>
@@ -888,14 +939,14 @@ function DiscountForm({
       </div>
 
       {!bpsCheck.ok && (
-        <InlineError id="discount-percent-error" className="mt-2">
-          {bpsCheck.message}
-        </InlineError>
+        <p id="discount-percent-error" role="alert" className="mt-2 text-sm text-danger">
+          {translateMessage(bpsCheck.message)}
+        </p>
       )}
       {!chargesCheck.ok && (
-        <InlineError id="discount-charges-error" className="mt-2">
-          {chargesCheck.message}
-        </InlineError>
+        <p id="discount-charges-error" role="alert" className="mt-2 text-sm text-danger">
+          {translateMessage(chargesCheck.message)}
+        </p>
       )}
 
       {bpsCheck.ok && chargesCheck.ok && (
@@ -936,6 +987,7 @@ function RefundForm({
   const { checkAmount, t: tr, formatAmount } = useI18n();
   const amountCheck = checkAmount(amount, meta.decimals);
   const maxRefundStroops = maxRefund;
+  const refundInvalid = !amountCheck.ok || amountCheck.stroops > maxRefundStroops;
   const usable = amountCheck.ok && amountCheck.stroops <= maxRefundStroops && amountCheck.stroops > 0n;
 
   return (
@@ -953,8 +1005,8 @@ function RefundForm({
             placeholder={fromStroops(maxRefundStroops, 4, meta.decimals)}
             value={amount}
             onChange={(e) => onAmountChange(e.target.value)}
-            aria-invalid={!amountCheck.ok || amountCheck.stroops > maxRefundStroops}
-            aria-describedby={amountCheck.ok ? undefined : "refund-amount-error"}
+            aria-invalid={refundInvalid}
+            aria-describedby={refundInvalid ? "refund-amount-error" : undefined}
             disabled={busy}
           />
         </div>
@@ -973,14 +1025,13 @@ function RefundForm({
       </div>
 
       {!amountCheck.ok && (
-        <InlineError id="refund-amount-error" className="mt-2">
-          {amountCheck.message}
-        </InlineError>
+        <p id="refund-amount-error" role="alert" className="mt-2 text-sm text-danger">
+          {translateMessage(amountCheck.message)}
+        </p>
       )}
       {amountCheck.ok && amountCheck.stroops > maxRefundStroops && (
-        <InlineError id="refund-amount-error" className="mt-2">
-          {tr("Refund cannot exceed")}{" "}{formatAmount(maxRefundStroops, meta)}.
-        </InlineError>
+        <p id="refund-amount-error" role="alert" className="mt-2 text-sm text-danger">{tr("Refund cannot exceed")}{" "}{formatAmount(maxRefundStroops, meta)}.
+        </p>
       )}
     </div>
   );
@@ -1534,7 +1585,7 @@ export default function MerchantPage() {
   useEffect(() => {
     const origin = window.location.origin;
     const links: Record<number, string> = {};
-    for (const plan of plans ?? []) links[plan.id] = subscribeLink(origin, plan.id);
+    for (const plan of plans ?? []) links[plan.id] = planLink(origin, plan.id);
     setPlanLinks(links);
   }, [plans]);
 
@@ -1928,9 +1979,10 @@ export default function MerchantPage() {
         subtitle={tr("Net of the protocol fee, over the last {0} days.", { "0": REVENUE_WINDOW_DAYS })}
         actions={
           revenue !== null ? (
-            <label className="flex items-center gap-2 text-sm text-muted">
+            <label htmlFor="revenue-bucket" className="flex items-center gap-2 text-sm text-muted">
               <span className="sr-only sm:not-sr-only">{tr("Group by")}</span>
               <select
+                id="revenue-bucket"
                 className="input w-auto py-1"
                 value={bucketSize}
                 onChange={(e) => setBucketSize(e.target.value as BucketSize)}
@@ -2075,6 +2127,7 @@ export default function MerchantPage() {
               // The form renders the price message in the fee-preview slot
               // below, so the field must not repeat it inline.
               hideError
+              invalid={showPriceError}
               describedBy="price-preview"
             />
           </div>
@@ -2090,7 +2143,7 @@ export default function MerchantPage() {
               aria-describedby={nameTooLong ? "plan-name-error" : undefined}
             />
             {nameTooLong && (
-              <InlineError id="plan-name-error">{tr("Too long —")}{" "}{MAX_NAME_LEN}{" "}{tr("bytes maximum.")}</InlineError>
+              <p id="plan-name-error" role="alert" className="mt-1 text-sm text-danger">{tr("Too long —")}{" "}{MAX_NAME_LEN}{" "}{tr("bytes maximum.")}</p>
             )}
           </div>
           <div className="min-w-[10rem] flex-1">
@@ -2151,7 +2204,7 @@ export default function MerchantPage() {
                 </div>
               </div>
               {periodError && (
-                <p id="period-error" className="mt-2 text-sm text-rose-200">
+                <p id="period-error" role="alert" className="mt-2 text-sm text-danger">
                   {translateMessage(periodError)}
                 </p>
               )}
@@ -2495,41 +2548,44 @@ export default function MerchantPage() {
                       </p>
                     </ConfirmDialog>
                   )}
-                  {renameFor === p.id && (
-                    <form
-                      className="w-full mt-3 space-y-2"
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        if (validatePlanNameLocal(renameValue) !== null) return;
-                        void run(`rename-${p.id}`, () =>
-                          payflow.setPlanName(address, signXdr, p.id, renameValue),
-                        ).then(() => setRenameFor(null));
-                      }}
-                    >
-                      <label className="label" htmlFor={`rename-${p.id}`}>{tr("New plan name")}</label>
-                      <input
-                        id={`rename-${p.id}`}
-                        className="input"
-                        value={renameValue}
-                        onChange={(e) => setRenameValue(e.target.value)}
-                        aria-invalid={validatePlanNameLocal(renameValue) !== null}
-                        aria-describedby={`rename-error-${p.id}`}
-                      />
-                      <InlineError id={`rename-error-${p.id}`} className="">
-                        {nameByteLength(renameValue.trim()) > MAX_NAME_LEN
-                          ? `${tr("Too long —")} ${MAX_NAME_LEN} ${tr("bytes maximum.")}`
-                          : ""}
-                      </InlineError>
-                      <div className="flex items-center gap-2">
-                        <button type="button" className="btn-ghost text-xs" disabled={busy !== null} onClick={() => setRenameFor(null)}>{tr("Cancel")}</button>
-                        <button
-                          type="submit"
-                          className="btn-primary text-xs"
-                          disabled={busy !== null || networkMismatch || validatePlanNameLocal(renameValue) !== null}
-                        >{busy === `rename-${p.id}` ? tr("Saving…") : tr("Save name")}</button>
-                      </div>
-                    </form>
-                  )}
+                  {renameFor === p.id && (() => {
+                    const renameError = validatePlanNameLocal(renameValue);
+                    return (
+                      <form
+                        className="w-full mt-3 space-y-2"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          if (renameError !== null) return;
+                          void run(`rename-${p.id}`, () =>
+                            payflow.setPlanName(address, signXdr, p.id, renameValue),
+                          ).then(() => setRenameFor(null));
+                        }}
+                      >
+                        <label className="label" htmlFor={`rename-${p.id}`}>{tr("New plan name")}</label>
+                        <input
+                          id={`rename-${p.id}`}
+                          className="input"
+                          value={renameValue}
+                          onChange={(e) => setRenameValue(e.target.value)}
+                          aria-invalid={renameError !== null}
+                          aria-describedby={renameError !== null ? `rename-error-${p.id}` : undefined}
+                        />
+                        {renameError !== null && (
+                          <p id={`rename-error-${p.id}`} className="text-sm text-danger" role="alert">
+                            {translateMessage(renameError)}
+                          </p>
+                        )}
+                        <div className="flex items-center gap-2">
+                          <button type="button" className="btn-ghost text-xs" disabled={busy !== null} onClick={() => setRenameFor(null)}>{tr("Cancel")}</button>
+                          <button
+                            type="submit"
+                            className="btn-primary text-xs"
+                            disabled={busy !== null || networkMismatch || renameError !== null}
+                          >{busy === `rename-${p.id}` ? tr("Saving…") : tr("Save name")}</button>
+                        </div>
+                      </form>
+                    );
+                  })()}
                   <div className="flex w-full flex-wrap items-center gap-2 mt-2">
                     <CopyButton
                       value={planLinks[p.id] ?? ""}
@@ -2756,13 +2812,18 @@ export default function MerchantPage() {
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
                         {endable(m) && (
-                          <input
-                            type="checkbox"
-                            checked={selected.has(m.id)}
-                            onChange={() => toggleSelected(m.id)}
-                            disabled={busy !== null}
-                            aria-label={`Select subscription #${m.id} for batch end`}
-                          />
+                          <>
+                            <label htmlFor={`select-mandate-${m.id}`} className="sr-only">
+                              {`Select subscription #${m.id} for batch end`}
+                            </label>
+                            <input
+                              id={`select-mandate-${m.id}`}
+                              type="checkbox"
+                              checked={selected.has(m.id)}
+                              onChange={() => toggleSelected(m.id)}
+                              disabled={busy !== null}
+                            />
+                          </>
                         )}
                         <Link
                           href={`/mandates/?id=${m.id}`}

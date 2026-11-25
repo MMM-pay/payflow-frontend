@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useState, startTransition, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, startTransition, type ReactNode } from "react";
 import {
   type AppNotification,
   filterDismissedNotifications,
@@ -37,6 +37,7 @@ export function NotificationCentre({
 }: NotificationCentreProps) {
   const { t: tr } = useI18n();
   const panelId = useId();
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
 
@@ -80,13 +81,16 @@ export function NotificationCentre({
       className={`rounded-xl border border-edge bg-card p-3 shadow-xs ${className}`}
       onKeyDown={(e) => {
         if (e.key === "Escape" && isOpen) {
+          e.preventDefault();
           setIsOpen(false);
+          triggerRef.current?.focus();
         }
       }}
     >
       {/* Summary Trigger Bar */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <button
+          ref={triggerRef}
           type="button"
           onClick={() => setIsOpen((prev) => !prev)}
           aria-expanded={isOpen}

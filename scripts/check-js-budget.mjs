@@ -85,6 +85,11 @@ export function checkRoutes(measurements, budgets) {
   });
 }
 
+export function routeForDirectory(outDir, dir) {
+  const rel = relative(outDir, dir).replace(/\\/g, "/");
+  return rel ? `/${rel}` : "/";
+}
+
 /** Every `index.html` the static export produced, as [route, file] pairs. */
 function exportedRoutes(outDir) {
   const found = [];
@@ -94,8 +99,7 @@ function exportedRoutes(outDir) {
       if (entry.isDirectory()) {
         if (entry.name !== "_next") walk(path);
       } else if (entry.name === "index.html") {
-        const rel = relative(outDir, dirname(path));
-        found.push([rel ? `/${rel}` : "/", path]);
+        found.push([routeForDirectory(outDir, dirname(path)), path]);
       }
     }
   };
