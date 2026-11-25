@@ -118,6 +118,7 @@ export function DepositCoverageInput({
           decimals={decimals}
           disabled={disabled || busy}
           hideError
+          invalid={Boolean(error)}
           describedBy={error ? errorId : summaryId}
         />
       </div>

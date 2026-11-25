@@ -3,6 +3,7 @@ import { checkAmount, parseAmount } from "@/lib/format";
 import { formatAmount, formatDate, formatExactTime, formatPeriod, formatUsdString, formatWhen } from "@/i18n/format";
 import { createTranslation, translateMessage } from "@/i18n/translate";
 import { presentation } from "@/i18n/presentation";
+import de from "@/i18n/de.json";
 import en from "@/i18n/en.json";
 import fr from "@/i18n/fr.json";
 
@@ -47,12 +48,43 @@ describe("English and French financial presentation", () => {
   });
 });
 
+describe("German financial presentation", () => {
+  it("uses German separators, dates and relative times", () => {
+    expect(formatAmount(123456789n, "de", undefined, 7)).toBe("12,3456789 XLM");
+    expect(formatAmount(90071992547409931n, "de", undefined, 7)).toBe("9.007.199.254,7409931 XLM");
+    const instant = Date.UTC(2026, 0, 2, 0, 5) / 1000;
+    expect(formatDate(instant, "de")).toMatch(/^2\./);
+    expect(formatDate(instant, "de")).toContain("2026");
+    expect(formatExactTime(instant, "de")).toContain("00:05");
+    expect(formatWhen(instant + 86400, "de", instant * 1000)).toBe("in 1 Tag");
+    expect(formatWhen(instant + 20, "de", instant * 1000)).toBe("sofort fällig");
+    expect(formatWhen(instant - 20, "de", instant * 1000)).toBe("gerade eben");
+    expect(formatPeriod(604800 * 2, "de")).toBe("alle 2 Wochen");
+    expect(formatPeriod(86400, "de")).toBe("pro Tag");
+    expect(formatPeriod(3600, "de")).toBe("pro Stunde");
+    expect(formatPeriod(2592000, "de")).toBe("pro Monat");
+    expect(formatUsdString("$9007199254740993.01", "de")).toBe("9.007.199.254.740.993,01\u00a0$");
+  });
+  it("localizes trial, churn, MRR and validator text in German", () => {
+    const p = presentation("de");
+    expect(p.trialBadge({ trial: 3 * 86400 })).toBe("Kostenlose Testphase: 3 Tage");
+    expect(p.describeSeries([], "day", String)).toBe("In diesem Zeitraum wurden keine Einnahmen verzeichnet.");
+    expect(p.formatMonthLabel(Date.UTC(2026, 0, 1) / 1000)).toContain("2026");
+    expect(p.describeMrrTrend([], String)).toBe("In diesem Zeitraum wurde keine gebundene MRR verzeichnet.");
+    expect(createTranslation("de")("Plan #{0}", { 0: 1234 })).toBe("Angebot Nr. 1.234");
+    expect(translateMessage("de", "At most 6 decimal places.")).toBe("Höchstens 6 Nachkommastellen.");
+    expect(translateMessage("de", "That plan does not exist.")).toBe("Dieses Angebot existiert nicht.");
+  });
+});
+
 describe("catalog completeness and application errors", () => {
-  it("has a French translation with matching interpolation tokens for every English key", () => {
-    expect(Object.keys(fr).sort()).toEqual(Object.keys(en).sort());
-    for (const key of Object.keys(en) as (keyof typeof en)[]) {
-      expect(fr[key].trim(), key).not.toBe("");
-      expect([...new Set([...fr[key].matchAll(/\{\w+\}/g)].map(m => m[0]))].sort(), key).toEqual([...new Set([...key.matchAll(/\{\w+\}/g)].map(m => m[0]))].sort());
+  it("has French and German translations with matching interpolation tokens for every English key", () => {
+    for (const [name, catalog] of [["French", fr], ["German", de]] as const) {
+      expect(Object.keys(catalog).sort(), name).toEqual(Object.keys(en).sort());
+      for (const key of Object.keys(en) as (keyof typeof en)[]) {
+        expect(catalog[key].trim(), `${name}: ${key}`).not.toBe("");
+        expect([...new Set([...catalog[key].matchAll(/\{\w+\}/g)].map(m => m[0]))].sort(), `${name}: ${key}`).toEqual([...new Set([...key.matchAll(/\{\w+\}/g)].map(m => m[0]))].sort());
+      }
     }
   });
   it("interpolates locale numbers, preserves external values, and falls back safely", () => {

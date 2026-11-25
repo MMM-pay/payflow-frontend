@@ -21,6 +21,13 @@ export const XLM: TokenMeta = { symbol: "XLM", decimals: DECIMALS };
 const MIN_DECIMALS = 0;
 const MAX_DECIMALS = 18;
 
+/**
+ * The largest amount a SEP-41 contract can hold: `i128::MAX` in the token's
+ * smallest unit. A decimal that parses but exceeds this would be rejected by
+ * `nativeToScVal` at submission time, after the user has already signed.
+ */
+export const MAX_AMOUNT_STROOPS = (1n << 127n) - 1n;
+
 function normalizeDecimals(decimals: number): number {
   if (!Number.isFinite(decimals)) return DECIMALS;
   return Math.min(MAX_DECIMALS, Math.max(MIN_DECIMALS, Math.trunc(decimals)));
@@ -125,6 +132,9 @@ export function checkAmount(input: string, decimals = DECIMALS, locale?: string)
   const stroops = BigInt(whole) * 10n ** BigInt(places) + BigInt(frac.padEnd(places, "0") || "0");
   if (stroops <= 0n) {
     return { ok: false, message: "Amount must be greater than zero." };
+  }
+  if (stroops > MAX_AMOUNT_STROOPS) {
+    return { ok: false, message: "Amount is too large." };
   }
   return { ok: true, stroops };
 }
@@ -375,12 +385,21 @@ export function parseAmount(input: string, decimals = DECIMALS, locale?: string)
  */
 export function normaliseAmountInput(raw: string): string {
   const stripped = raw.replace(/[\s\u00a0\u202f]/g, "");
-  const last = Math.max(stripped.lastIndexOf("."), stripped.lastIndexOf(","));
-  if (last === -1) return stripped.replace(/\D/g, "");
-  const head = stripped.slice(0, last).replace(/[^\d.,]/g, "");
-  const mark = stripped[last];
-  const frac = stripped.slice(last + 1).replace(/\D/g, "");
-  return frac ? `${head}${mark}${frac}` : `${head}${mark}`;
+  // Keep a leading minus so a negative amount reaches `amountError` and is
+  // explained, rather than being silently flipped into a positive value.
+  const negative = stripped.startsWith("-");
+  const body = negative ? stripped.slice(1) : stripped;
+  const last = Math.max(body.lastIndexOf("."), body.lastIndexOf(","));
+  let filtered: string;
+  if (last === -1) {
+    filtered = body.replace(/\D/g, "");
+  } else {
+    const head = body.slice(0, last).replace(/[^\d.,]/g, "");
+    const mark = body[last];
+    const frac = body.slice(last + 1).replace(/\D/g, "");
+    filtered = frac ? `${head}${mark}${frac}` : `${head}${mark}`;
+  }
+  return negative ? `-${filtered}` : filtered;
 }
 
 /**
@@ -394,8 +413,8 @@ export function amountError(input: string, decimals = DECIMALS, locale?: string)
   // mistake yet; anything else must parse cleanly before the form submits.
   if (/^\d+[.,]$|^[.,]$/.test(stripped)) return null;
   try {
-    parseAmount(stripped, decimals, locale);
-    return null;
+    const stroops = parseAmount(stripped, decimals, locale);
+    return stroops > MAX_AMOUNT_STROOPS ? "Amount is too large." : null;
   } catch (err) {
     return err instanceof Error ? err.message : String(err);
   }

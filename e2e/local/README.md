@@ -46,6 +46,8 @@ keys the run generated.
 | Cancel | `cancel` | `Cancelled` badge, then `get_mandate` is `["Cancelled"]` |
 
 The `E2E test wallet` module is compiled in only when
-`NEXT_PUBLIC_E2E_WALLET=1` (see `src/lib/wallet-modules.ts`); it signs with the
-key the test injects before the app boots, and reports itself unavailable when
-none was injected.
+`NEXT_PUBLIC_E2E_WALLET=1` (see `src/lib/wallet-modules.ts`); the test provides
+its ephemeral key after the page loads and before opening the wallet modal.
+The local E2E export sets `NEXT_PUBLIC_DISABLE_CSP=1` so its inline boot code
+and Playwright wallet injection can run; this setting is not used by production
+builds. The wallet module remains unavailable unless the test provides a key.
