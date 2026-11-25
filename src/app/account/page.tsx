@@ -460,8 +460,8 @@ function AccountInner() {
     }
     if (addressRef.current === who) {
       setLastLoadedAt(Date.now());
+      setRefreshing(false);
     }
-    setRefreshing(false);
   }, [viewAddress, source, configuredTokens]);
 
   // SSE stream for live updates (payflow-backend#19)
