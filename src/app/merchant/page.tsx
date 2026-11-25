@@ -1258,8 +1258,11 @@ export default function MerchantPage() {
     void loadProfile();
   }, [loadProfile]);
 
+  const [loadFailed, setLoadFailed] = useState<boolean>(false);
+
   const load = useCallback(async () => {
     if (!address) return;
+    setLoadFailed(false);
     const [p, m, s] = await Promise.all([
       api.plans(address),
       api.mandatesFor(address),
@@ -1277,6 +1280,7 @@ export default function MerchantPage() {
         setPlans(loadedPlans);
       } catch {
         setPlans([]);
+        setLoadFailed(true);
       }
     }
 
@@ -1288,6 +1292,7 @@ export default function MerchantPage() {
         rows = await chainMandatesFor(address, address);
       } catch {
         rows = [];
+        setLoadFailed(true);
       }
     }
     rows.forEach((mandate) => observeContractRecord("mandate", mandate));
@@ -2307,7 +2312,21 @@ export default function MerchantPage() {
               <span className="ml-auto text-xs text-muted" aria-live="polite">{tr("Showing")}{" "}{formatNumber(filteredPlans.length)}{" "}{tr("of")}{" "}{formatNumber(plans.length)}{" "}{tr("plans")}</span>
             </div>
 
-            {filteredPlans.length === 0 ? (
+            {loadFailed && plans === null ? (
+              <Empty
+                title={tr("Could not load plans")}
+                action={
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={() => {
+                      setLoadFailed(false);
+                      void load();
+                    }}
+                  >{tr("Retry")}</button>
+                }
+              >{tr("Neither the plan indexer nor the contract could be read. Check your connection and try again.")}</Empty>
+            ) : filteredPlans.length === 0 ? (
               <Empty
                 title={tr("No plans match these filters")}
                 action={
