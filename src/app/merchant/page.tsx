@@ -80,7 +80,7 @@ function validatePlanNameLocal(name: string): string | null {
 
 import { OnboardingChecklist } from "@/components/OnboardingChecklist";
 import { SectionShortcuts } from "@/components/SectionShortcuts";
-import { AddressLink, Badge, Empty, Notice, Panel, SkeletonRows, Stat, TimeAgo, TxLink } from "@/components/ui";
+import { AddressLink, Badge, Empty, InlineError, Notice, Panel, SkeletonRows, Stat, TimeAgo, TxLink } from "@/components/ui";
 import { Search } from "@/components/Search";
 import { ConfirmDialog, confirmTitle } from "@/components/ConfirmDialog";
 import { observeContractRecord } from "@/lib/contract-compat";
@@ -231,9 +231,7 @@ function ProfilePanel({
             aria-describedby={nameCheck.ok ? undefined : "profile-name-error"}
           />
           {!nameCheck.ok && (
-            <p id="profile-name-error" className="mt-1 text-sm text-danger">
-              {nameCheck.message}
-            </p>
+            <InlineError id="profile-name-error">{nameCheck.message}</InlineError>
           )}
         </div>
         <div className="min-w-[16rem] flex-1">
@@ -252,9 +250,7 @@ function ProfilePanel({
             aria-describedby={urlCheck.ok ? undefined : "profile-url-error"}
           />
           {!urlCheck.ok && (
-            <p id="profile-url-error" className="mt-1 text-sm text-danger">
-              {urlCheck.message}
-            </p>
+            <InlineError id="profile-url-error">{urlCheck.message}</InlineError>
           )}
         </div>
         <button
@@ -672,9 +668,7 @@ function WebhooksPanel({
                   }
                 />
                 {url.length > 0 && !urlCheck.ok && (
-                  <p id="webhook-url-error" className="mt-1 text-sm text-danger">
-                    {translateMessage(urlCheck.message)}
-                  </p>
+                  <InlineError id="webhook-url-error">{urlCheck.message}</InlineError>
                 )}
               </div>
               <div className="min-w-[14rem] flex-1">
@@ -839,7 +833,7 @@ function DiscountForm({
   onCancel: () => void;
   onApply: (bps: number, charges: number) => void;
 }) {
-  const { t: tr, formatAmount, translateMessage } = useI18n();
+  const { t: tr, formatAmount } = useI18n();
   const [percent, setPercent] = useState("10");
   const [charges, setCharges] = useState("3");
   const bpsCheck = checkDiscountBps(percent);
@@ -893,14 +887,14 @@ function DiscountForm({
       </div>
 
       {!bpsCheck.ok && (
-        <p id="discount-percent-error" className="mt-2 text-sm text-danger">
-          {translateMessage(bpsCheck.message)}
-        </p>
+        <InlineError id="discount-percent-error" className="mt-2">
+          {bpsCheck.message}
+        </InlineError>
       )}
       {!chargesCheck.ok && (
-        <p id="discount-charges-error" className="mt-2 text-sm text-danger">
-          {translateMessage(chargesCheck.message)}
-        </p>
+        <InlineError id="discount-charges-error" className="mt-2">
+          {chargesCheck.message}
+        </InlineError>
       )}
 
       {bpsCheck.ok && chargesCheck.ok && (
@@ -938,7 +932,7 @@ function RefundForm({
   onCancel: () => void;
   onConfirm: (amount: bigint) => void;
 }) {
-  const { checkAmount, t: tr, formatAmount, translateMessage } = useI18n();
+  const { checkAmount, t: tr, formatAmount } = useI18n();
   const amountCheck = checkAmount(amount, meta.decimals);
   const maxRefundStroops = maxRefund;
   const usable = amountCheck.ok && amountCheck.stroops <= maxRefundStroops && amountCheck.stroops > 0n;
@@ -978,13 +972,14 @@ function RefundForm({
       </div>
 
       {!amountCheck.ok && (
-        <p id="refund-amount-error" className="mt-2 text-sm text-danger">
-          {translateMessage(amountCheck.message)}
-        </p>
+        <InlineError id="refund-amount-error" className="mt-2">
+          {amountCheck.message}
+        </InlineError>
       )}
       {amountCheck.ok && amountCheck.stroops > maxRefundStroops && (
-        <p id="refund-amount-error" className="mt-2 text-sm text-danger">{tr("Refund cannot exceed")}{" "}{formatAmount(maxRefundStroops, meta)}.
-        </p>
+        <InlineError id="refund-amount-error" className="mt-2">
+          {tr("Refund cannot exceed")}{" "}{formatAmount(maxRefundStroops, meta)}.
+        </InlineError>
       )}
     </div>
   );
@@ -2082,7 +2077,7 @@ export default function MerchantPage() {
               aria-describedby={nameTooLong ? "plan-name-error" : undefined}
             />
             {nameTooLong && (
-              <p id="plan-name-error" className="mt-1 text-sm text-danger">{tr("Too long —")}{" "}{MAX_NAME_LEN}{" "}{tr("bytes maximum.")}</p>
+              <InlineError id="plan-name-error">{tr("Too long —")}{" "}{MAX_NAME_LEN}{" "}{tr("bytes maximum.")}</InlineError>
             )}
           </div>
           <div className="min-w-[10rem] flex-1">
@@ -2507,11 +2502,11 @@ export default function MerchantPage() {
                         aria-invalid={validatePlanNameLocal(renameValue) !== null}
                         aria-describedby={`rename-error-${p.id}`}
                       />
-                      <p id={`rename-error-${p.id}`} className="text-sm text-danger" role="alert">
+                      <InlineError id={`rename-error-${p.id}`} className="">
                         {nameByteLength(renameValue.trim()) > MAX_NAME_LEN
                           ? `${tr("Too long —")} ${MAX_NAME_LEN} ${tr("bytes maximum.")}`
                           : ""}
-                      </p>
+                      </InlineError>
                       <div className="flex items-center gap-2">
                         <button type="button" className="btn-ghost text-xs" disabled={busy !== null} onClick={() => setRenameFor(null)}>{tr("Cancel")}</button>
                         <button

@@ -98,6 +98,7 @@ import { LoadingButton } from "@/components/LoadingButton";
 import {
   Badge,
   Empty,
+  InlineError,
   MerchantAccount,
   Notice,
   Panel,
@@ -1361,9 +1362,7 @@ function AccountInner() {
                 describedBy={withdrawError ? "withdraw-amount-error" : undefined}
               />
               {withdrawError && (
-                <p id="withdraw-amount-error" role="alert" className="mt-1 text-sm text-danger">
-                  {translateMessage(withdrawError)}
-                </p>
+                <InlineError id="withdraw-amount-error">{withdrawError}</InlineError>
               )}
             </div>
             <button
@@ -1483,9 +1482,7 @@ function AccountInner() {
                   disabled={busy !== null}
                 />
                 {recipientDisplayError && (
-                  <p id="fund-recipient-error" className="mt-1 text-sm text-danger">
-                    {translateMessage(recipientDisplayError)}
-                  </p>
+                  <InlineError id="fund-recipient-error">{recipientDisplayError}</InlineError>
                 )}
               </div>
               <div className="min-w-[12rem] flex-1">
@@ -2051,12 +2048,9 @@ function AccountInner() {
                               disabled={busy !== null}
                             />
                             {transferDisplayError && (
-                              <p
-                                id={`transfer-to-error-${m.id}`}
-                                className="mt-1 text-sm text-danger"
-                              >
+                              <InlineError id={`transfer-to-error-${m.id}`}>
                                 {transferDisplayError}
-                              </p>
+                              </InlineError>
                             )}
                           </div>
                           <button

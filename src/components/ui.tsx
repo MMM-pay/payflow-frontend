@@ -98,6 +98,74 @@ export function SkeletonRows({ rows = 3, label = "Loading" }: { rows?: number; l
   );
 }
 
+/**
+ * Inline validation text for a form control.
+ *
+ * Forms used to spell this markup out by hand, which drifted in spacing,
+ * translation and, most importantly, whether the message was announced. This
+ * renders a single `role="alert"` paragraph and translates application
+ * messages through the same catalog as the rest of the UI. Point the control's
+ * `aria-describedby` at `id`; nothing is rendered when there is no message.
+ */
+export function InlineError({
+  id,
+  children,
+  className = "mt-1",
+}: {
+  /** Id referenced by the control's `aria-describedby`. */
+  id: string;
+  children?: ReactNode;
+  /** Spacing override; text size and danger tone are fixed. */
+  className?: string;
+}) {
+  const { translateMessage } = useI18n();
+  if (children === null || children === undefined || children === false || children === "") {
+    return null;
+  }
+  return (
+    <p id={id} role="alert" className={`${className} text-sm text-danger`}>
+      {typeof children === "string" ? translateMessage(children) : children}
+    </p>
+  );
+}
+
+/**
+ * Static help text under a form control.
+ *
+ * A hint is not an error: it stays visible alongside validation, uses the muted
+ * token in both themes, and is translated like every other label. Pass
+ * `live` when the hint is recomputed while the reader types (e.g. a summary of
+ * what the entered amount covers) so assistive technology hears the update.
+ */
+export function FieldHint({
+  id,
+  children,
+  className = "mt-1",
+  live = false,
+}: {
+  /** Id referenced by the control's `aria-describedby`. */
+  id: string;
+  children?: ReactNode;
+  /** Spacing override; text size and muted tone are fixed. */
+  className?: string;
+  /** Announce changes politely while the reader types. */
+  live?: boolean;
+}) {
+  const { t: tr } = useI18n();
+  if (children === null || children === undefined || children === false || children === "") {
+    return null;
+  }
+  return (
+    <p
+      id={id}
+      className={`${className} text-xs text-muted`}
+      aria-live={live ? "polite" : undefined}
+    >
+      {typeof children === "string" ? tr(children) : children}
+    </p>
+  );
+}
+
 /** Placeholder grid matching the plan cards on the subscribe page. */
 export function SkeletonPlanCards({ cards = 4, label = "Loading plans" }: { cards?: number; label?: string }) {
   const { t: tr } = useI18n();

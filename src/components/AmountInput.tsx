@@ -3,6 +3,7 @@
 import { useI18n } from "@/i18n/provider";
 
 import { useEffect, useRef, type ReactNode } from "react";
+import { FieldHint, InlineError } from "@/components/ui";
 import { canonicalAmount, normaliseAmountInput } from "@/lib/format";
 
 /**
@@ -53,7 +54,7 @@ export function AmountInput({
   describedBy?: string;
   onBlur?: () => void;
 }) {
-  const { locale, amountError, t: tr, translateMessage } = useI18n();
+  const { locale, amountError, t: tr } = useI18n();
   const previousLocale = useRef(locale);
   useEffect(() => {
     if (previousLocale.current === locale) return;
@@ -94,16 +95,8 @@ export function AmountInput({
         onChange={(e) => onChange(normaliseAmountInput(e.target.value))}
         onBlur={onBlur}
       />
-      {hint && (
-        <p id={hintId} className="mt-1 text-xs text-muted">
-          {typeof hint === "string" ? tr(hint) : hint}
-        </p>
-      )}
-      {!hideError && message && (
-        <p id={errorId} className="mt-1 text-sm text-danger">
-          {translateMessage(message)}
-        </p>
-      )}
+      <FieldHint id={hintId}>{hint}</FieldHint>
+      {!hideError && <InlineError id={errorId}>{message}</InlineError>}
     </div>
   );
 }
