@@ -6,26 +6,6 @@ import { WalletLayoutInner } from "@/components/WalletLayoutInner";
 import { THEME_INIT_SCRIPT } from "@/lib/theme";
 
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
-// The visual regression build leaves CSP off: its inline-flight payload embeds
-// the policy, so hashing the scripts would hash the hash list itself. The
-// policy is not what those screenshots assert.
-const cspEnabled = process.env.NEXT_PUBLIC_DISABLE_CSP !== "1";
-const cspContent = [
-  "default-src 'self'",
-  "base-uri 'self'",
-  "object-src 'none'",
-  "form-action 'self'",
-  "img-src 'self' data: blob: https://*.walletconnect.com https://*.walletconnect.org",
-  "font-src 'self' data:",
-  "style-src 'self' 'unsafe-inline'",
-  `connect-src 'self' ${
-    process.env.NODE_ENV === "development" ? "ws://localhost:3000" : ""
-  } ${process.env.NEXT_PUBLIC_CSP_CONNECT_SRC ?? ""}`,
-  "frame-src 'self' https://verify.walletconnect.com",
-  `script-src 'self' ${
-    process.env.NODE_ENV === "development" ? "'unsafe-eval'" : ""
-  } __PAYFLOW_SCRIPT_HASHES__`,
-].join("; ");
 
 export const metadata: Metadata = {
   title: "Payflow — recurring payments on Stellar",
@@ -46,9 +26,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     // pre-paint theme script.
     <html lang="en" suppressHydrationWarning>
       <head>
-        {cspEnabled && (
-          <meta httpEquiv="Content-Security-Policy" content={cspContent} />
-        )}
         <meta name="theme-color" content="#0b0e14" />
         <link rel="apple-touch-icon" href={`${basePath}/icon-192.png`} />
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
