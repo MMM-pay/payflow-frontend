@@ -623,6 +623,7 @@
   "Verify: https://stellar.expert/explorer/testnet/tx/": "Verify: https://stellar.expert/explorer/testnet/tx/",
   "Viewing subscriptions for": "Viewing subscriptions for",
   "View subscriber": "View subscriber",
+  "View transaction {0} on the Stellar explorer (opens in a new tab)": "View transaction {0} on the Stellar explorer (opens in a new tab)",
   "Wallet account changed. Please retry the transaction with the new account.": "Wallet account changed. Please retry the transaction with the new account.",
   "Wallet changed. Check your wallet and try again.": "Wallet changed. Check your wallet and try again.",
   "Webhook created.": "Webhook created.",

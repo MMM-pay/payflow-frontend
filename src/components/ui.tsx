@@ -217,19 +217,44 @@ export function MerchantAccount({ value }: { value: string }) {
   );
 }
 
+/**
+ * A transaction hash from a settled on-chain action: the truncated hash links
+ * to the explorer and the copy button always receives the full value. An empty
+ * hash renders nothing, so a success notice never shows a dead link.
+ */
 export function TxLink({ hash }: { hash: string }) {
   const { t: tr } = useI18n();
+  const value = hash.trim();
+  if (!value) return null;
+
+  const label = tr("transaction hash");
   return (
     <span className="inline-flex max-w-full items-center gap-1 align-middle">
       <a
-        href={`${explorerBase}/tx/${hash}`}
+        href={`${explorerBase}/tx/${value}`}
         target="_blank"
         rel="noreferrer"
-        className="mono truncate text-muted underline-offset-2 hover:text-accent hover:underline"
+        className="mono inline-flex max-w-full items-center gap-1 text-muted underline-offset-2 hover:text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        title={value}
+        aria-label={tr("View transaction {0} on the Stellar explorer (opens in a new tab)", { 0: value })}
       >
-        {shortAddress(hash, 6)}
+        <span className="truncate">{shortAddress(value, 8)}</span>
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="h-3 w-3 shrink-0"
+          aria-hidden="true"
+        >
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+          <path d="M15 3h6v6" />
+          <path d="M10 14 21 3" />
+        </svg>
       </a>
-      <CopyButton value={hash} label={tr("transaction hash")} />
+      <CopyButton value={value} label={label} />
     </span>
   );
 }

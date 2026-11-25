@@ -834,13 +834,14 @@ function AccountInner() {
     try {
       setBusy(`trustline-${token.symbol}`);
       setError(null);
-      await payflow.addTrustline(
+      setDone(null);
+      const hash = await payflow.addTrustline(
         address,
         signXdr,
         token.classicAsset.code,
         token.classicAsset.issuer,
       );
-      setDone(`Added trustline for ${token.symbol}.`);
+      setDone(hash);
       await checkTrustlines();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
