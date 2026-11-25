@@ -273,6 +273,7 @@ function AccountInner() {
   // The mandate whose date picker is open, and the date typed into it.
   const [pauseFor, setPauseFor] = useState<number | null>(null);
   const [pauseDate, setPauseDate] = useState("");
+  const [pauseError, setPauseError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [capFor, setCapFor] = useState<number | null>(null);
@@ -1016,6 +1017,7 @@ function AccountInner() {
     setPauseFor(mandateId);
     const week = new Date(Date.now() + 7 * 86_400_000);
     setPauseDate(week.toISOString().slice(0, 10));
+    setPauseError(null);
     setConfirmCancel(null);
     setError(null);
   }
@@ -1024,13 +1026,16 @@ function AccountInner() {
     if (!address || isReadOnly) return;
     const until = parsePauseDate(pauseDate);
     if (until === null) {
-      setError(tr("Pick a date for the mandate to resume on."));
+      setPauseError(tr("Pick a date for the mandate to resume on."));
+      document.getElementById(`pause-until-${mandateId}`)?.focus();
       return;
     }
     if (until * 1000 <= Date.now()) {
-      setError(tr("Pick a date in the future."));
+      setPauseError(tr("Pick a date in the future."));
+      document.getElementById(`pause-until-${mandateId}`)?.focus();
       return;
     }
+    setPauseError(null);
     await run(`pause-until-${mandateId}`, () =>
       payflow.pauseUntil(address, signXdr, mandateId, until),
     );
@@ -1358,6 +1363,7 @@ function AccountInner() {
                     : tr("Accepts 5, 5.0 — and 5,0 where commas are decimals.")
                 }
                 hideError={withdrawError !== null}
+                invalid={withdrawError !== null}
                 describedBy={withdrawError ? "withdraw-amount-error" : undefined}
               />
               {withdrawError && (
@@ -1483,7 +1489,7 @@ function AccountInner() {
                   disabled={busy !== null}
                 />
                 {recipientDisplayError && (
-                  <p id="fund-recipient-error" className="mt-1 text-sm text-danger">
+                  <p id="fund-recipient-error" role="alert" className="mt-1 text-sm text-danger">
                     {translateMessage(recipientDisplayError)}
                   </p>
                 )}
@@ -1929,7 +1935,12 @@ function AccountInner() {
                                 min={minPauseDate()}
                                 value={pauseDate}
                                 disabled={busy !== null}
-                                onChange={(e) => setPauseDate(e.target.value)}
+                                aria-invalid={pauseError !== null || undefined}
+                                aria-describedby={pauseError ? `pause-until-error-${m.id}` : undefined}
+                                onChange={(e) => {
+                                  setPauseDate(e.target.value);
+                                  setPauseError(null);
+                                }}
                               />
                               <button
                                 type="button"
@@ -1945,8 +1956,20 @@ function AccountInner() {
                                 type="button"
                                 className="btn-ghost"
                                 disabled={busy !== null}
-                                onClick={() => setPauseFor(null)}
+                                onClick={() => {
+                                  setPauseFor(null);
+                                  setPauseError(null);
+                                }}
                               >{tr("Back")}</button>
+                              {pauseError && (
+                                <p
+                                  id={`pause-until-error-${m.id}`}
+                                  role="alert"
+                                  className="w-full text-xs text-danger"
+                                >
+                                  {pauseError}
+                                </p>
+                              )}
                             </>
                           ) : (
                             <button
@@ -2053,6 +2076,7 @@ function AccountInner() {
                             {transferDisplayError && (
                               <p
                                 id={`transfer-to-error-${m.id}`}
+                                role="alert"
                                 className="mt-1 text-sm text-danger"
                               >
                                 {transferDisplayError}
@@ -2102,7 +2126,12 @@ function AccountInner() {
                           inputMode="numeric"
                           className="input mt-1 w-full"
                           value={capAmount}
-                          onChange={(e) => setCapAmount(e.target.value)}
+                          onChange={(e) => {
+                            setCapAmount(e.target.value);
+                            setCapError(null);
+                          }}
+                          aria-invalid={capError !== null || undefined}
+                          aria-describedby={capError ? `cap-error-${m.id}` : undefined}
                           disabled={busy !== null}
                         />
                       </div>
@@ -2118,12 +2147,15 @@ function AccountInner() {
                         type="button"
                         className="btn-ghost"
                         disabled={busy !== null}
-                        onClick={() => setCapFor(null)}
+                        onClick={() => {
+                          setCapFor(null);
+                          setCapError(null);
+                        }}
                       >
                         Close
                       </button>
                       {capError && (
-                        <p className="w-full text-xs text-rose-300" role="alert">
+                        <p id={`cap-error-${m.id}`} className="w-full text-xs text-danger" role="alert">
                           {capError}
                         </p>
                       )}
@@ -2203,6 +2235,8 @@ function AccountInner() {
         confirmLabel={tr("Cancel subscriptions")}
         busy={busy === "cancel-all"}
         busyLabel={tr("Cancelling…")}
+        confirmDisabled={networkMismatch}
+        error={error ?? undefined}
         danger
       >
         <p className="text-muted">

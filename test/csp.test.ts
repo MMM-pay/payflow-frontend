@@ -3,33 +3,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { applyCspToExport, withInlineScriptHashes } from "../scripts/csp.mjs";
-
-const hash = (script: string) =>
-  `'sha256-${createHash("sha256").update(script, "utf8").digest("base64")}'`;
-
-/** The RSC payload Next inlines into every page; it marks a page as exported. */
-const FLIGHT = 'self.__next_f.push([1,"1:\\"$Sreact.fragment\\""])';
-
-function page(inline: string[] = ["window.ready = true;"]) {
-  return [
-    "<!DOCTYPE html><html><head>",
-    '<meta name="theme-color" content="#0b0e14">',
-    "</head><body>",
-    '<script src="/_next/static/chunk.js"></script>',
-    ...inline.map((script) => `<script>${script}</script>`),
-    `<script>${FLIGHT}</script>`,
-    "</body></html>",
-  ].join("");
-}
-
-/** The policy the exported document declares, or null when it has none. */
-function declaredPolicy(html: string): string | null {
-  const match = html.match(
-    /<meta http-equiv="Content-Security-Policy" content="([^"]*)">/,
-  );
-  return match?.[1] ?? null;
-}
+import { withInlineScriptHashes, applyCspToExport } from "../scripts/apply-csp.mjs";
 
 describe("static export CSP", () => {
   it("hashes inline scripts while leaving external scripts to self", () => {
@@ -91,5 +65,16 @@ describe("static export CSP", () => {
     await expect(applyCspToExport(directory)).rejects.toThrow(
       "No Next.js export pages found",
     );
+  });
+
+  it("skips hash injection when CSP is disabled for a test build", async () => {
+    const previous = process.env.NEXT_PUBLIC_DISABLE_CSP;
+    process.env.NEXT_PUBLIC_DISABLE_CSP = "1";
+    try {
+      await expect(applyCspToExport("/nonexistent-test-export")).resolves.toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env.NEXT_PUBLIC_DISABLE_CSP;
+      else process.env.NEXT_PUBLIC_DISABLE_CSP = previous;
+    }
   });
 });

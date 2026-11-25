@@ -20,4 +20,5 @@ export interface Verdict {
 export function scriptSources(html: string): string[];
 export function assetFile(src: string): string;
 export function budgetFor(route: string, budgets: Budgets): number | null;
+export function routeForDirectory(outDir: string, dir: string): string;
 export function checkRoutes(measurements: Measurement[], budgets: Budgets): Verdict[];

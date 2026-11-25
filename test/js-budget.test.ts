@@ -6,6 +6,7 @@ import {
   assetFile,
   budgetFor,
   checkRoutes,
+  routeForDirectory,
   scriptSources,
 } from "../scripts/check-js-budget.mjs";
 
@@ -46,6 +47,22 @@ describe("assetFile", () => {
     expect(assetFile("/_next/static/chunks/app/plans/%5Bid%5D/page.js")).toBe(
       "_next/static/chunks/app/plans/[id]/page.js",
     );
+  });
+});
+
+describe("routeForDirectory", () => {
+  it("uses forward slashes so nested routes inherit their prefix budget", () => {
+    expect(routeForDirectory(join(ROOT, "out"), join(ROOT, "out", "plans", "1"))).toBe(
+      "/plans/1",
+    );
+    expect(budgetFor(routeForDirectory(join(ROOT, "out"), join(ROOT, "out", "plans", "1")), {
+      default: 100,
+      routes: { "/plans": 140 },
+    })).toBe(140);
+  });
+
+  it("keeps the root route as /", () => {
+    expect(routeForDirectory(join(ROOT, "out"), join(ROOT, "out"))).toBe("/");
   });
 });
 

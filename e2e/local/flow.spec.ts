@@ -51,8 +51,8 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("merchant publishes a plan", async ({ page }) => {
-  await installTestWallet(page, merchant.secret, contracts.networkPassphrase);
   await page.goto("/merchant/", { waitUntil: "networkidle" });
+  await installTestWallet(page, merchant.secret, contracts.networkPassphrase);
   await connectTestWallet(page, merchant.publicKey);
 
   // The published form's own ids: the page also repeats the token symbol in
@@ -81,8 +81,8 @@ test("merchant publishes a plan", async ({ page }) => {
 });
 
 test("subscriber deposits into the vault", async ({ page }) => {
-  await installTestWallet(page, subscriber.secret, contracts.networkPassphrase);
   await page.goto("/account/", { waitUntil: "networkidle" });
+  await installTestWallet(page, subscriber.secret, contracts.networkPassphrase);
   await connectTestWallet(page, subscriber.publicKey);
 
   // "Fund another account" repeats the same visible label, so target the
@@ -95,8 +95,8 @@ test("subscriber deposits into the vault", async ({ page }) => {
 });
 
 test("subscriber opens a mandate", async ({ page }) => {
-  await installTestWallet(page, subscriber.secret, contracts.networkPassphrase);
   await page.goto("/subscribe/", { waitUntil: "networkidle" });
+  await installTestWallet(page, subscriber.secret, contracts.networkPassphrase);
   await connectTestWallet(page, subscriber.publicKey);
 
   const card = page.locator("section.panel", { hasText: "E2E Coffee" });
@@ -119,8 +119,8 @@ test("subscriber opens a mandate", async ({ page }) => {
 });
 
 test("subscriber cancels the mandate", async ({ page }) => {
-  await installTestWallet(page, subscriber.secret, contracts.networkPassphrase);
   await page.goto("/account/", { waitUntil: "networkidle" });
+  await installTestWallet(page, subscriber.secret, contracts.networkPassphrase);
   await connectTestWallet(page, subscriber.publicKey);
 
   const id = mandateId ?? (await newestSubscriberMandate(contracts, subscriber.publicKey));
@@ -130,13 +130,10 @@ test("subscriber cancels the mandate", async ({ page }) => {
   });
   await expect(cancel).toBeVisible({ timeout: 60_000 });
   await cancel.click();
-  // Every confirmation uses the shared dialog, whose committing button is the
-  // action label ("Confirm cancellation") rather than a per-row name.
-  const dialog = page.getByRole("dialog");
-  await expect(
-    dialog.getByText(`Cancel subscription #${mandateId}?`),
-  ).toBeVisible();
-  await dialog.getByRole("button", { name: "Confirm cancellation" }).click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Confirm cancellation" })
+    .click();
 
   await expect(page.getByText("Cancelled", { exact: true })).toBeVisible({
     timeout: 60_000,

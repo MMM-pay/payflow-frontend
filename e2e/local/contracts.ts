@@ -48,9 +48,9 @@ export function loadContracts(): LocalContracts {
   }
 }
 
-/** A `window` property the app's test wallet module reads at boot. */
+/** A `window` property the app's test wallet module reads when the modal opens. */
 export async function installTestWallet(page: Page, secret: string, networkPassphrase: string) {
-  await page.addInitScript(
+  await page.evaluate(
     ({ secretKey, passphrase }) => {
       (window as unknown as Record<string, unknown>).__PAYFLOW_E2E_WALLET__ = {
         secret: secretKey,

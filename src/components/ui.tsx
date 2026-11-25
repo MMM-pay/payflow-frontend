@@ -305,7 +305,9 @@ const DIALOG_TABABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 function tabbableWithin(root: HTMLElement): HTMLElement[] {
-  return Array.from(root.querySelectorAll<HTMLElement>(DIALOG_TABABLE));
+  return Array.from(root.querySelectorAll<HTMLElement>(DIALOG_TABABLE)).filter(
+    (el) => !el.closest('[hidden], [aria-hidden="true"], fieldset[disabled]'),
+  );
 }
 
 /**
@@ -334,6 +336,7 @@ export function Dialog({
 }) {
   const { t: tr } = useI18n();
   const titleId = useId();
+  const bodyId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   // The handler is read through a ref so that an inline `onClose={() => …}` —
   // the natural way to call this — cannot re-run the effect below. A dialog
@@ -353,6 +356,8 @@ export function Dialog({
     const root: HTMLElement = panel;
 
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
 
     // Focus the panel rather than its first control, so a reader hears the
     // title before any button — and so a dialog that only shows text still
@@ -371,6 +376,11 @@ export function Dialog({
       // order: the panel is focusable but deliberately not a tab stop, so it
       // has to count as the seat before the first control and after the last.
       const tabbable = tabbableWithin(root);
+      event.preventDefault();
+      if (tabbable.length === 0) {
+        root.focus();
+        return;
+      }
       const active = document.activeElement;
       // -1 is the panel itself, or a control the browser moved focus to that
       // is not in the ring; either way the next stop is the end it is heading
@@ -384,7 +394,6 @@ export function Dialog({
           ? 0
           : (index + 1) % tabbable.length;
 
-      event.preventDefault();
       tabbable[at]?.focus();
     }
 
@@ -401,6 +410,7 @@ export function Dialog({
     return () => {
       document.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("focusin", onFocusIn);
+      document.body.style.overflow = previousOverflow;
       // Hand focus back to the control that opened the dialog, otherwise a
       // keyboard user dismissing it is dropped at the top of the document.
       // An opener the parent removed while the dialog was open is skipped
@@ -412,12 +422,26 @@ export function Dialog({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 sm:items-center">
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 sm:items-center"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          // Prevent clicking the backdrop from moving focus to document.body.
+          event.preventDefault();
+        }
+      }}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) {
+          onCloseRef.current();
+        }
+      }}
+    >
       <div
         ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        aria-describedby={bodyId}
         tabIndex={-1}
         className="panel max-h-full w-full max-w-lg overflow-y-auto"
       >
@@ -444,7 +468,7 @@ export function Dialog({
             </svg>
           </button>
         </div>
-        <div className="text-sm">{children}</div>
+        <div id={bodyId} className="text-sm">{children}</div>
         {actions && <div className="mt-4 flex flex-wrap justify-end gap-2">{actions}</div>}
       </div>
     </div>
