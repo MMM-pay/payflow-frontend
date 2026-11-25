@@ -1364,7 +1364,7 @@ function AccountInner() {
                 }
                 hideError={withdrawError !== null}
                 invalid={withdrawError !== null}
-                describedBy={withdrawError ? "withdraw-amount-error" : undefined}
+                {...(withdrawError ? { describedBy: "withdraw-amount-error" } : {})}
               />
               {withdrawError && (
                 <p id="withdraw-amount-error" role="alert" className="mt-1 text-sm text-danger">

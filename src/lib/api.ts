@@ -364,7 +364,7 @@ async function get<T>(path: string, options?: { headers?: Record<string, string>
   try {
     const res = await fetch(`${config.apiUrl}${path}`, {
       cache: "no-store",
-      headers: options?.headers,
+      ...(options?.headers !== undefined ? { headers: options.headers } : {}),
     });
     if (!res.ok) return null;
     return (await res.json()) as T;
@@ -473,7 +473,7 @@ async function del(path: string, options?: { headers?: Record<string, string> })
     const res = await fetch(`${config.apiUrl}${path}`, {
       method: "DELETE",
       cache: "no-store",
-      headers: options?.headers,
+      ...(options?.headers !== undefined ? { headers: options.headers } : {}),
     });
     return res.ok;
   } catch {
@@ -604,7 +604,7 @@ export const api = {
       const response = await fetch(`${config.apiUrl}/api/webhooks/${encodeURIComponent(id)}/deliveries`, {
         cache: "no-store",
         redirect: "error",
-        signal,
+        ...(signal !== undefined ? { signal } : {}),
         headers: {
           "X-Payflow-Merchant": proof.merchant,
           "X-Payflow-Timestamp": String(proof.timestamp),

@@ -127,7 +127,7 @@ export function buildDebugInfo(
       token: config.contracts.token || "not configured",
     },
     apiUrl: config.apiUrl || "not configured",
-    wallet: wallet ?? undefined,
+    ...(wallet ? { wallet } : {}),
   };
 }
 

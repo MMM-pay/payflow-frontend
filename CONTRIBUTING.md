@@ -44,8 +44,11 @@ before review.
 
 ## Code standards
 
-- **Strict TypeScript.** `strict` and `noUncheckedIndexedAccess` are on. Index
-  access returns `T | undefined`; handle it rather than casting.
+- **Strict TypeScript.** `strict`, `noImplicitAny`, `exactOptionalPropertyTypes`,
+  and `noUncheckedIndexedAccess` are on across the app, tests, and E2E code.
+  Index access returns `T | undefined`; handle it rather than casting. Optional
+  properties should be omitted when unavailable; include `| undefined` in a
+  property type only when callers intentionally pass `undefined`.
 - **Money is `bigint`, never `number`.** Values arrive as stroops. Convert for
   display with `fromStroops`, parse input with `toStroops`. A float in a payment
   path is a bug.
