@@ -182,6 +182,74 @@ export function monthlyRevenueFilename(
   return `payflow-monthly-revenue-${shortAddress(address)}-${from}_to_${to}.csv`;
 }
 
+/** One selected subscriber/mandate row for the merchant's bulk export. */
+export interface SubscriberRow {
+  /** On-chain mandate id. */
+  mandateId: number;
+  /** Subscriber Stellar address. */
+  subscriber: string;
+  /** Plan the mandate belongs to. */
+  planId: number;
+  /** Display name of that plan, or "Plan #id" for legacy rows. */
+  planName: string;
+  /** Current mandate status (Active, Paused, Ended, …). */
+  status: string;
+  /** Charge amount as a decimal string in the token's units. */
+  amount: string;
+  /** Token symbol the amount is denominated in. */
+  token: string;
+  /** Billing period in seconds. */
+  periodSeconds: number;
+  /** Charges settled so far. */
+  chargesMade: number;
+  /** Authorised charge cap, 0 meaning open-ended. */
+  maxCharges: number;
+  /** ISO date of the next charge, or "—" when there is none. */
+  nextCharge: string;
+}
+
+const SUBSCRIBER_HEADER = [
+  "mandate id",
+  "subscriber",
+  "plan id",
+  "plan name",
+  "status",
+  "amount",
+  "token",
+  "period seconds",
+  "charges made",
+  "max charges",
+  "next charge",
+];
+
+/** Serialize selected subscriber rows to CSV with the same RFC 4180 escaping. */
+export function buildSubscribersCsv(rows: SubscriberRow[]): string {
+  const lines = [SUBSCRIBER_HEADER.map(escapeCsv).join(",")];
+  for (const row of rows) {
+    lines.push(
+      [
+        row.mandateId,
+        row.subscriber,
+        row.planId,
+        row.planName,
+        row.status,
+        row.amount,
+        row.token,
+        row.periodSeconds,
+        row.chargesMade,
+        row.maxCharges,
+        row.nextCharge,
+      ].map(escapeCsv).join(","),
+    );
+  }
+  return lines.join("\n");
+}
+
+/** Filename for a bulk subscriber export, dated so two exports do not collide. */
+export function subscribersFilename(address: string, date: string): string {
+  return `payflow-subscribers-${shortAddress(address)}-${date}.csv`;
+}
+
 /** Download CSV text as a file in the browser. */
 export function downloadCsv(csv: string, filename: string): void {
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });

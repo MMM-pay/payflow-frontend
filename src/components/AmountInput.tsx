@@ -3,6 +3,7 @@
 import { useI18n } from "@/i18n/provider";
 
 import { useEffect, useRef, type ReactNode } from "react";
+import { FieldHint, InlineError } from "@/components/ui";
 import { canonicalAmount, normaliseAmountInput } from "@/lib/format";
 
 /**
@@ -57,7 +58,7 @@ export function AmountInput({
   invalid?: boolean;
   onBlur?: () => void;
 }) {
-  const { locale, amountError, t: tr, translateMessage } = useI18n();
+  const { locale, amountError, translateMessage, t: tr } = useI18n();
   const previousLocale = useRef(locale);
   useEffect(() => {
     if (previousLocale.current === locale) return;

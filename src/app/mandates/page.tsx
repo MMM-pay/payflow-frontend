@@ -26,7 +26,14 @@ import {
   Stat,
   TxLink,
 } from "@/components/ui";
-import { ConfirmDialog, confirmTitle } from "@/components/ConfirmDialog";
+import dynamic from "next/dynamic";
+import { confirmTitle } from "@/lib/confirm-title";
+
+// Only rendered once the visitor asks to cancel or end the mandate.
+const ConfirmDialog = dynamic(
+  () => import("@/components/ConfirmDialog").then((m) => m.ConfirmDialog),
+  { ssr: false },
+);
 
 const PaginationControl = lazy(() =>
   import("@/components/Pagination").then((module) => ({

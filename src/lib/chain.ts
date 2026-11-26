@@ -29,6 +29,8 @@ const MAX_INDEX_READ = 2 * MAX_PAGE;
 
 function planToApi(plan: Plan): ApiPlan {
   observeContractRecord("plan", plan);
+  const availableUntil = availabilityInteger(plan.available_until);
+  const maxSubscribers = availabilityInteger(plan.max_subscribers);
   return {
     id: Number(plan.id),
     merchant: plan.merchant,
@@ -42,8 +44,8 @@ function planToApi(plan: Plan): ApiPlan {
     // contract built before payflow-contract#9 cannot say whether the plan has
     // a trial, and 0 is would claim it does not.
     ...(plan.trial !== undefined ? { trial: Number(plan.trial) } : {}),
-    ...(plan.available_until !== undefined ? { available_until: availabilityInteger(plan.available_until) } : {}),
-    ...(plan.max_subscribers !== undefined ? { max_subscribers: availabilityInteger(plan.max_subscribers) } : {}),
+    ...(availableUntil !== undefined ? { available_until: availableUntil } : {}),
+    ...(maxSubscribers !== undefined ? { max_subscribers: maxSubscribers } : {}),
   };
 }
 
@@ -51,7 +53,10 @@ async function planWithAvailability(source: string, plan: Plan): Promise<ApiPlan
   const result = planToApi(plan);
   if (result.max_subscribers) {
     try {
-      result.subscriber_count = availabilityInteger(await payflow.planSubscriberCount(source, plan.id));
+      const subscriberCount = availabilityInteger(
+        await payflow.planSubscriberCount(source, plan.id),
+      );
+      if (subscriberCount !== undefined) result.subscriber_count = subscriberCount;
     } catch {
       // Old contracts and failed reads cannot report seats. Never assume zero.
     }

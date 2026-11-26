@@ -85,6 +85,31 @@ describe("confirmationFor: charge timing and cap", () => {
     expect(summary({ limit: 1 }).openEnded).toBe(false);
     expect(summary({ limit: 12 })).toMatchObject({ openEnded: false, limit: 12 });
   });
+
+  it("has no final charge or total commitment when open-ended", () => {
+    const result = summary({ limit: 0 });
+    expect(result.lastChargeAt).toBeNull();
+    expect(result.totalCommitment).toBeNull();
+  });
+
+  it("says when a cap will end the mandate and what it authorises in total", () => {
+    const result = summary({ limit: 3 });
+    // Three charges: now, now + one period, now + two periods.
+    expect(result.lastChargeAt).toBe(NOW + 2 * 2_592_000);
+    expect(result.totalCommitment).toBe(150_000_000n);
+  });
+
+  it("keeps a one-charge cap on the first charge and a trial pushes it back", () => {
+    const result = summary({ limit: 1, plan: { ...PLAN, trial: 86_400 } });
+    expect(result.lastChargeAt).toBe(NOW + 86_400);
+    expect(result.totalCommitment).toBe(50_000_000n);
+  });
+
+  it("does not report a final charge before the first when the period is malformed", () => {
+    const result = summary({ limit: 3, plan: { amount: "100", period: 0 } });
+    expect(result.lastChargeAt).toBe(NOW);
+    expect(result.totalCommitment).toBe(300n);
+  });
 });
 
 describe("checkChargeLimit", () => {
