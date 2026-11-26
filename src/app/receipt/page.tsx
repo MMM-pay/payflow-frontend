@@ -254,8 +254,8 @@ function ReceiptContent() {
           <table className="w-full text-sm print:text-xs">
             <thead>
               <tr className="border-b border-edge text-left text-xs uppercase tracking-wider text-muted print:border-slate-300 print:text-slate-500">
-                <th className="pb-2 font-medium">{tr("Description")}</th>
-                <th className="pb-2 text-right font-medium">{tr("Amount")}</th>
+                <th scope="col" className="pb-2 font-medium">{tr("Description")}</th>
+                <th scope="col" className="pb-2 text-right font-medium">{tr("Amount")}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-edge print:divide-slate-200">

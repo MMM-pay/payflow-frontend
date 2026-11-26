@@ -225,12 +225,12 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
             <table className="w-full text-sm">
               <thead>
                 <tr>
-                  <th className="text-muted text-left">{tr("Mandate")}</th>
-                  <th className="text-muted text-left">{tr("Subscriber")}</th>
-                  <th className="text-muted text-right">{tr("Amount")}</th>
-                  <th className="text-muted text-right">{tr("Fee")}</th>
-                  <th className="text-muted text-right">{tr("Net")}</th>
-                  <th className="text-muted text-left">{tr("Tx hash")}</th>
+                  <th scope="col" className="text-muted text-left">{tr("Mandate")}</th>
+                  <th scope="col" className="text-muted text-left">{tr("Subscriber")}</th>
+                  <th scope="col" className="text-muted text-right">{tr("Amount")}</th>
+                  <th scope="col" className="text-muted text-right">{tr("Fee")}</th>
+                  <th scope="col" className="text-muted text-right">{tr("Net")}</th>
+                  <th scope="col" className="text-muted text-left">{tr("Tx hash")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -270,7 +270,7 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
           <Link href="/account" className="text-accent hover:underline">{tr("account page")}</Link>{" "}{tr("first, or charges will fail for lack of balance.")}</p>
         {unavailable && <p id="plan-availability" className="text-sm text-muted">{unavailable}</p>}
         <div className="flex flex-wrap items-end gap-3">
-          <div className="min-w-[12rem] flex-1">
+          <div className="w-full sm:w-auto sm:min-w-[12rem] sm:flex-1">
             <label className="label" htmlFor="plan-charge-limit">{tr("Charge limit (0 = open-ended)")}</label>
             <input
               id="plan-charge-limit"

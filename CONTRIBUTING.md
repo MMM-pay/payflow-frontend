@@ -40,7 +40,9 @@ how to run each suite locally.
 ## Accessibility
 
 New components must pass the checklist in [docs/accessibility.md](docs/accessibility.md)
-before review.
+before review. `npm run lint` enforces the `eslint-plugin-jsx-a11y` recommended
+rules as errors, and `e2e/reflow.spec.ts` checks every route at 200% zoom and
+320 px wide; both are part of CI.
 
 ## Code standards
 

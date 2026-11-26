@@ -550,8 +550,14 @@ export function Dialog({
   if (!open) return null;
 
   return (
+    // The dimmed backdrop is a mouse convenience, not a control: clicking it
+    // closes the dialog, but Escape and the labelled close button are the
+    // accessible paths. `role="presentation"` tells assistive technology the
+    // element itself carries no semantics (its dialog child still does), so
+    // the click handler is not mistaken for a missing interactive control.
     <div
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 sm:items-center"
+      role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) {
           // Prevent clicking the backdrop from moving focus to document.body.

@@ -256,7 +256,9 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
               <HeaderSearch onNavigate={(href) => router.push(href)} />
             </div>
 
-            <div className="flex shrink-0 items-center gap-2">
+            {/* The controls keep their order when they wrap: at 200% zoom the
+                header is ~320 CSS px wide and cannot hold them all in one row. */}
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
               <NetworkSwitcher network={network} networks={networks} select={select} />
               <ThemeToggle />
               <WalletButton />

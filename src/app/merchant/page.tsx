@@ -268,7 +268,7 @@ function ProfilePanel({
         </Notice>
       )}
       <div className="flex flex-wrap items-end gap-3">
-        <div className="min-w-[12rem] flex-1">
+        <div className="w-full sm:w-auto sm:min-w-[12rem] sm:flex-1">
           <label className="label" htmlFor="profile-name">
             Display name
           </label>
@@ -289,7 +289,7 @@ function ProfilePanel({
             </p>
           )}
         </div>
-        <div className="min-w-[16rem] flex-1">
+        <div className="w-full sm:w-auto sm:min-w-[16rem] sm:flex-1">
           <label className="label" htmlFor="profile-url">
             URL
           </label>
@@ -710,7 +710,7 @@ function WebhooksPanel({
           <div className="mt-3 rounded-lg border border-edge p-3">
             <p className="text-sm font-medium">{tr("Add a webhook")}</p>
             <div className="mt-2 flex flex-wrap items-end gap-3">
-              <div className="min-w-[16rem] flex-1">
+              <div className="w-full sm:w-auto sm:min-w-[16rem] sm:flex-1">
                 <label className="label" htmlFor="webhook-url">{tr("URL")}</label>
                 <input
                   id="webhook-url"
@@ -730,7 +730,7 @@ function WebhooksPanel({
                   </p>
                 )}
               </div>
-              <fieldset className="min-w-[14rem] flex-1">
+              <fieldset className="w-full sm:w-auto sm:min-w-[14rem] sm:flex-1">
                 <legend className="text-sm font-medium mb-2">{tr("Events")}</legend>
                 <div className="space-y-1">
                   {WEBHOOK_EVENTS.map((option) => (
@@ -905,7 +905,7 @@ function DiscountForm({
     <div className="mt-3 rounded-lg border border-edge p-3">
       <p className="text-sm font-medium">{tr("Discount this mandate")}</p>
       <div className="mt-2 flex flex-wrap items-end gap-3">
-        <div className="min-w-[7rem] flex-1">
+        <div className="w-full sm:w-auto sm:min-w-[7rem] sm:flex-1">
           <label className="label" htmlFor="discount-percent">{tr("Discount (%)")}</label>
           <input
             id="discount-percent"
@@ -919,7 +919,7 @@ function DiscountForm({
             disabled={busy}
           />
         </div>
-        <div className="min-w-[9rem] flex-1">
+        <div className="w-full sm:w-auto sm:min-w-[9rem] sm:flex-1">
           <label className="label" htmlFor="discount-charges">{tr("Charges to cover")}</label>
           <input
             id="discount-charges"
@@ -1004,7 +1004,7 @@ function RefundForm({
       <p className="text-sm font-medium">{tr("Issue a refund")}</p>
       <p className="mt-1 text-xs text-muted">{tr("Refund up to")}{" "}<Money amount={maxRefundStroops} meta={meta} />{" "}{tr("(what you received net of fees).")}</p>
       <div className="mt-2 flex flex-wrap items-end gap-3">
-        <div className="min-w-[12rem] flex-1">
+        <div className="w-full sm:w-auto sm:min-w-[12rem] sm:flex-1">
           <label className="label" htmlFor="refund-amount">{tr("Amount (")}{meta.symbol})
           </label>
           <input
@@ -2202,7 +2202,7 @@ export default function MerchantPage() {
         subtitle={tr("Price and period are frozen into every mandate opened against this plan. To change them, publish a new plan.")}
       >
         <div className="flex flex-wrap items-end gap-3">
-          <div className="min-w-[8rem] flex-1">
+          <div className="w-full sm:w-auto sm:min-w-[8rem] sm:flex-1">
             <label className="label" htmlFor="plan-token">{tr("Token")}</label>
             <select
               id="plan-token"
@@ -2218,7 +2218,7 @@ export default function MerchantPage() {
               ))}
             </select>
           </div>
-          <div className="min-w-[10rem] flex-1">
+          <div className="w-full sm:w-auto sm:min-w-[10rem] sm:flex-1">
             <AmountInput
               id="price"
               label={tr("Price ({0})", { "0": tokenMeta.symbol })}
@@ -2238,7 +2238,7 @@ export default function MerchantPage() {
               describedBy="price-preview"
             />
           </div>
-          <div className="min-w-[12rem] flex-1">
+          <div className="w-full sm:w-auto sm:min-w-[12rem] sm:flex-1">
             <label className="label" htmlFor="plan-name">{tr("Plan name")}</label>
             <input
               id="plan-name"
@@ -2253,7 +2253,7 @@ export default function MerchantPage() {
               <p id="plan-name-error" role="alert" className="mt-1 text-sm text-danger">{tr("Too long —")}{" "}{MAX_NAME_LEN}{" "}{tr("bytes maximum.")}</p>
             )}
           </div>
-          <div className="min-w-[10rem] flex-1">
+          <div className="w-full sm:w-auto sm:min-w-[10rem] sm:flex-1">
             <label className="label" htmlFor="period">{tr("Billing period")}</label>
             <select
               id="period"
@@ -2276,7 +2276,7 @@ export default function MerchantPage() {
             // its own form row the pair keeps its width at every size, and
             // both controls keep visible labels — a placeholder is not a
             // label, and it disappears once typing starts.
-            <div className="min-w-[16rem] flex-1">
+            <div className="w-full sm:w-auto sm:min-w-[16rem] sm:flex-1">
               <div className="flex flex-wrap items-end gap-3">
                 <div className="w-28">
                   <label className="label" htmlFor="period-count">{tr("Custom period")}</label>
@@ -2318,7 +2318,7 @@ export default function MerchantPage() {
             </div>
           )}
           {trialSupported && (
-            <div className="min-w-[10rem] flex-1">
+            <div className="w-full sm:w-auto sm:min-w-[10rem] sm:flex-1">
               <label className="label" htmlFor="trial">{tr("Free trial")}</label>
               <select
                 id="trial"
@@ -2760,7 +2760,9 @@ export default function MerchantPage() {
             :tr("Active mandates where the subscriber's vault cannot cover the next charge.")
         }
         actions={
-          <div className="flex items-center gap-3">
+          // The tab list and the export buttons share this row. They wrap
+          // rather than force the panel wider than the viewport at 200% zoom.
+          <div className="flex flex-wrap items-center gap-3">
             {/* Tab navigation */}
             <div className="flex rounded-lg border border-edge bg-surface/30" role="tablist" aria-label={tr("Subscriber views")}>
               <button

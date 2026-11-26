@@ -1377,7 +1377,7 @@ function AccountInner() {
           )}
         >
           <div className="flex flex-wrap items-end gap-3">
-            <div className="min-w-[12rem] flex-1">
+            <div className="w-full sm:w-auto sm:min-w-[12rem] sm:flex-1">
               <AmountInput
                 id="amount"
                 label={tr("Amount ({0})", { "0": vaultMeta.symbol })}
@@ -1505,7 +1505,7 @@ function AccountInner() {
             </div>
           ) : (
             <div className="flex flex-wrap items-end gap-3">
-              <div className="min-w-[14rem] flex-1">
+              <div className="w-full sm:w-auto sm:min-w-[14rem] sm:flex-1">
                 <label className="label" htmlFor="fund-recipient">{tr("Recipient address")}</label>
                 <input
                   id="fund-recipient"
@@ -1523,7 +1523,7 @@ function AccountInner() {
                   </p>
                 )}
               </div>
-              <div className="min-w-[12rem] flex-1">
+              <div className="w-full sm:w-auto sm:min-w-[12rem] sm:flex-1">
                 <AmountInput
                   id="fund-amount"
                   label={tr("Amount ({0})", { "0": vaultMeta.symbol })}
@@ -2086,7 +2086,7 @@ function AccountInner() {
                           once the transfer completes.
                         </p>
                         <div className="mt-2 flex flex-wrap items-end gap-3">
-                          <div className="min-w-[14rem] flex-1">
+                          <div className="w-full sm:w-auto sm:min-w-[14rem] sm:flex-1">
                             <label className="label" htmlFor={`transfer-to-${m.id}`}>
                               New wallet address
                             </label>
@@ -2142,7 +2142,7 @@ function AccountInner() {
                   </div>
                   {capFor === m.id && (
                     <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-edge pt-3">
-                      <div className="min-w-[10rem] flex-1">
+                      <div className="w-full sm:w-auto sm:min-w-[10rem] sm:flex-1">
                         <label
                           htmlFor={`cap-${m.id}`}
                           className="block text-xs text-muted"

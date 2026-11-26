@@ -85,7 +85,7 @@ export function RevenueChart({
       </svg>
 
       {scaled.length > 0 && (
-        <div className="flex justify-between text-xs text-muted" aria-hidden="true">
+        <div className="flex flex-wrap justify-between gap-x-3 gap-y-1 text-xs text-muted" aria-hidden="true">
           {points.map((p, i) =>
             i % labelStride === 0 || i === points.length - 1 ? (
               <span key={p.start}>{formatBucketLabel(p.start)}</span>

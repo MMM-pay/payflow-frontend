@@ -6,6 +6,32 @@ All notable changes to payflow-frontend. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Table-driven tests for the formatting, period and price helpers (#356).**
+  `test/helpers-table.test.ts` pins the happy path and the rejection and
+  boundary cases of `fromStroops`/`toStroops`/`formatAmount`, locale-aware
+  `canonicalAmount`/`amountError`, `formatPeriod` and the custom-period checks,
+  and the oracle-backed USD estimators. The tables are deterministic — no
+  clock, network or wallet — and sit beside the existing per-helper tests.
+- **A 200% zoom / 320 px reflow check for every route (#377).**
+  `e2e/reflow.spec.ts` fails when a page's document scrolls sideways at 640 CSS
+  px (200% zoom) or 320 CSS px (the WCAG 1.4.10 floor), and names the widest
+  offending element. Form rows now stack instead of forcing a minimum width,
+  the header controls and panel toolbars wrap, and chart axis labels wrap, so
+  content reflows without loss. The mandate charge table gained a labelled,
+  focusable scroll region like the other wide tables.
+
+### Changed
+
+- **Accessibility lint rules are now errors (#389).** `eslint.config.mjs`
+  enables the full `eslint-plugin-jsx-a11y` recommended set (eslint-config-next
+  only enabled six rules, at `warn`), with `role="region"` allowed on the
+  focusable scroll containers. Table headers gained `scope`, the dialog backdrop
+  is marked `role="presentation"`, and the notification centre's Escape handler
+  moved to a document listener so a landmark no longer swallows keyboard
+  events.
+
 ### Changed
 
 - **Next.js 15 → 16, React 19.0 → 19.3 (#80).** Turbopack is now the default
