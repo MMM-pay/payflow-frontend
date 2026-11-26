@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import React from "react";
 
 /**
- * Draws the Open Graph image for every page.
+ * Draws the Open Graph image for every page and plan card.
  *
  * Next's own `opengraph-image` route works in a static export, but the file it
  * writes has no extension, so GitHub Pages serves it as
@@ -23,6 +23,7 @@ const outDir = join(root, "public", "og");
 
 const WIDTH = 1200;
 const HEIGHT = 630;
+const PLAN_COUNT = 24;
 
 const INK = "#0b0e14";
 const EDGE = "#232b38";
@@ -153,4 +154,16 @@ for (const [name, page] of Object.entries(pages)) {
   const file = join(outDir, `${page.image}.png`);
   await writeFile(file, bytes);
   console.log(`wrote ${file} (${bytes.length} bytes) for ${name}`);
+}
+
+for (let id = 1; id <= PLAN_COUNT; id += 1) {
+  const plan = {
+    title: `Plan #${id}`,
+    description: `View plan #${id} on Payflow, including its price, billing period and availability.`,
+  };
+  const response = new ImageResponse(card(plan), { width: WIDTH, height: HEIGHT });
+  const bytes = Buffer.from(await response.arrayBuffer());
+  const file = join(outDir, `plan-${id}.png`);
+  await writeFile(file, bytes);
+  console.log(`wrote ${file} (${bytes.length} bytes) for plan #${id}`);
 }

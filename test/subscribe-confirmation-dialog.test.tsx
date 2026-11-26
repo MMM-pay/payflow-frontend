@@ -133,6 +133,33 @@ describe("subscribe confirmation: gating the signature", () => {
     expect(inside.getByText("3 charges, then the mandate completes.")).toBeTruthy();
   });
 
+  it("explains when and how a charge cap will end the mandate", async () => {
+    const { button } = await openPage();
+    fireEvent.change(screen.getByLabelText("Charge limit (0 = open-ended)"), {
+      target: { value: "3" },
+    });
+    const inside = within(openDialog(button));
+
+    // The cap authorises 3 x 5 XLM, and the recap says the mandate completes
+    // after the final charge rather than leaving the end implicit.
+    expect(inside.getByText("Total authorised")).toBeTruthy();
+    expect(inside.getByText("15 XLM")).toBeTruthy();
+    expect(inside.getByText("Final charge")).toBeTruthy();
+    expect(
+      inside.getByText(/This cap ends the mandate automatically: the final charge is number 3 of the 15 XLM/),
+    ).toBeTruthy();
+  });
+
+  it("explains a one-charge cap without promising a cancel that is not needed", async () => {
+    const { button } = await openPage();
+    fireEvent.change(screen.getByLabelText("Charge limit (0 = open-ended)"), {
+      target: { value: "1" },
+    });
+    const inside = within(openDialog(button));
+    expect(inside.getByText(/its only charge is due/)).toBeTruthy();
+    expect(inside.getByText(/there is nothing left to cancel/)).toBeTruthy();
+  });
+
   it("signs only after the confirmation is accepted, with the cap it showed", async () => {
     const { button } = await openPage();
     fireEvent.change(screen.getByLabelText("Charge limit (0 = open-ended)"), {

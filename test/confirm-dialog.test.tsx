@@ -2,7 +2,8 @@
 import type { ReactNode } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ConfirmDialog, confirmTitle } from "@/components/ConfirmDialog";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { confirmTitle } from "@/lib/confirm-title";
 
 /**
  * Standard confirmation copy and button order (issue #407): the safe choice
@@ -122,5 +123,51 @@ describe("ConfirmDialog", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Close dialog" }));
     expect(onCancel).toHaveBeenCalledTimes(2);
+  });
+
+  it("traps Tab inside the dialog and restores focus to the opener on Escape", () => {
+    const opener = document.createElement("button");
+    opener.textContent = "Open confirm";
+    document.body.appendChild(opener);
+    opener.focus();
+
+    const onCancel = vi.fn();
+    const { rerender } = render(
+      <ConfirmDialog
+        open
+        onCancel={onCancel}
+        onConfirm={vi.fn()}
+        title="Cancel 2 subscriptions?"
+        confirmLabel="Confirm cancellation"
+      >
+        <p>Both stop billing immediately.</p>
+      </ConfirmDialog>,
+    );
+
+    const dialog = screen.getByRole("dialog");
+    expect(document.activeElement).toBe(dialog);
+
+    const close = screen.getByRole("button", { name: "Close dialog" });
+    const confirm = screen.getByRole("button", { name: "Confirm cancellation" });
+    confirm.focus();
+    fireEvent.keyDown(confirm, { key: "Tab" });
+    expect(document.activeElement).toBe(close);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onCancel).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <ConfirmDialog
+        open={false}
+        onCancel={onCancel}
+        onConfirm={vi.fn()}
+        title="Cancel 2 subscriptions?"
+        confirmLabel="Confirm cancellation"
+      >
+        <p>Both stop billing immediately.</p>
+      </ConfirmDialog>,
+    );
+    expect(document.activeElement).toBe(opener);
+    opener.remove();
   });
 });

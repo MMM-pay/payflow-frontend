@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  describeCohortRetention,
   formatRetentionPercent,
   parseCohortRetention,
   retentionColorClass,
@@ -168,84 +167,20 @@ describe("formatRetentionPercent", () => {
 });
 
 describe("retentionColorClass", () => {
-  it("returns the strongest accent tint for high retention (90%+)", () => {
-    expect(retentionColorClass(100)).toBe("bg-accent/20");
-    expect(retentionColorClass(90)).toBe("bg-accent/20");
-  });
-
-  it("returns a lighter accent tint for good retention (70-89%)", () => {
-    expect(retentionColorClass(89)).toBe("bg-accent/10");
-    expect(retentionColorClass(70)).toBe("bg-accent/10");
-  });
-
-  it("returns a warning tint for moderate retention (50-69%)", () => {
-    expect(retentionColorClass(69)).toBe("bg-warn/10");
-    expect(retentionColorClass(50)).toBe("bg-warn/10");
-  });
-
-  it("returns a stronger warning tint for low retention (30-49%)", () => {
-    expect(retentionColorClass(49)).toBe("bg-warn/20");
-    expect(retentionColorClass(30)).toBe("bg-warn/20");
-  });
-
-  it("returns a danger tint for very low retention (1-29%)", () => {
-    expect(retentionColorClass(29)).toBe("bg-danger/10");
-    expect(retentionColorClass(1)).toBe("bg-danger/10");
-  });
-
-  it("returns a neutral tint for zero retention", () => {
-    expect(retentionColorClass(0)).toBe("bg-fg/5");
-  });
-
-  it("never returns a fixed palette colour that ignores the chosen theme", () => {
-    for (const percent of [0, 1, 29, 30, 49, 50, 69, 70, 89, 90, 100]) {
-      expect(retentionColorClass(percent)).not.toContain("dark:");
+  it("paints through the theme-aware chart palette, not fixed dark: variants", () => {
+    for (const percent of [100, 89, 69, 49, 29, 1, 0]) {
+      const className = retentionColorClass(percent);
+      expect(className).toMatch(/^bg-chart-[1-5]\/15 text-chart-[1-5]$/);
+      expect(className).not.toContain("dark:");
     }
   });
-});
 
-describe("describeCohortRetention", () => {
-  it("summarises the cohorts, their subscribers and the month-1 spread", () => {
-    expect(
-      describeCohortRetention([
-        cohort("2026-09", 10, [100, 90, 80]),
-        cohort("2026-10", 8, [100, 75]),
-      ]),
-    ).toBe(
-      "Cohort retention for 2 cohorts (signup months 2026-09 to 2026-10) covering 18 subscribers. Month 1 retention ranges from 75% to 90%.",
-    );
-  });
-
-  it("says so when every cohort retained the same share", () => {
-    expect(
-      describeCohortRetention([
-        cohort("2026-09", 10, [100, 80]),
-        cohort("2026-10", 5, [100, 80]),
-      ]),
-    ).toBe(
-      "Cohort retention for 2 cohorts (signup months 2026-09 to 2026-10) covering 15 subscribers. Month 1 retention is 80% across every cohort.",
-    );
-  });
-
-  it("names a single cohort's month instead of a range", () => {
-    expect(describeCohortRetention([cohort("2026-10", 1, [100, 50])])).toBe(
-      "Cohort retention for 1 cohort (the 2026-10 signup month) covering 1 subscriber. Month 1 retention is 50% across every cohort.",
-    );
-  });
-
-  it("does not call a cohort too new to be measured a zero", () => {
-    expect(describeCohortRetention([cohort("2026-11", 4, [100])])).toBe(
-      "Cohort retention for 1 cohort (the 2026-11 signup month) covering 4 subscribers. No cohort is old enough to report a second month yet.",
-    );
-  });
-
-  it("explains an empty report instead of returning a fragment", () => {
-    expect(describeCohortRetention([])).toBe("No signup cohorts have been reported yet.");
-  });
-
-  it("uses the caller's number format", () => {
-    expect(
-      describeCohortRetention([cohort("2026-10", 2, [100, 66.6])], (value) => `~${value}`),
-    ).toContain("Month 1 retention is ~66.6 across every cohort.");
+  it("gives higher retention a stronger palette slot", () => {
+    expect(retentionColorClass(100)).toBe("bg-chart-1/15 text-chart-1");
+    expect(retentionColorClass(70)).toBe("bg-chart-2/15 text-chart-2");
+    expect(retentionColorClass(50)).toBe("bg-chart-3/15 text-chart-3");
+    expect(retentionColorClass(30)).toBe("bg-chart-4/15 text-chart-4");
+    expect(retentionColorClass(1)).toBe("bg-chart-4/15 text-chart-4");
+    expect(retentionColorClass(0)).toBe("bg-chart-5/15 text-chart-5");
   });
 });

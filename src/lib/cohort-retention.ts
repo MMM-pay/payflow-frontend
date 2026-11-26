@@ -1,3 +1,5 @@
+import { chartFillClass } from "./chart-theme";
+
 /**
  * One cohort in the retention grid: a signup month and how many subscribers
  * from that cohort remained active in each subsequent month.
@@ -117,71 +119,18 @@ export function formatRetentionPercent(value: number): string {
 }
 
 /**
- * One sentence describing the grid, for readers who cannot see the tinted
- * cells.
+ * Theme-aware fill classes for a retention cell.
  *
- * The grid encodes each figure twice — as a percentage and as a background
- * tint — and the tint is the half a screen reader cannot announce. The summary
- * says what the colours add up to: how many cohorts, how many subscribers they
- * cover, and the spread of month-1 retention. It is rendered both visibly
- * above the table and as the table's caption.
- *
- * `formatPercent` is injected so the summary reads in the same number format as
- * the cells it describes.
- */
-export function describeCohortRetention(
-  cohorts: readonly CohortRetentionRow[],
-  formatPercent: (value: number) => string = formatRetentionPercent,
-): string {
-  const first = cohorts[0];
-  const last = cohorts[cohorts.length - 1];
-  if (!first || !last) return "No signup cohorts have been reported yet.";
-
-  const subscribers = cohorts.reduce((total, row) => total + row.size, 0);
-  const months =
-    cohorts.length === 1
-      ? `the ${first.cohort} signup month`
-      : `signup months ${first.cohort} to ${last.cohort}`;
-  const head =
-    `Cohort retention for ${cohorts.length} ${cohorts.length === 1 ? "cohort" : "cohorts"} ` +
-    `(${months}) covering ${subscribers} ${subscribers === 1 ? "subscriber" : "subscribers"}.`;
-
-  // Month 0 is always 100% by construction, so month 1 is the first figure
-  // that says anything about retention. A cohort too new to have one is left
-  // out rather than counted as zero.
-  const secondMonth = cohorts
-    .map((row) => row.retention[1])
-    .filter((value): value is number => value !== undefined);
-
-  if (secondMonth.length === 0) {
-    return `${head} No cohort is old enough to report a second month yet.`;
-  }
-
-  const lowest = Math.min(...secondMonth);
-  const highest = Math.max(...secondMonth);
-  return lowest === highest
-    ? `${head} Month 1 retention is ${formatPercent(lowest)} across every cohort.`
-    : `${head} Month 1 retention ranges from ${formatPercent(lowest)} to ${formatPercent(highest)}.`;
-}
-
-/**
- * The background tint for a retention cell, from the theme's own tokens.
- *
- * Five bands rather than a continuous scale: a reader has to be able to tell
- * "most of the cohort stayed" from "most of it left" at a glance, and five
- * steps is as many as a colour can carry without a legend.
- *
- * The tints are `accent`, `warn` and `danger` at 10–20% over the panel, never
- * fixed Tailwind palette colours: `dark:` variants follow the OS preference, so
- * a reader who chose the light theme on a dark system would get a dark tint
- * under dark text. Every band keeps the default `fg` text above WCAG AA, which
- * `test/contrast.test.ts` asserts at the token level.
+ * Retention is a chart: its colours must follow the active theme, including a
+ * manual light/dark choice. Tailwind's `dark:` variants only follow the OS, so
+ * these resolve through the `--chart-*` token palette instead, which both the
+ * media query and `data-theme` selectors update.
  */
 export function retentionColorClass(percent: number): string {
-  if (percent >= 90) return "bg-accent/20";
-  if (percent >= 70) return "bg-accent/10";
-  if (percent >= 50) return "bg-warn/10";
-  if (percent >= 30) return "bg-warn/20";
-  if (percent > 0) return "bg-danger/10";
-  return "bg-fg/5";
+  if (percent >= 90) return chartFillClass(0);
+  if (percent >= 70) return chartFillClass(1);
+  if (percent >= 50) return chartFillClass(2);
+  if (percent >= 30) return chartFillClass(3);
+  if (percent > 0) return chartFillClass(3);
+  return chartFillClass(4);
 }

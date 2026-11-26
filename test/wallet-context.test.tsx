@@ -53,9 +53,9 @@ function connectSession(address: string | null = ADDRESS) {
  * snapshot taken before the action would still read "missing" afterwards.
  */
 async function settle() {
-  let latest: ReturnType<typeof useWallet> | null = null;
+  const latest: { current: ReturnType<typeof useWallet> | null } = { current: null };
   function Probe() {
-    latest = useWallet();
+    latest.current = useWallet();
     return null;
   }
   await act(async () => {
@@ -65,6 +65,11 @@ async function settle() {
       </WalletProvider>,
     );
   });
+  if (latest.current?.rememberedWalletId) {
+    await act(async () => {
+      await latest.current?.reconnect();
+    });
+  }
   // Let the account read settle.
   await act(async () => {
     await Promise.resolve();
@@ -72,8 +77,8 @@ async function settle() {
   });
   return {
     get current(): ReturnType<typeof useWallet> {
-      if (!latest) throw new Error("probe never rendered");
-      return latest;
+      if (!latest.current) throw new Error("probe never rendered");
+      return latest.current;
     },
   };
 }
@@ -81,6 +86,9 @@ async function settle() {
 beforeEach(() => {
   readNativeAccount.mockReset();
   fundWithFriendbot.mockReset();
+  kitMock.getAddress.mockResolvedValue({
+    address: "GAP6QFLXQD73URCC3EXU2WOQHIAREPCGMSIMKF5PFLLI5TR6HTMNDTIE",
+  });
   kitMock.getNetwork.mockResolvedValue({
     networkPassphrase: "Test SDF Network ; September 2015",
   });
@@ -145,7 +153,6 @@ describe("wallet account state", () => {
     await act(async () => {
       await wallet.current.refreshAccount();
     });
-
     expect(readNativeAccount).toHaveBeenCalledTimes(2);
   });
 

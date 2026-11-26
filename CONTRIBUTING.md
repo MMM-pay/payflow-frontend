@@ -1,4 +1,4 @@
-# Contributing to the Payflow Frontend
+# Contributing to the Payflow Frontend 
 
 ## Setup
 
@@ -16,6 +16,7 @@ https://friendbot.stellar.org.
 
 | Job | Command |
 |---|---|
+| `unused exports and dependencies` | `npm run check:unused` |
 | `lint` | `npm run lint` |
 | `typecheck` | `npm run typecheck` |
 | `test` | `npm test` |
@@ -24,6 +25,11 @@ https://friendbot.stellar.org.
 
 All must pass. The build job supplies the public env vars; if you add a new
 required variable, add it to the workflow too or the build breaks.
+
+The unused-code check currently allows the existing baseline of 68 unused
+exports and types while reporting unused dependencies. Keep the total from
+growing, and lower the `--max-issues` ceiling in `package.json` as existing
+findings are removed.
 
 The budget step fails when any exported route's first-load JS exceeds its
 cap in `js-budget.json`. Keep the Stellar SDK and the wallet kit out of
@@ -44,8 +50,11 @@ before review.
 
 ## Code standards
 
-- **Strict TypeScript.** `strict` and `noUncheckedIndexedAccess` are on. Index
-  access returns `T | undefined`; handle it rather than casting.
+- **Strict TypeScript.** `strict`, `noImplicitAny`, `exactOptionalPropertyTypes`,
+  and `noUncheckedIndexedAccess` are on across the app, tests, and E2E code.
+  Index access returns `T | undefined`; handle it rather than casting. Optional
+  properties should be omitted when unavailable; include `| undefined` in a
+  property type only when callers intentionally pass `undefined`.
 - **Money is `bigint`, never `number`.** Values arrive as stroops. Convert for
   display with `fromStroops`, parse input with `toStroops`. A float in a payment
   path is a bug.
