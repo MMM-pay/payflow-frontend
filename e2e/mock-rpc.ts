@@ -12,16 +12,19 @@ import {
 /**
  * Soroban RPC mocked at the network layer (payflow-frontend#55).
  *
- * The visual tests run the static export against canned contract state, so
- * the pages render the same way in every run, on every machine, with no
- * wallet and no live network. The mock speaks the JSON-RPC dialect the
+ * The visual and mocked-chain tests run the static export against canned
+ * contract state, so the pages render the same way in every run, on every
+ * machine, with no live network. The mock speaks the JSON-RPC dialect the
  * stellar-sdk expects:
  *
- *   - `getLedgerEntries` answers the read-source account lookup that every
- *     `readContract` simulation performs first;
+ *   - `getLedgerEntries` answers the account lookup every simulation performs
+ *     first, for both the read source and the connected test wallet;
  *   - `simulateTransaction` decodes the invoked contract method out of the
  *     transaction XDR and returns the fixture for it, exactly like a
  *     successful simulation would;
+ *   - `sendTransaction` and `getTransaction` finish the signing path with a
+ *     deterministic hash and XDR the SDK accepts, with success, contract-error
+ *     and on-chain-failure outcomes;
  *   - any method without a fixture fails with `Error(Contract, #2)`, which
  *     is what an older contract that has not shipped the method does, so the
  *     page renders its documented fallback state.
@@ -37,6 +40,9 @@ import {
 /** Must match the URL the app under test was built with. */
 export const VISUAL_RPC_URL = "https://rpc.visual.test";
 
+/** Must match NEXT_PUBLIC_NETWORK_PASSPHRASE of the build under test. */
+export const VISUAL_NETWORK_PASSPHRASE = "Test SDF Network ; September 2015";
+
 /** Must match NEXT_PUBLIC_READ_SOURCE of the build under test. */
 export const READ_SOURCE =
   "GAKOHW5FUKSF3SXQQWLD647RQJPOR5RZOS4ITSMWC5NPC67DEXXYU43H";
@@ -45,8 +51,21 @@ export const READ_SOURCE =
 export const XLM_SAC =
   "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
 
-const NETWORK_PASSPHRASE =
-  process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015";
+type SubscribeOutcome = "success" | "contract-error" | "failed";
+
+export interface MockRpcOptions {
+  subscribe?: SubscribeOutcome;
+}
+
+type MockRpcCall =
+  | { kind: "simulate"; contractMethod: string; args: unknown[] }
+  | { kind: "sendTransaction"; hash: string }
+  | { kind: "getTransaction"; hash: string; status: string };
+
+export interface MockRpc {
+  calls: MockRpcCall[];
+  lastHash: string | null;
+}
 
 const LATEST_LEDGER = "100000";
 const LEDGER_CLOSE_TIME = "1700000000";
@@ -115,6 +134,7 @@ const FIXTURES: Record<string, (args: xdr.ScVal[]) => xdr.ScVal> = {
   merchant_mandate_count: () => u32(0),
   merchant_mandates: () => xdr.ScVal.scvVec([]),
   plan_subscriber_count: () => u32(0),
+  subscribe: () => xdr.ScVal.scvVoid(),
   // vault
   balance: () => i128(0n),
   // Reflector oracle (src/lib/price.ts): the fiat approximation on plan
@@ -130,10 +150,9 @@ const FIXTURES: Record<string, (args: xdr.ScVal[]) => xdr.ScVal> = {
   decimals: () => u32(7),
 };
 
-/** The read-source account entry every simulation is built against. */
-const ACCOUNT_ENTRY = (() => {
+function accountEntry(accountId: xdr.PublicKey): string {
   const entry = new xdr.AccountEntry({
-    accountId: Keypair.fromPublicKey(READ_SOURCE).xdrPublicKey(),
+    accountId,
     balance: 10_000_000_000n,
     seqNum: 123_456n,
     numSubEntries: 0,
@@ -145,7 +164,37 @@ const ACCOUNT_ENTRY = (() => {
     ext: xdr.AccountEntryExt.v0(),
   });
   return xdr.LedgerEntryData.account(entry).toXdr("base64");
-})();
+}
+
+const READ_SOURCE_ENTRY = accountEntry(
+  Keypair.fromPublicKey(READ_SOURCE).xdrPublicKey(),
+);
+
+function accountEntryFor(key: string): string {
+  try {
+    const parsed = xdr.LedgerKey.fromXdr(key, "base64");
+    if (parsed.type === "account") return accountEntry(parsed.account.accountId);
+  } catch {
+    return READ_SOURCE_ENTRY;
+  }
+  return READ_SOURCE_ENTRY;
+}
+
+const SUCCESS_RESULT_XDR = new xdr.TransactionResult({
+  feeCharged: 100n,
+  result: xdr.TransactionResultResult.txSuccess([]),
+  ext: xdr.TransactionResultExt.v0(),
+}).toXdr("base64");
+
+const SUCCESS_META_XDR = xdr.TransactionMeta.v3(
+  new xdr.TransactionMetaV3({
+    ext: xdr.ExtensionPoint.v0(),
+    txChangesBefore: [],
+    operations: [],
+    txChangesAfter: [],
+    sorobanMeta: null,
+  }),
+).toXdr("base64");
 
 const SIMULATION_BASE = {
   transactionData: new SorobanDataBuilder().build().toXdr("base64"),
@@ -171,7 +220,7 @@ function decodeCall(
   try {
     const envelope = TransactionBuilder.fromXDR(
       transactionXdr,
-      NETWORK_PASSPHRASE,
+      VISUAL_NETWORK_PASSPHRASE,
     ).toEnvelope();
     if (envelope.type !== "envelopeTypeTx") return null;
     const body = envelope.v1.tx.operations[0]?.body;
@@ -187,9 +236,16 @@ function decodeCall(
   }
 }
 
-async function handleRpc(route: Route): Promise<void> {
+interface MockRpcState extends MockRpc {
+  envelopeXdr: string;
+}
+
+async function handleRpc(
+  route: Route,
+  options: MockRpcOptions,
+  state: MockRpcState,
+): Promise<void> {
   const request = route.request();
-  // The RPC endpoint answers preflight requests itself.
   if (request.method() !== "POST") {
     return route.fulfill({ status: 204, headers: CORS_HEADERS });
   }
@@ -217,30 +273,35 @@ async function handleRpc(route: Route): Promise<void> {
     case "getLedgerEntries": {
       const keys = (body.params?.keys as string[] | undefined) ?? [];
       return reply({
-        entries: keys.length
-          ? [
-              {
-                key: keys[0],
-                // The RPC names the entry body `xdr`; the SDK's parser
-                // rejects a response that calls it anything else.
-                xdr: ACCOUNT_ENTRY,
-                lastModifiedLedgerSeq: Number(LATEST_LEDGER),
-              },
-            ]
-          : [],
+        entries: keys.map((key) => ({
+          key,
+          xdr: accountEntryFor(key),
+          lastModifiedLedgerSeq: Number(LATEST_LEDGER),
+        })),
         latestLedger: LATEST_LEDGER,
         latestLedgerCloseTime: LEDGER_CLOSE_TIME,
       });
     }
     case "simulateTransaction": {
       const call = decodeCall(String(body.params?.transaction ?? ""));
+      if (call) {
+        state.calls.push({
+          kind: "simulate",
+          contractMethod: call.method,
+          args: call.args.map((value) => scValToNative(value)),
+        });
+      }
       const fixture = call ? FIXTURES[call.method] : undefined;
       if (!call || !fixture) {
-        // No fixture: fail the way an older contract does when it does not
-        // carry the method, so the page renders its fallback state.
         return reply({
           ...SIMULATION_BASE,
           error: "HostError: Error(Contract, #2)",
+        });
+      }
+      if (call.method === "subscribe" && options.subscribe === "contract-error") {
+        return reply({
+          ...SIMULATION_BASE,
+          error: "HostError: Error(Contract, #3)",
         });
       }
       return reply({
@@ -248,9 +309,43 @@ async function handleRpc(route: Route): Promise<void> {
         results: [{ auth: [], xdr: fixture(call.args).toXdr("base64") }],
       });
     }
+    case "sendTransaction": {
+      try {
+        const envelope = String(body.params?.transaction ?? "");
+        const hash = Buffer.from(
+          TransactionBuilder.fromXDR(envelope, VISUAL_NETWORK_PASSPHRASE).hash(),
+        ).toString("hex");
+        state.envelopeXdr = envelope;
+        state.lastHash = hash;
+        state.calls.push({ kind: "sendTransaction", hash });
+        return reply({ status: "PENDING", hash, latestLedger: LATEST_LEDGER });
+      } catch (err) {
+        return reply({
+          error: {
+            code: -32602,
+            message: `mock-rpc: invalid transaction ${String(err)}`,
+          },
+        });
+      }
+    }
+    case "getTransaction": {
+      const hash = String(body.params?.hash ?? state.lastHash ?? "");
+      const status = options.subscribe === "failed" ? "FAILED" : "SUCCESS";
+      state.calls.push({ kind: "getTransaction", hash, status });
+      return reply({
+        status,
+        txHash: hash,
+        ledger: Number(LATEST_LEDGER),
+        createdAt: LEDGER_CLOSE_TIME,
+        applicationOrder: 1,
+        feeBump: false,
+        envelopeXdr: state.envelopeXdr,
+        resultXdr: SUCCESS_RESULT_XDR,
+        resultMetaXdr: SUCCESS_META_XDR,
+        events: { contractEventsXdr: [], transactionEventsXdr: [] },
+      });
+    }
     default:
-      // Writes never happen without a wallet, so any other method (send
-      // transaction, poll transaction) has no business being called.
       return reply({
         error: {
           code: -32601,
@@ -260,17 +355,20 @@ async function handleRpc(route: Route): Promise<void> {
   }
 }
 
-/** Route every request: the app itself passes through, RPC is mocked,
- * everything else external is aborted. */
-export async function installMockRpc(page: Page): Promise<void> {
+export async function installMockRpc(
+  page: Page,
+  options: MockRpcOptions = {},
+): Promise<MockRpc> {
+  const state: MockRpcState = { calls: [], lastHash: null, envelopeXdr: "" };
   await page.route("**/*", async (route) => {
     const url = new URL(route.request().url());
     if (url.hostname === "127.0.0.1" || url.hostname === "localhost") {
       return route.continue();
     }
     if (url.origin === new URL(VISUAL_RPC_URL).origin) {
-      return handleRpc(route);
+      return handleRpc(route, options, state);
     }
     return route.abort();
   });
+  return state;
 }

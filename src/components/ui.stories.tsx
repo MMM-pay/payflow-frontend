@@ -1,5 +1,20 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
-import { Badge, Notice, Panel, Stat } from "@/components/ui";
+import {
+  AddressLink,
+  Badge,
+  Dialog,
+  Empty,
+  MerchantAccount,
+  NetworkMismatchBanner,
+  Notice,
+  Panel,
+  Skeleton,
+  SkeletonPlanCards,
+  SkeletonRows,
+  Stat,
+  TimeAgo,
+  TxLink,
+} from "@/components/ui";
 
 const meta = {
   title: "UI/Components",
@@ -25,7 +40,12 @@ export const PanelExample: Story = {
 
 export const StatExample: Story = {
   name: "Stat",
-  render: () => <Stat label="Active subscriptions" value={1284} hint="Across all plans" />,
+  render: () => (
+    <div className="grid gap-4 sm:grid-cols-2">
+      <Stat label="Active subscriptions" value={1284} hint="Across all plans" />
+      <Stat label="Monthly revenue" value={null} loading hint="Updating totals" />
+    </div>
+  ),
 };
 
 export const BadgeExample: Story = {
@@ -73,5 +93,84 @@ export const ButtonsAndInputs: Story = {
         />
       </div>
     </div>
+  ),
+};
+
+export const AddressAndTransactionLinks: Story = {
+  render: () => (
+    <div className="space-y-3">
+      <AddressLink value="GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF" />
+      <TxLink hash="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" />
+    </div>
+  ),
+};
+
+export const MerchantAccountExample: Story = {
+  render: () => (
+    <MerchantAccount
+      value="GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
+      resolvedName="Acme Payments"
+    />
+  ),
+};
+
+export const EmptyState: Story = {
+  render: () => (
+    <Empty
+      title="No plans found"
+      action={<button className="btn-ghost" type="button">Reset filters</button>}
+    >
+      Try changing the search or token filter.
+    </Empty>
+  ),
+};
+
+export const LoadingPlaceholders: Story = {
+  render: () => (
+    <div className="space-y-6">
+      <div>
+        <p className="label mb-2">Inline loading</p>
+        <Skeleton className="h-6 w-40" />
+      </div>
+      <SkeletonRows rows={2} label="Loading subscriptions" />
+      <SkeletonPlanCards cards={2} label="Loading plans" />
+    </div>
+  ),
+};
+
+export const NetworkMismatch: Story = {
+  render: () => (
+    <NetworkMismatchBanner
+      walletNetwork="Public"
+      expectedNetwork="Test SDF Network ; September 2015"
+    />
+  ),
+};
+
+export const TimeAgoEmpty: Story = {
+  name: "TimeAgo — missing timestamp",
+  render: () => <TimeAgo value={0} />,
+};
+
+export const TimeAgoRecent: Story = {
+  name: "TimeAgo — recent update",
+  render: () => <TimeAgo value={1_736_942_400} />,
+};
+
+export const OpenDialog: Story = {
+  render: () => (
+    <Dialog
+      open
+      onClose={() => undefined}
+      title="Leave this page?"
+      actions={
+        <>
+          <button className="btn-ghost" type="button">Stay</button>
+          <button className="btn-danger" type="button">Leave page</button>
+        </>
+      }
+    >
+      Your unsaved changes will be lost.
+    </Dialog>
   ),
 };

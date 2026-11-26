@@ -25,7 +25,7 @@ const wallet = vi.hoisted(() => ({
   signXdr: vi.fn(),
 }));
 
-const apiMock = vi.hoisted(() => ({ plans: vi.fn() }));
+const apiMock = vi.hoisted(() => ({ plans: vi.fn(), planStats: vi.fn() }));
 const chainMock = vi.hoisted(() => ({ chainPlans: vi.fn() }));
 const payflowMock = vi.hoisted(() => ({ subscribe: vi.fn() }));
 

@@ -8,45 +8,62 @@ All notable changes to payflow-frontend. The format follows
 
 ### Added
 
-- **Table-driven tests for the formatting, period and price helpers (#356).**
-  `test/helpers-table.test.ts` pins the happy path and the rejection and
-  boundary cases of `fromStroops`/`toStroops`/`formatAmount`, locale-aware
-  `canonicalAmount`/`amountError`, `formatPeriod` and the custom-period checks,
-  and the oracle-backed USD estimators. The tables are deterministic — no
-  clock, network or wallet — and sit beside the existing per-helper tests.
-- **A 200% zoom / 320 px reflow check for every route (#377).**
-  `e2e/reflow.spec.ts` fails when a page's document scrolls sideways at 640 CSS
-  px (200% zoom) or 320 CSS px (the WCAG 1.4.10 floor), and names the widest
-  offending element. Form rows now stack instead of forcing a minimum width,
-  the header controls and panel toolbars wrap, and chart axis labels wrap, so
-  content reflows without loss. The mandate charge table gained a labelled,
-  focusable scroll region like the other wide tables.
+- **Charts and retention grids now carry a textual equivalent (#318).**
+  `RevenueChart` already shipped an accessible summary and a real `<table>`;
+  the cohort retention grid only encoded its figures as percentage text and a
+  background tint, and an `aria-label` on a bare `<span>` is ignored by several
+  screen readers. The grid now prints a sentence above the table — cohort count,
+  signup range, subscribers covered and the month-1 spread — uses that sentence
+  as its caption, and spells out each cell (`1 in the signup month`, `75%
+  retained after 2 months`, `Data not yet available`) in `sr-only` text.
+  `describeCohortRetention` is a pure function in `src/lib/cohort-retention.ts`
+  with tests, so the wording is checked without a browser.
+
+- **A page-authoring guide for contributors (#390).**
+  `docs/adding-a-page.md` documents the pattern end to end: the route
+  directory and the static export's constraints (trailing slashes,
+  build-time dynamic segments, `<Suspense>` around `useSearchParams`), the
+  `pages.json` entry and the `layout.tsx` that exports `metadata`, the loader
+  hook with its request guard and four-state union, the indexer-then-contract
+  fallback, the `run()` write pattern, the i18n catalogues, the JS budget and
+  the tests. `CONTRIBUTING.md` and `README.md` link to it from where a
+  contributor looks for it.
 
 ### Fixed
 
-- **The German catalog was missing 35 keys, failing `typecheck` and `test`.**
-  The keys added by the wallet-signing confirmation, pagination, merchant
-  action and error-boundary work existed in `en.json` and `fr.json` but not
-  `de.json`, so `keyof typeof en` indexing and the catalog-completeness test
-  both failed on `main`. The missing German strings are added; the catalogs are
-  back to a 1:1 key and interpolation-token match.
-- **The `next/link` test doubles rendered `href=""`.** The `anchor-is-valid`
-  rule now flags that as a non-navigable link, so the mocks fall back to `/`
-  when a test passes a non-string `href`. No behaviour changed: every wrapped
-  link in the suite passes a string.
-- **The header controls kept their max-content width at 320 px.** The group now
-  carries `min-w-0` as well as `flex-wrap`, so it wraps inside the viewport
-  instead of widening the document. Found by the new reflow check.
+- **Text no longer drops below WCAG AA in one theme (#317).** Several
+  components bypassed the theme tokens with fixed palette colours, so their text
+  was near-invisible in the other theme: `text-slate-200`/`text-slate-300` on the
+  empty state, the receipt card and the receipt's transaction-proof label (a
+  near-black-on-near-white problem in light mode), `text-amber-300` on the
+  balance warning and the status page's degraded check, `text-rose-200/300` on
+  inline form errors, `text-emerald-500`/`text-amber-500` on the subscribe
+  guide's step label, and `text-muted/80` on the receipt footer. Each now uses
+  `soft`, `warn`, `danger`, `accent` or `muted`, all of which are defined for
+  both palettes and measured at AA. White text on `bg-accent` (two dashboard
+  tabs and the danger count pill) became `text-ink`/`bg-danger-solid`, because
+  `--accent` is a light green in dark mode and `--danger` a pale pink: white on
+  either was the lowest-contrast pair on the page. The retention grid's five
+  `bg-green-100 dark:bg-…` bands became tints of `accent`, `warn` and `danger`,
+  since `dark:` follows the OS preference rather than the theme the reader
+  chose. `src/lib/contrast.ts` adds the WCAG maths and `test/contrast.test.ts`
+  reads the palettes out of `globals.css` and asserts every text/surface,
+  status-tint, badge and focus-ring pairing at AA (4.5:1 normal text, 3:1 for
+  the ring), and fails on any new fixed-palette colour outside a `print:`
+  variant.
 
-### Changed
+### Performance
 
-- **Accessibility lint rules are now errors (#389).** `eslint.config.mjs`
-  enables the full `eslint-plugin-jsx-a11y` recommended set (eslint-config-next
-  only enabled six rules, at `warn`), with `role="region"` allowed on the
-  focusable scroll containers. Table headers gained `scope`, the dialog backdrop
-  is marked `role="presentation"`, and the notification centre's Escape handler
-  moved to a document listener so a landmark no longer swallows keyboard
-  events.
+- **Preconnect to the RPC, Horizon and indexer origins (#330).** The first
+  contract read or indexer fetch otherwise paid for DNS, TCP and TLS in series
+  with the page render. `src/app/layout.tsx` now emits `rel="preconnect"` links
+  for the configured origins, with `crossorigin` so the warm socket is the one
+  the CORS fetch can reuse, and `src/lib/preconnect.ts` reduces each URL to an
+  origin, deduplicates and skips empty or non-http values so a contract-only
+  build emits nothing. The hints are static markup: no JavaScript is added to
+  any route, so the first-load budgets are unchanged. The Lighthouse budget job
+  in `.github/workflows/lighthouse.yml` runs against the export on every pull
+  request and is the measurement for this change.
 
 ### Changed
 

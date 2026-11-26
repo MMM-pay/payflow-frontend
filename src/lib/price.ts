@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { config } from "./config";
+import { useReducedData } from "./useReducedData";
 
 /**
  * Reflector Oracle Contract IDs:
@@ -208,12 +209,20 @@ export function formatUsdcEstimate(
 
 /**
  * React hook to read the active XLM/USD price from Reflector oracle.
+ *
+ * Defers downloading the Stellar SDK and querying the oracle when the user
+ * signals reduced-data (`prefers-reduced-data: reduce` or `Save-Data`),
+ * unless explicitly requested via `loadPrice()`.
  */
-export function useXlmUsdPrice() {
+export function useXlmUsdPrice(options?: { enabled?: boolean }) {
+  const reducedData = useReducedData();
+  const [manualLoad, setManualLoad] = useState(false);
   const [priceData, setPriceData] = useState<OraclePrice | null>(cachedPrice);
-  const [loading, setLoading] = useState<boolean>(!cachedPrice);
+  const shouldFetch = (options?.enabled ?? true) && (!reducedData || manualLoad);
+  const [loading, setLoading] = useState<boolean>(!cachedPrice && shouldFetch);
 
   useEffect(() => {
+    if (!shouldFetch) return;
     let cancelled = false;
     void fetchXlmUsdPrice().then((res) => {
       if (!cancelled) {
@@ -224,9 +233,14 @@ export function useXlmUsdPrice() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [shouldFetch]);
 
-  return { priceData, loading };
+  return {
+    priceData,
+    loading: shouldFetch ? loading : false,
+    skippedForReducedData: reducedData && !manualLoad && !cachedPrice,
+    loadPrice: () => setManualLoad(true),
+  };
 }
 
 /**

@@ -7,7 +7,7 @@ import Link from "next/link";
 
 import dynamic from "next/dynamic";
 import { api, checkWebhookUrl, type ApiChargeAttempt, type ApiMandate, type ApiPlan, type ApiWebhook, type MerchantSummary, type StreamEvent } from "@/lib/api";
-import { buildCsv, buildMonthlyRevenueCsv, downloadCsv, exportFilename, monthlyRevenueFilename, type ChargeRow, type MonthlyRevenueRow } from "@/lib/csv";
+import { buildCsv, buildMonthlyRevenueCsv, buildSubscribersCsv, downloadCsv, exportFilename, monthlyRevenueFilename, subscribersFilename, type ChargeRow, type MonthlyRevenueRow, type SubscriberRow } from "@/lib/csv";
 import { fillBuckets, parseRevenue, type BucketSize, type RevenuePoint } from "@/lib/revenue";
 import { parseMerchantChurn, type MerchantChurnMonth } from "@/lib/churn";
 import { endMandatesSequentially, type EndOutcome, chainMerchantMandatesPage, chainMerchantSummary, chainPlanSubscriberCount, chainPlansOf, chainUnpaidMandates, endable, mandateFunding, mergeMandates, MERCHANT_MANDATE_PAGE_SIZE, type UnpaidMandate } from "@/lib/chain";
@@ -33,8 +33,6 @@ const DEFAULT_TOKENS: readonly ConfiguredToken[] = [
   },
 ];
 import {
-  checkDiscountBps,
-  checkDiscountCharges,
   discountedAmount,
   discountBadge,
   remainingDiscountCharges,
@@ -60,7 +58,7 @@ import{ feeSplit, fromStroops, type FeeSplit, type TokenMeta } from "@/lib/forma
 import { metaFor, useTokenMetas } from "@/lib/token";
 import { supportsTrials, TRIAL_OPTIONS } from "@/lib/trial";
 import { CUSTOM_PERIOD, DEFAULT_PERIOD, PERIOD_PRESETS, PERIOD_UNITS, checkCustomPeriod, checkPeriodSeconds, type PeriodCheck } from "@/lib/period";
-import { countOpenMandates, filterAndSortPlans, type PlanActiveOption } from "@/lib/plans";
+import { countOpenMandates, filterAndSortPlans, planDisplayName } from "@/lib/plans";
 import { formatUsdEstimate, formatUsdcEstimate, useXlmUsdPrice } from "@/lib/price";
 import { AmountInput } from "@/components/AmountInput";
 import { CopyButton } from "@/components/CopyButton";
@@ -77,12 +75,15 @@ function validatePlanNameLocal(name: string): string | null {
 
 import { OnboardingChecklist } from "@/components/OnboardingChecklist";
 import { SectionShortcuts } from "@/components/SectionShortcuts";
-import { AddressLink, Badge, Empty, Notice, Panel, SkeletonRows, Stat, TimeAgo, TxLink } from "@/components/ui";
+import { AddressLink, Badge, Empty, InlineError, Notice, Panel, SkeletonRows, Stat, TimeAgo, TxLink } from "@/components/ui";
 import { Search } from "@/components/Search";
 import { ConfirmDialog, confirmTitle } from "@/components/ConfirmDialog";
+import { DiscountForm } from "@/components/DiscountForm";
+import { InfoTip } from "@/components/Tooltip";
 import { observeContractRecord } from "@/lib/contract-compat";
 import { ContractVersionNotice } from "@/components/ContractVersionNotice";
 import { SyncLagIndicator } from "@/components/SyncLagIndicator";
+import { StaleDataNotice } from "@/components/StaleDataNotice";
 import { Money } from "@/components/Money";
 import { NotificationCentre } from "@/components/NotificationCentre";
 import { evaluateMerchantNotifications } from "@/lib/notifications";
@@ -181,7 +182,10 @@ function FeePreview({
     <span>{tr("Subscriber pays")}{" "}{formatAmount(split.gross, meta)}
       {usdEstimate ? ` (≈ ${usdEstimate})` : ""}{" "}{tr("· protocol fee")}{" "}
       {formatAmount(split.fee, meta)} ({formatFeeBps(feeBps)}{tr(") · you receive")}{" "}
-      {formatAmount(split.net, meta)}.
+      {formatAmount(split.net, meta)}.{" "}
+      <InfoTip label={tr("About the protocol fee")}>
+        {tr("The protocol takes {0} of every charge. The subscriber always pays the plan price; the fee is deducted from your payout.", { "0": formatFeeBps(feeBps) })}
+      </InfoTip>
     </span>
   );
 }
@@ -220,18 +224,17 @@ function ProfilePanel({
 
   const nameCheck = checkProfileName(name);
   const urlCheck = checkProfileUrl(url);
+  const { t: tr } = useI18n();
   const usable = nameCheck.ok && urlCheck.ok;
 
   if (!supported) {
     return (
       <Panel
-        title="Merchant profile"
-        subtitle="A display name and URL shown to subscribers on plan cards."
+        title={tr("Merchant profile")}
+        subtitle={tr("A display name and URL shown to subscribers on plan cards.")}
       >
         <Notice tone="info">
-          The deployed contract does not support merchant profiles yet, so this
-          control is hidden. It will appear once the contract exposes
-          set_profile and get_profile.
+          {tr("The deployed contract does not support merchant profiles yet, so this control is hidden. It will appear once the contract exposes set_profile and get_profile.")}
         </Notice>
       </Panel>
     );
@@ -258,20 +261,18 @@ function ProfilePanel({
 
   return (
     <Panel
-      title="Merchant profile"
-      subtitle="A display name and URL shown to subscribers on plan cards. Stored on-chain."
+      title={tr("Merchant profile")}
+      subtitle={tr("A display name and URL shown to subscribers on plan cards. Stored on-chain.")}
     >
       {error && <Notice tone="error">{error}</Notice>}
       {done && (
         <Notice tone="ok">
-          Profile saved. Transaction <TxLink hash={done} />
+          {tr("Profile saved. Transaction")} <TxLink hash={done} />
         </Notice>
       )}
       <div className="flex flex-wrap items-end gap-3">
-        <div className="w-full sm:w-auto sm:min-w-[12rem] sm:flex-1">
-          <label className="label" htmlFor="profile-name">
-            Display name
-          </label>
+        <div className="min-w-[12rem] flex-1">
+          <label className="label" htmlFor="profile-name">{tr("Display name")}</label>
           <input
             id="profile-name"
             className="input"
@@ -289,10 +290,8 @@ function ProfilePanel({
             </p>
           )}
         </div>
-        <div className="w-full sm:w-auto sm:min-w-[16rem] sm:flex-1">
-          <label className="label" htmlFor="profile-url">
-            URL
-          </label>
+        <div className="min-w-[16rem] flex-1">
+          <label className="label" htmlFor="profile-url">{tr("URL")}</label>
           <input
             id="profile-url"
             className="input"
@@ -316,15 +315,15 @@ function ProfilePanel({
           disabled={busy || !usable}
           onClick={() => void save()}
         >
-          {busy ? "Saving…" : "Save profile"}
+          {busy ? tr("Saving…") : tr("Save profile")}
         </button>
       </div>
 
       <div className="mt-4 rounded-lg border border-edge p-3">
-        <p className="text-xs font-medium text-muted">Preview on plan cards</p>
+        <p className="text-xs font-medium text-muted">{tr("Preview on plan cards")}</p>
         <div className="mt-2">
           <div className="font-medium">
-            {nameCheck.ok && nameCheck.name ? nameCheck.name : "Your business name"}
+            {nameCheck.ok && nameCheck.name ? nameCheck.name : tr("Your business name")}
           </div>
           {urlCheck.ok && urlCheck.url ? (
             <div className="text-xs text-muted mono truncate" title={urlCheck.url}>
@@ -353,7 +352,7 @@ function ChargeAttemptsHistory({
   mandateId: number;
   apiConfigured: boolean;
 }) {
-  const { t: tr, formatDate, translateMessage } = useI18n();
+  const { t: tr, translateMessage } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const [attempts, setAttempts] = useState<ApiChargeAttempt[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -407,7 +406,7 @@ function ChargeAttemptsHistory({
       {expanded && (
         <div id={`attempts-${mandateId}`} className="mt-2 rounded-lg border border-edge p-3">
           {loading ? (
-            <p className="text-sm text-muted">{tr("Loading charge attempts…")}</p>
+            <SkeletonRows rows={1} label={tr("Loading charge attempts")} />
           ) : attempts === null ? (
             <Notice tone="info">{tr("Charge attempt history is not available. The backend does not serve this endpoint yet, or the feature has not been deployed to this network.")}</Notice>
           ) : attempts.length === 0 ? (
@@ -422,7 +421,7 @@ function ChargeAttemptsHistory({
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-muted">
-                        {formatDate(attempt.attempted_at)}
+                        <TimeAgo value={attempt.attempted_at} />
                       </span>
                       {attempt.result === "success" ? (
                         <Badge status="Active" />
@@ -517,27 +516,27 @@ function MerchantChurnPanel({
           aria-label={tr("Monthly subscriber activity table")}
           tabIndex={0}
         >
-          <table className="w-full min-w-[760px] text-left text-sm">
+          <table className="w-full min-w-[760px] text-start text-sm">
             <caption className="sr-only">{tr("Monthly subscription starts, departures, completions, and net change. Completed subscriptions are included in the net calculation.")}</caption>
             <thead>
               <tr className="border-b border-edge text-muted">
-                <th scope="col" className="py-2 pr-3 font-medium">{tr("Month (UTC)")}</th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Started")}</th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Subscriber cancellations")}</th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Merchant-ended")}</th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Completed")}</th>
-                <th scope="col" className="py-2 text-right font-medium">{tr("Net subscriber change")}</th>
+                <th scope="col" className="py-2 pe-3 font-medium">{tr("Month (UTC)")}</th>
+                <th scope="col" className="py-2 pe-3 text-end font-medium">{tr("Started")}</th>
+                <th scope="col" className="py-2 pe-3 text-end font-medium">{tr("Subscriber cancellations")}</th>
+                <th scope="col" className="py-2 pe-3 text-end font-medium">{tr("Merchant-ended")}</th>
+                <th scope="col" className="py-2 pe-3 text-end font-medium">{tr("Completed")}</th>
+                <th scope="col" className="py-2 text-end font-medium">{tr("Net subscriber change")}</th>
               </tr>
             </thead>
             <tbody>
               {state.months.map((month) => (
                 <tr key={month.bucket} className="border-b border-edge last:border-0">
-                  <th scope="row" className="py-2 pr-3 font-medium">{month.bucket}</th>
-                  <td className="py-2 pr-3 text-right tabular-nums">{formatNumber(month.started)}</td>
-                  <td className="py-2 pr-3 text-right tabular-nums">{formatNumber(month.cancelled)}</td>
-                  <td className="py-2 pr-3 text-right tabular-nums">{formatNumber(month.ended)}</td>
-                  <td className="py-2 pr-3 text-right tabular-nums">{formatNumber(month.completed)}</td>
-                  <td className="py-2 text-right tabular-nums">
+                  <th scope="row" className="py-2 pe-3 font-medium">{month.bucket}</th>
+                  <td className="py-2 pe-3 text-end tabular-nums">{formatNumber(month.started)}</td>
+                  <td className="py-2 pe-3 text-end tabular-nums">{formatNumber(month.cancelled)}</td>
+                  <td className="py-2 pe-3 text-end tabular-nums">{formatNumber(month.ended)}</td>
+                  <td className="py-2 pe-3 text-end tabular-nums">{formatNumber(month.completed)}</td>
+                  <td className="py-2 text-end tabular-nums">
                     {month.net > 0
                       ?tr("+{0} (increase)", { "0": month.net })
                       : month.net < 0
@@ -578,7 +577,7 @@ function WebhooksPanel({
   merchant: string;
   apiConfigured: boolean;
 }) {
-  const { t: tr, formatDate, translateMessage } = useI18n();
+  const { t: tr, translateMessage } = useI18n();
   const [webhooks, setWebhooks] = useState<ApiWebhook[] | null>(null);
   const [url, setUrl] = useState("");
   const [events, setEvents] = useState<string[]>([]);
@@ -796,7 +795,7 @@ function WebhooksPanel({
                         {w.url}
                       </div>
                       <div className="mt-1 text-xs text-muted">
-                        {w.events.join(", ")} · {formatDate(w.created_at)}
+                        {w.events.join(", ")} · <TimeAgo value={w.created_at} />
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -873,101 +872,6 @@ function WebhooksPanel({
   );
 }
 
-/**
- * The discount a merchant can attach to one mandate.
- *
- * The rate is a percentage the merchant types; it is converted to basis
- * points in integer arithmetic, and the preview says what the subscriber pays
- * while the discount runs and what they pay after it. The discount can only
- * lower the price, so the preview never shows more than the plan's price.
- */
-function DiscountForm({
-  amount,
-  meta,
-  busy,
-  onCancel,
-  onApply,
-}: {
-  amount: bigint;
-  meta: TokenMeta;
-  busy: boolean;
-  onCancel: () => void;
-  onApply: (bps: number, charges: number) => void;
-}) {
-  const { t: tr, formatAmount, translateMessage } = useI18n();
-  const [percent, setPercent] = useState("10");
-  const [charges, setCharges] = useState("3");
-  const bpsCheck = checkDiscountBps(percent);
-  const chargesCheck = checkDiscountCharges(charges);
-  const usable = bpsCheck.ok && chargesCheck.ok;
-
-  return (
-    <div className="mt-3 rounded-lg border border-edge p-3">
-      <p className="text-sm font-medium">{tr("Discount this mandate")}</p>
-      <div className="mt-2 flex flex-wrap items-end gap-3">
-        <div className="w-full sm:w-auto sm:min-w-[7rem] sm:flex-1">
-          <label className="label" htmlFor="discount-percent">{tr("Discount (%)")}</label>
-          <input
-            id="discount-percent"
-            className="input"
-            inputMode="decimal"
-            placeholder="10"
-            value={percent}
-            onChange={(e) => setPercent(e.target.value)}
-            aria-invalid={!bpsCheck.ok}
-            aria-describedby={bpsCheck.ok ? undefined : "discount-percent-error"}
-            disabled={busy}
-          />
-        </div>
-        <div className="w-full sm:w-auto sm:min-w-[9rem] sm:flex-1">
-          <label className="label" htmlFor="discount-charges">{tr("Charges to cover")}</label>
-          <input
-            id="discount-charges"
-            className="input"
-            inputMode="numeric"
-            placeholder="3"
-            value={charges}
-            onChange={(e) => setCharges(e.target.value)}
-            aria-invalid={!chargesCheck.ok}
-            aria-describedby={chargesCheck.ok ? undefined : "discount-charges-error"}
-            disabled={busy}
-          />
-        </div>
-        <button
-          type="button"
-          className="btn-primary"
-          disabled={busy || !usable}
-          onClick={() => {
-            if (!bpsCheck.ok || !chargesCheck.ok) return;
-            onApply(bpsCheck.bps, chargesCheck.charges);
-          }}
-        >
-          {busy ?tr("Applying…") :tr("Apply discount")}
-        </button>
-        <button type="button" className="btn-ghost" disabled={busy} onClick={onCancel}>{tr("Cancel")}</button>
-      </div>
-
-      {!bpsCheck.ok && (
-        <p id="discount-percent-error" role="alert" className="mt-2 text-sm text-danger">
-          {translateMessage(bpsCheck.message)}
-        </p>
-      )}
-      {!chargesCheck.ok && (
-        <p id="discount-charges-error" role="alert" className="mt-2 text-sm text-danger">
-          {translateMessage(chargesCheck.message)}
-        </p>
-      )}
-
-      {bpsCheck.ok && chargesCheck.ok && (
-        <p className="mt-2 text-sm text-muted">{tr("Subscriber pays")}{" "}{formatAmount(discountedAmount(amount, bpsCheck.bps), meta)}{" "}{tr("for the next")}{" "}{chargesCheck.charges === 1 ?tr("charge") :tr("{0} charges", { "0": chargesCheck.charges })},{" "}{tr("then")}{" "}{formatAmount(amount, meta)}.
-          {discountedAmount(amount, bpsCheck.bps) === 0n && (
-            <>{" "}{tr("This discount rounds the charge down to zero, which the vault cannot debit.")}</>
-          )}
-        </p>
-      )}
-    </div>
-  );
-}
 
 /**
  * The refund a merchant can issue on one mandate.
@@ -1050,11 +954,14 @@ export default function MerchantPage() {
   const { checkAmount, t: tr, formatPeriod, translateMessage, unitLabel, trialBadge, formatTokenValue, discountBadge, formatUsdString, formatNumber } = useI18n();
   const { address, networkMismatch, signXdr, connect, connecting } = useWallet();
   const [plans, setPlans] = useState<ApiPlan[] | null>(null);
-  // Filter state for the merchant's own plan listing. Search is by name, and
-  // the token/status filters narrow the same list without hiding its counts.
+  // Filter state for the merchant's own plan listing. Search is by name, the
+  // token filter narrows the same list, and the active/archive tab decides
+  // whether live or deactivated plans are shown.
   const [planQuery, setPlanQuery] = useState("");
   const [planToken, setPlanToken] = useState("all");
-  const [planActive, setPlanActive] = useState<PlanActiveOption>("all");
+  // Deactivated plans live in their own tab instead of being mixed into the
+  // listing merchants use to manage live plans.
+  const [planView, setPlanView] = useState<"active" | "archive">("active");
   const [mandates, setMandates] = useState<ApiMandate[] | null>(null);
   const [unpaidMandates, setUnpaidMandates] = useState<import("@/lib/chain").UnpaidMandate[] | null>(null);
   const [subscribersTab, setSubscribersTab] = useState<"all" | "unpaid">("all");
@@ -1083,6 +990,10 @@ export default function MerchantPage() {
   const [moreError, setMoreError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [monthlyExporting, setMonthlyExporting] = useState(false);
+  // Independent of the batch-end selection: a merchant may want to export a
+  // subscriber they would never end, so the two sets stay separate.
+  const [exportSelected, setExportSelected] = useState<Set<number>>(new Set());
+  const [exportingSubscribers, setExportingSubscribers] = useState(false);
   const [feeBps, setFeeBps] = useState<number | null>(null);
   const [bucketSize, setBucketSize] = useState<BucketSize>("day");
   /**
@@ -1157,6 +1068,9 @@ export default function MerchantPage() {
 
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  // When the projections on this page were last received, for staleness.
+  const [lastLoadedAt, setLastLoadedAt] = useState<number | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   // Ids of mandates ticked for the "End selected" batch action.
   const [selected, setSelected] = useState<Set<number>>(new Set());
   // Whether the batch-end confirmation dialog is open.
@@ -1227,10 +1141,15 @@ export default function MerchantPage() {
         sort: "oldest",
         query: planQuery,
         token: planToken,
-        active: planActive,
+        active: planView === "active" ? "active" : "inactive",
       }),
-    [plans, planQuery, planToken, planActive],
+    [plans, planQuery, planToken, planView],
   );
+  const activePlanCount = useMemo(
+    () => (plans ?? []).filter((plan) => plan.active === 1).length,
+    [plans],
+  );
+  const archivedPlanCount = (plans ?? []).length - activePlanCount;
   /** Tokens present on this merchant's plans, keeping a URL-selected one visible. */
   const planTokenOptions = useMemo(() => {
     const ids = [...new Set((plans ?? []).map((plan) => plan.token))];
@@ -1384,6 +1303,7 @@ export default function MerchantPage() {
 
   const load = useCallback(async () => {
     if (!address) return;
+    setRefreshing(true);
     const [p, m, s] = await Promise.all([
       api.plans(address),
       // A failed fallback read must not take the whole dashboard down with it:
@@ -1418,6 +1338,10 @@ export default function MerchantPage() {
     // Drop selections for mandates that no longer exist or are no longer endable.
     const endableIds = new Set(rows.filter(endable).map((r) => r.id));
     setSelected((prev) => new Set([...prev].filter((id) => endableIds.has(id))));
+    // Export selection follows the same rule: a mandate that vanished from a
+    // refresh must not be exported from stale state.
+    const mandateIds = new Set(rows.map((r) => r.id));
+    setExportSelected((prev) => new Set([...prev].filter((id) => mandateIds.has(id))));
 
     // Load unpaid mandates
     try {
@@ -1803,6 +1727,77 @@ export default function MerchantPage() {
     });
   }
 
+  /** Toggle one subscriber's export checkbox. */
+  function toggleExportSelected(id: number) {
+    setExportSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  /** Select every subscriber for export, or clear the whole selection. */
+  function toggleExportSelectAll(ids: number[]) {
+    setExportSelected((prev) => {
+      const allSelected = ids.length > 0 && ids.every((id) => prev.has(id));
+      return allSelected ? new Set() : new Set(ids);
+    });
+  }
+
+  /**
+   * Export the selected subscribers (one row per mandate) as CSV.
+   *
+   * Reads only data already on the page, so no signature or backend call is
+   * involved; a malformed amount is caught rather than written as "NaN".
+   */
+  function exportSelectedSubscribers() {
+    if (!address) return;
+    setExportingSubscribers(true);
+    setError(null);
+    try {
+      if (exportSelected.size === 0) {
+        setError(tr("Select at least one subscriber to export."));
+        return;
+      }
+      const rows: SubscriberRow[] = (mandates ?? [])
+        .filter((m) => exportSelected.has(m.id))
+        .map((m) => {
+          const meta = metaFor(metas, m.token ?? config.contracts.token);
+          const plan = (plans ?? []).find((p) => p.id === m.plan_id);
+          const next = Number.isFinite(m.next_charge) && m.next_charge > 0
+            ? new Date(m.next_charge * 1000).toISOString()
+            : "—";
+          return {
+            mandateId: m.id,
+            subscriber: m.subscriber,
+            planId: m.plan_id,
+            planName: plan ? planDisplayName(plan) : `Plan #${m.plan_id}`,
+            status: m.status,
+            amount: fromStroops(m.amount, meta.decimals, meta.decimals),
+            token: meta.symbol,
+            periodSeconds: m.period,
+            chargesMade: m.charges_made,
+            maxCharges: m.max_charges,
+            nextCharge: next,
+          };
+        });
+      if (rows.length === 0) {
+        setError(tr("None of the selected subscribers are still listed. Refresh and try again."));
+        return;
+      }
+      downloadCsv(
+        buildSubscribersCsv(rows),
+        subscribersFilename(address, new Date().toISOString().slice(0, 10)),
+      );
+      setExportSelected(new Set());
+    } catch {
+      setError(tr("Could not build the subscriber export. Nothing was downloaded."));
+    } finally {
+      setExportingSubscribers(false);
+    }
+  }
+
   /**
    * End every selected mandate sequentially, stopping on the first failure.
    *
@@ -2148,6 +2143,12 @@ export default function MerchantPage() {
 
       <ContractVersionNotice />
       <SyncLagIndicator />
+      <StaleDataNotice
+        fetchedAt={lastLoadedAt}
+        refreshing={refreshing}
+        onRefresh={() => { void load(); }}
+        className="mb-4"
+      />
       <NotificationCentre
         address={address}
         notifications={evaluateMerchantNotifications({
@@ -2182,7 +2183,7 @@ export default function MerchantPage() {
             {batchResult.filter((i) => i.ok).length} of {batchResult.length} mandates ended.
           </p>
           {batchResult.some((i) => !i.ok) && (
-            <ul className="mt-1 list-disc pl-5 text-sm">
+            <ul className="mt-1 list-disc ps-5 text-sm">
               {batchResult
                 .filter((i) => !i.ok)
                 .map((i) => (
@@ -2430,66 +2431,111 @@ export default function MerchantPage() {
           >{tr("Use the form above to publish your first plan — it is written straight to the contract, so it works with or without the indexer. Subscribers can open a mandate against it as soon as it confirms.")}</Empty>
         ) : (
           <div className="space-y-3">
-            <div className="flex flex-wrap items-end gap-3 rounded-lg border border-edge bg-surface/50 p-3">
-              <div className="w-full sm:w-auto sm:min-w-[14rem] sm:flex-1">
-                <Search
-                  id="merchant-plan-search"
-                  value={planQuery}
-                  onChange={setPlanQuery}
-                  label={tr("Search plans by name")}
-                  placeholder={tr("Search by name")}
-                />
-              </div>
-
-              <div className="flex items-center gap-2">
-                <label htmlFor="merchant-plan-token" className="whitespace-nowrap text-sm font-medium text-muted">{tr("Token:")}</label>
-                <select
-                  id="merchant-plan-token"
-                  className="input py-1 px-2.5 text-sm"
-                  value={planToken}
-                  onChange={(e) => setPlanToken(e.target.value)}
+            <div className="rounded-lg border border-edge bg-surface/50 p-3">
+              <div className="mb-3 flex flex-wrap items-center gap-3">
+                <div
+                  className="flex rounded-lg border border-edge bg-surface/30"
+                  role="tablist"
+                  aria-label={tr("Plan views")}
                 >
-                  <option value="all">{tr("All tokens")}</option>
-                  {planTokenOptions.map((id) => (
-                    <option key={id} value={id}>
-                      {metaFor(metas, id).symbol}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <label htmlFor="merchant-plan-active" className="whitespace-nowrap text-sm font-medium text-muted">{tr("Status:")}</label>
-                <select
-                  id="merchant-plan-active"
-                  className="input py-1 px-2.5 text-sm"
-                  value={planActive}
-                  onChange={(e) => setPlanActive(e.target.value as PlanActiveOption)}
-                >
-                  <option value="all">{tr("All plans")}</option>
-                  <option value="active">{tr("Active")}</option>
-                  <option value="inactive">{tr("Inactive")}</option>
-                </select>
-              </div>
-
-              <span className="ml-auto text-xs text-muted" aria-live="polite">{tr("Showing")}{" "}{formatNumber(filteredPlans.length)}{" "}{tr("of")}{" "}{formatNumber(plans.length)}{" "}{tr("plans")}</span>
-            </div>
-
-            {filteredPlans.length === 0 ? (
-              <Empty
-                title={tr("No plans match these filters")}
-                action={
                   <button
                     type="button"
-                    className="btn-ghost"
-                    onClick={() => {
-                      setPlanQuery("");
-                      setPlanToken("all");
-                      setPlanActive("all");
-                    }}
-                  >{tr("Reset filters")}</button>
-                }
-              >{tr("No plan name, token or status matches the current filters. Clear them to see every plan.")}</Empty>
+                    role="tab"
+                    id="merchant-plans-active-tab"
+                    aria-selected={planView === "active"}
+                    aria-controls="merchant-plans-panel"
+                    className={`rounded-l-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                      planView === "active"
+                        ? "bg-accent text-white"
+                        : "text-muted hover:text-fg"
+                    }`}
+                    onClick={() => setPlanView("active")}
+                  >
+                    {tr("Active")}{" "}
+                    <span className="tabular-nums">({formatNumber(activePlanCount)})</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    id="merchant-plans-archive-tab"
+                    aria-selected={planView === "archive"}
+                    aria-controls="merchant-plans-panel"
+                    className={`rounded-r-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                      planView === "archive"
+                        ? "bg-accent text-white"
+                        : "text-muted hover:text-fg"
+                    }`}
+                    onClick={() => setPlanView("archive")}
+                  >
+                    {tr("Archive")}{" "}
+                    <span className="tabular-nums">({formatNumber(archivedPlanCount)})</span>
+                  </button>
+                </div>
+                <span className="ml-auto text-xs text-muted" aria-live="polite">{tr("Showing")}{" "}{formatNumber(filteredPlans.length)}{" "}{tr("of")}{" "}{formatNumber(plans.length)}{" "}{tr("plans")}</span>
+              </div>
+
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="w-full sm:w-auto sm:min-w-[14rem] sm:flex-1">
+                  <Search
+                    id="merchant-plan-search"
+                    value={planQuery}
+                    onChange={setPlanQuery}
+                    label={tr("Search plans by name")}
+                    placeholder={tr("Search by name")}
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <label htmlFor="merchant-plan-token" className="whitespace-nowrap text-sm font-medium text-muted">{tr("Token:")}</label>
+                  <select
+                    id="merchant-plan-token"
+                    className="input py-1 px-2.5 text-sm"
+                    value={planToken}
+                    onChange={(e) => setPlanToken(e.target.value)}
+                  >
+                    <option value="all">{tr("All tokens")}</option>
+                    {planTokenOptions.map((id) => (
+                      <option key={id} value={id}>
+                        {metaFor(metas, id).symbol}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div
+              role="tabpanel"
+              id="merchant-plans-panel"
+              aria-labelledby={planView === "active" ? "merchant-plans-active-tab" : "merchant-plans-archive-tab"}
+            >
+            {filteredPlans.length === 0 ? (
+              planView === "archive" && archivedPlanCount === 0 ? (
+                <Empty title={tr("No archived plans")}>{tr("Deactivated plans move here, so the active list only shows plans you can still sell. Deactivate a plan to archive it.")}</Empty>
+              ) : planView === "active" && activePlanCount === 0 ? (
+                <Empty
+                  title={tr("No active plans")}
+                  action={
+                    <button type="button" className="btn-ghost" onClick={() => setPlanView("archive")}>
+                      {tr("Open archive")}
+                    </button>
+                  }
+                >{tr("Every plan is deactivated. Open the archive to review or reactivate them.")}</Empty>
+              ) : (
+                <Empty
+                  title={tr("No plans match these filters")}
+                  action={
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => {
+                        setPlanQuery("");
+                        setPlanToken("all");
+                      }}
+                    >{tr("Reset filters")}</button>
+                  }
+                >{tr("No plan name or token matches the current filters. Clear them to see every plan.")}</Empty>
+              )
             ) : (
           <VirtualList
             items={filteredPlans}
@@ -2735,10 +2781,10 @@ export default function MerchantPage() {
                       </div>
                       <p className="text-muted">{tr("Add this snippet to any HTML website. Subscribers can click it to subscribe in a secure popup window.")}</p>
                       <pre className="overflow-x-auto rounded border border-edge bg-background p-2 font-mono text-[11px] text-muted">
-                        <code>{`<script src="${typeof window !== "undefined" ? window.location.origin : ""}/payflow-frontend/embed/payflow-embed.js" defer></script>\n<payflow-button\n  plan-id="${p.id}"\n  merchant="${address}"\n  name="${p.name || `Plan #${p.id}`}"\n  amount="${fromStroops(p.amount, 4, meta.decimals)} ${meta.symbol}"\n  period="${formatPeriod(p.period)}">\n</payflow-button>`}</code>
+                        <code>{`<script src="${config.basePath}/payflow-frontend/embed/payflow-embed.js" defer></script>\n<payflow-button\n  plan-id="${p.id}"\n  merchant="${address}"\n  name="${p.name || `Plan #${p.id}`}"\n  amount="${fromStroops(p.amount, 4, meta.decimals)} ${meta.symbol}"\n  period="${formatPeriod(p.period)}">\n</payflow-button>`}</code>
                       </pre>
                       <CopyButton
-                        value={`<script src="${typeof window !== "undefined" ? window.location.origin : ""}/payflow-frontend/embed/payflow-embed.js" defer></script>\n<payflow-button plan-id="${p.id}" merchant="${address}" name="${p.name || `Plan #${p.id}`}" amount="${fromStroops(p.amount, 4, meta.decimals)} ${meta.symbol}" period="${formatPeriod(p.period)}"></payflow-button>`}
+                        value={`<script src="${config.basePath}/payflow-frontend/embed/payflow-embed.js" defer></script>\n<payflow-button plan-id="${p.id}" merchant="${address}" name="${p.name || `Plan #${p.id}`}" amount="${fromStroops(p.amount, 4, meta.decimals)} ${meta.symbol}" period="${formatPeriod(p.period)}"></payflow-button>`}
                         label={tr("embed snippet")}
                       />
                     </div>
@@ -2748,6 +2794,7 @@ export default function MerchantPage() {
             }}
           />
             )}
+            </div>
           </div>
         )}
       </Panel>
@@ -2771,7 +2818,7 @@ export default function MerchantPage() {
                 aria-selected={subscribersTab === "all"}
                 aria-controls="subscribers-all-panel"
                 id="subscribers-all-tab"
-                className={`px-3 py-1.5 text-sm font-medium transition-colors rounded-l-lg ${
+                className={`px-3 py-1.5 text-sm font-medium transition-colors rounded-s-lg ${
                   subscribersTab === "all"
                     ? "bg-accent text-white"
                     : "text-muted hover:text-fg"
@@ -2784,14 +2831,14 @@ export default function MerchantPage() {
                 aria-selected={subscribersTab === "unpaid"}
                 aria-controls="subscribers-unpaid-panel"
                 id="subscribers-unpaid-tab"
-                className={`px-3 py-1.5 text-sm font-medium transition-colors rounded-r-lg ${
+                className={`px-3 py-1.5 text-sm font-medium transition-colors rounded-e-lg ${
                   subscribersTab === "unpaid"
                     ? "bg-accent text-white"
                     : "text-muted hover:text-fg"
                 }`}
                 onClick={() => setSubscribersTab("unpaid")}
               >{tr("Unpaid")}{unpaidMandates && unpaidMandates.length > 0 && (
-                  <span className="ml-1.5 rounded-full bg-danger px-1.5 py-0.5 text-xs font-semibold text-white">
+                  <span className="ms-1.5 rounded-full bg-danger px-1.5 py-0.5 text-xs font-semibold text-white">
                     {formatNumber(unpaidMandates.length)}
                   </span>
                 )}
@@ -2829,6 +2876,33 @@ export default function MerchantPage() {
           aria-labelledby="subscribers-all-tab"
           hidden={subscribersTab !== "all"}
         >
+        {mandates !== null && mandates.length > 0 && (
+          <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-edge p-3">
+            <span className="text-sm text-muted" aria-live="polite">
+              {tr("{0} selected for export", { "0": exportSelected.size })}
+            </span>
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-muted">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-accent"
+                checked={mandates.length > 0 && mandates.every((m) => exportSelected.has(m.id))}
+                onChange={() => toggleExportSelectAll(mandates.map((m) => m.id))}
+                aria-label={tr("Select all subscribers for export")}
+              />
+              {tr("Select all")}
+            </label>
+            <button
+              type="button"
+              className="btn-ghost"
+              disabled={exportingSubscribers || exportSelected.size === 0}
+              onClick={() => void exportSelectedSubscribers()}
+            >
+              {exportingSubscribers
+                ? tr("Exporting…")
+                : tr("Export selected ({0})", { "0": exportSelected.size })}
+            </button>
+          </div>
+        )}
         {mandates !== null && mandates.some(endable) && (
           <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-edge p-3">
             <span className="text-sm text-muted" aria-live="polite">
@@ -2934,6 +3008,14 @@ export default function MerchantPage() {
                             />
                           </>
                         )}
+                        <input
+                          id={`export-mandate-${m.id}`}
+                          type="checkbox"
+                          className="h-4 w-4 accent-accent"
+                          checked={exportSelected.has(m.id)}
+                          onChange={() => toggleExportSelected(m.id)}
+                          aria-label={tr("Select subscription #{0} for export", { "0": m.id })}
+                        />
                         <Link
                           href={`/mandates/?id=${m.id}`}
                           className="font-medium hover:underline text-soft focus:outline-none focus:ring-1 focus:ring-accent rounded"
@@ -3133,6 +3215,8 @@ export default function MerchantPage() {
                       amount={BigInt(m.amount)}
                       meta={meta}
                       busy={busy === `discount-${m.id}`}
+                      maxCharges={Number(m.max_charges ?? 0)}
+                      chargesMade={Number(m.charges_made ?? 0)}
                       onCancel={() => setDiscountFor(null)}
                       onApply={(bps, charges) =>
                         void run(`discount-${m.id}`, () =>

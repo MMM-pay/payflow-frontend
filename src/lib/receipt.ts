@@ -1,7 +1,7 @@
 import { api, type ApiCharge, type ApiMandate } from "@/lib/api";
 import { mandateToApi } from "@/lib/chain";
-import { config, explorerBase } from "@/lib/config";
-import { feeSplit, formatPeriod, fromStroops, type TokenMeta } from "@/lib/format";
+import { config } from "@/lib/config";
+import { feeSplit, type TokenMeta } from "@/lib/format";
 // The SDK-backed module loads on demand: a receipt is read after the page
 // has already painted, so the SDK need not ship with it.
 import { payflow, server } from "@/lib/lazy-payflow";
@@ -60,6 +60,18 @@ export function parseReceiptParams(params: {
     mandateId,
     error: null,
   };
+}
+
+export function receiptShareUrl(
+  currentUrl: string,
+  receipt: Pick<ReceiptData, "txHash" | "mandateId">,
+): string {
+  const url = new URL(currentUrl);
+  url.search = "";
+  url.hash = "";
+  url.searchParams.set("tx", receipt.txHash);
+  url.searchParams.set("mandate", String(receipt.mandateId));
+  return url.toString();
 }
 
 const MONTHS = [
@@ -249,16 +261,6 @@ export async function loadReceipt(
   };
 }
 
-/** Escape text before it is placed in the downloaded HTML receipt. */
-export function escapeReceiptHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
 /** The filename a downloaded receipt is saved under. */
 export function receiptFilename(
   receipt: Pick<ReceiptData, "mandateId" | "txHash">,
@@ -267,13 +269,10 @@ export function receiptFilename(
 }
 
 /**
- * A standalone HTML receipt, with every figure printed in the token's own
- * smallest-unit scale (not the 4-digit display rounding used on screen).
+ * Download one receipt as a standalone HTML file in the browser.
  *
- * Built as a string rather than fetched: payment history comes from the
- * indexer and the download must keep working offline once the row is on
- * screen. Values are escaped, and the file has no scripts or external assets,
- * so it can be kept or printed as-is.
+ * The HTML template is imported on demand: the receipt route only pays for it
+ * when the user actually downloads, not on first paint.
  */
 export function buildReceiptHtml(receipt: ReceiptData): string {
   const decimals = receipt.tokenMeta.decimals;
@@ -311,8 +310,8 @@ export function buildReceiptHtml(receipt: ReceiptData): string {
   dt { color: #52606f; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
   dd { margin: 2px 0 0; overflow-wrap: anywhere; }
   table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-  th, td { text-align: left; padding: 10px 0; border-bottom: 1px solid #e6ebf1; }
-  th:last-child, td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+  th, td { text-align: start; padding: 10px 0; border-bottom: 1px solid #e6ebf1; }
+  th:last-child, td:last-child { text-align: end; font-variant-numeric: tabular-nums; }
   tfoot th, tfoot td { border-bottom: 0; border-top: 2px solid #d3dce7; font-weight: 700; font-size: 16px; }
   footer { border-top: 1px solid #d3dce7; margin-top: 24px; padding-top: 16px; font-size: 12px; color: #52606f; overflow-wrap: anywhere; }
   a { color: #067647; }
@@ -360,6 +359,8 @@ export function buildReceiptHtml(receipt: ReceiptData): string {
 
 /** Download one receipt as a standalone HTML file in the browser. */
 export function downloadReceipt(receipt: ReceiptData): void {
+export async function downloadReceipt(receipt: ReceiptData): Promise<void> {
+  const { buildReceiptHtml } = await import("./receipt-html");
   const blob = new Blob([buildReceiptHtml(receipt)], {
     type: "text/html;charset=utf-8",
   });

@@ -6,7 +6,9 @@ export type PlanSortOption =
   | "price_asc"
   | "price_desc"
   | "period_asc"
-  | "period_desc";
+  | "period_desc"
+  | "popularity_asc"
+  | "popularity_desc";
 
 export type PlanPeriodOption =
   | "all"
@@ -38,6 +40,17 @@ export function planMatchesQuery(
   if (needle === "") return true;
   const name = planDisplayName(plan).toLowerCase();
   return name.includes(needle) || `#${plan.id}`.includes(needle);
+}
+
+/**
+ * Open subscribers on a plan, used for popularity ordering.
+ *
+ * `subscriber_count` is the indexer's open-mandate count (active and paused).
+ * Contract-only listings do not carry it, so a plan without a reported count
+ * sorts as zero instead of being dropped from the catalogue.
+ */
+function planSubscriberCount(plan: ApiPlan): number {
+  return countOpenMandates(plan.id, null, plan.subscriber_count);
 }
 
 /**
@@ -114,6 +127,14 @@ export function filterAndSortPlans(
       }
       case "period_desc": {
         const diff = b.period - a.period;
+        return diff !== 0 ? diff : b.id - a.id;
+      }
+      case "popularity_asc": {
+        const diff = planSubscriberCount(a) - planSubscriberCount(b);
+        return diff !== 0 ? diff : b.id - a.id;
+      }
+      case "popularity_desc": {
+        const diff = planSubscriberCount(b) - planSubscriberCount(a);
         return diff !== 0 ? diff : b.id - a.id;
       }
       case "oldest":

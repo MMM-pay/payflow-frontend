@@ -23,6 +23,12 @@ const PAGES = [
   { name: "subscribe", path: "/subscribe/" },
 ];
 
+const THEME_PAGES = [
+  { name: "subscribe", path: "/subscribe/" },
+  { name: "merchant", path: "/merchant/" },
+  { name: "account", path: "/account/" },
+];
+
 for (const { name, path } of PAGES) {
   test.describe(name, () => {
     test.beforeEach(async ({ page }) => {
@@ -40,5 +46,25 @@ for (const { name, path } of PAGES) {
       // environments where font metrics shift document height.
       await expect(page).toHaveScreenshot(`${name}.png`);
     });
+  });
+}
+
+for (const { name, path } of THEME_PAGES) {
+  test.describe(`${name} themes`, () => {
+    test.beforeEach(async ({ page }) => {
+      await installMockRpc(page);
+    });
+
+    for (const theme of ["light", "dark"] as const) {
+      test(`${name} matches ${theme} baseline`, async ({ page }) => {
+        await page.addInitScript((t) => {
+          window.localStorage.setItem("payflow-theme", t);
+          document.documentElement.dataset.theme = t;
+        }, theme);
+        await page.goto(path, { waitUntil: "networkidle" });
+        await expect(page.getByRole("main")).toBeVisible();
+        await expect(page).toHaveScreenshot(`${name}-${theme}.png`);
+      });
+    }
   });
 }

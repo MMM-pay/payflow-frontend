@@ -1,6 +1,6 @@
 ﻿// @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Activity } from "@/components/Activity";
 import { useStream } from "@/lib/stream";
 
@@ -75,6 +75,9 @@ function event(
   };
 }
 
+const chargedOneUsdc = (_content: string, element: Element | null) =>
+  element?.textContent === "Charged 1 USDC";
+
 beforeEach(() => {
   window.localStorage.clear();
   wallet.address = "G-A";
@@ -126,7 +129,7 @@ describe("Activity", () => {
     apiMock.mandatesFor.mockResolvedValue({ mandates: [mandate(2)] });
     render(<Activity />);
 
-    expect(await screen.findByText("Charged 1 USDC")).toBeTruthy();
+    expect(await screen.findByText(chargedOneUsdc)).toBeTruthy();
     expect(screen.getByText(/Some activity could not be loaded/)).toBeTruthy();
   });
 
@@ -141,7 +144,7 @@ describe("Activity", () => {
     }));
     render(<Activity />);
 
-    expect((await screen.findAllByText("Charged 1 USDC")).length).toBe(2);
+    expect((await screen.findAllByText(chargedOneUsdc)).length).toBe(2);
     expect(screen.getAllByText("Payment charged")).toHaveLength(2);
     expect(apiMock.timeline).toHaveBeenCalledTimes(2);
     expect(screen.getAllByText("New")).toHaveLength(4);
@@ -153,7 +156,7 @@ describe("Activity", () => {
     }));
     render(<Activity />);
 
-    expect((await screen.findAllByText("Charged 1 USDC")).length).toBe(2);
+    expect((await screen.findAllByText(chargedOneUsdc)).length).toBe(2);
   });
 
   it("uses raw units without labelling an event as XLM when token metadata is absent", async () => {
@@ -175,7 +178,7 @@ describe("Activity", () => {
     render(<Activity />);
 
     expect(await screen.findByText(/Some activity could not be loaded/)).toBeTruthy();
-    expect(screen.getByText("Charged 1 USDC")).toBeTruthy();
+    expect(screen.getByText(chargedOneUsdc)).toBeTruthy();
   });
 
   it("shows an unavailable state when every timeline fails", async () => {

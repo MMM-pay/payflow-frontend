@@ -37,6 +37,11 @@ const env = {
   NEXT_PUBLIC_DISABLE_CSP: "1",
   // Compiles the keypair-backed wallet module the suite connects through.
   NEXT_PUBLIC_E2E_WALLET: "1",
+  // The exported CSP hashes its own hash list inside Next's serialized flight
+  // payload, so the hash of that payload no longer matches and hydration is
+  // blocked. This job proves the contract/wallet flow, not the CSP, so use the
+  // same opt-out as the visual build and keep the browser able to boot the app.
+  NEXT_PUBLIC_DISABLE_CSP: "1",
 };
 
 const shell = process.argv.includes("--shell");

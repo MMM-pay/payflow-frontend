@@ -1,5 +1,7 @@
 "use client";
 
+import { GracePeriodBadge } from "@/components/GracePeriodBadge";
+import { InfoTip } from "@/components/Tooltip";
 import { useI18n } from "@/i18n/provider";
 
 import { lazy, Suspense, startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -88,10 +90,12 @@ import { loadTokenMeta, metaFor, useTokenMetas } from "@/lib/token";
 import { VirtualList } from "@/components/VirtualList";
 import { cursorPage, TABLE_PAGE_SIZE } from "@/lib/pagination";
 import { AmountInput } from "@/components/AmountInput";
-import { ConfirmDialog, confirmTitle } from "@/components/ConfirmDialog";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { confirmTitle } from "@/lib/confirm-title";
 import { observeContractRecord } from "@/lib/contract-compat";
 import { ContractVersionNotice } from "@/components/ContractVersionNotice";
 import { SyncLagIndicator } from "@/components/SyncLagIndicator";
+import { StaleDataNotice } from "@/components/StaleDataNotice";
 import { Money } from "@/components/Money";
 import { NotificationCentre } from "@/components/NotificationCentre";
 import { evaluateSubscriberNotifications } from "@/lib/notifications";
@@ -99,6 +103,7 @@ import { LoadingButton } from "@/components/LoadingButton";
 import {
   Badge,
   Empty,
+  InlineError,
   MerchantAccount,
   Notice,
   Panel,
@@ -162,7 +167,7 @@ function PaymentHistoryPanel({
       // RPC history is finite; the receipt still downloads with its ledger
       // and a dash for the date rather than inventing one.
     }
-    downloadReceipt(receipt);
+    void downloadReceipt(receipt);
     setBusyHash(null);
   }
 
@@ -298,6 +303,9 @@ function AccountInner() {
   const [pauseError, setPauseError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  // When the projections on this page were last received, for staleness.
+  const [lastLoadedAt, setLastLoadedAt] = useState<number | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [capFor, setCapFor] = useState<number | null>(null);
   const [capAmount, setCapAmount] = useState("");
   const [capError, setCapError] = useState<string | null>(null);
@@ -390,6 +398,7 @@ function AccountInner() {
   const load = useCallback(async () => {
     addressRef.current = viewAddress;
     if (!viewAddress) return;
+    setRefreshing(true);
     const who = viewAddress;
     const [bal, res, hist] = await Promise.allSettled([
       payflow.vaultBalance(source, who, config.contracts.token),
@@ -452,6 +461,10 @@ function AccountInner() {
         setMissingTrustlines(missing);
       }
     }
+    if (addressRef.current === who) {
+      setLastLoadedAt(Date.now());
+      setRefreshing(false);
+    }
   }, [viewAddress, source, configuredTokens]);
 
   // SSE stream for live updates (payflow-backend#19)
@@ -502,6 +515,8 @@ function AccountInner() {
       setError(null);
       setDone(null);
       setExporting(false);
+      setLastLoadedAt(null);
+      setRefreshing(false);
     });
     void load();
   }, [load]);
@@ -864,13 +879,14 @@ function AccountInner() {
     try {
       setBusy(`trustline-${token.symbol}`);
       setError(null);
-      await payflow.addTrustline(
+      setDone(null);
+      const hash = await payflow.addTrustline(
         address,
         signXdr,
         token.classicAsset.code,
         token.classicAsset.issuer,
       );
-      setDone(`Added trustline for ${token.symbol}.`);
+      setDone(hash);
       await checkTrustlines();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -1277,13 +1293,13 @@ function AccountInner() {
         <Stat
           label={tr("Vault balance")}
           loading={balance === null}
-          value={formatAmount(balance ?? 0n, vaultMeta)}
+          value={<Money amount={balance ?? 0n} meta={vaultMeta} />}
           hint={tr("Available to be charged")}
         />
         <Stat
           label={tr("Committed to subscriptions")}
           loading={commitment === null}
-          value={formatAmount(commitment?.committed ?? 0n, vaultMeta)}
+          value={<Money amount={commitment?.committed ?? 0n} meta={vaultMeta} />}
           hint={
             commitment && commitment.shortfall > 0n
               ? tr("Short of the next charges by {0}", {
@@ -1295,7 +1311,7 @@ function AccountInner() {
         <Stat
           label={tr("Freely withdrawable")}
           loading={commitment === null}
-          value={formatAmount(commitment?.free ?? 0n, vaultMeta)}
+          value={<Money amount={commitment?.free ?? 0n} meta={vaultMeta} />}
           hint={tr("Balance left after those charges")}
         />
         <Stat
@@ -1339,6 +1355,12 @@ function AccountInner() {
 
       <ContractVersionNotice />
       <SyncLagIndicator />
+      <StaleDataNotice
+        fetchedAt={lastLoadedAt}
+        refreshing={refreshing}
+        onRefresh={() => { void load(); }}
+        className="mb-4"
+      />
       <NotificationCentre
         address={address}
         notifications={evaluateSubscriberNotifications({
@@ -1393,12 +1415,10 @@ function AccountInner() {
                 }
                 hideError={withdrawError !== null}
                 invalid={withdrawError !== null}
-                describedBy={withdrawError ? "withdraw-amount-error" : undefined}
+                {...(withdrawError ? { describedBy: "withdraw-amount-error" } : {})}
               />
               {withdrawError && (
-                <p id="withdraw-amount-error" role="alert" className="mt-1 text-sm text-danger">
-                  {translateMessage(withdrawError)}
-                </p>
+                <InlineError id="withdraw-amount-error">{withdrawError}</InlineError>
               )}
             </div>
             <button
@@ -1557,7 +1577,7 @@ function AccountInner() {
         subtitle={tr("Deposits, withdrawals and debits behind your balance.")}
       >
         {history === null ? (
-          <Empty>{tr("Loading history…")}</Empty>
+          <SkeletonRows rows={3} label={tr("Loading history")} />
         ) : history.length === 0 ? (
           indexerAvailable ? (
             <Empty
@@ -1586,7 +1606,7 @@ function AccountInner() {
                     <span className="mono text-xs text-muted">{tr("tx")}</span>
                     <TxLink hash={event.tx_hash} />
                   </div>
-                  <div className="text-right">
+                  <div className="text-end">
                     <Money
                       amount={isCredit ? event.amount : `-${event.amount}`}
                       meta={vaultMeta}
@@ -1746,9 +1766,7 @@ function AccountInner() {
                           {resumes && (
                             <span className="text-xs text-muted">{tr("resumes")}{" "}{resumes}</span>
                           )}
-                          {pastDueUntil && (
-                            <span className="text-xs text-muted">{tr("grace period ends")}{" "}{formatDate(pastDueUntil)}</span>
-                          )}
+                          {isPastDue && <GracePeriodBadge until={pastDueUntil} />}
                           {trial && (
                             <span className="rounded-full bg-accent/15 px-2 py-0.5 text-xs font-medium text-accent">{tr("Free trial")}</span>
                           )}
@@ -1773,15 +1791,15 @@ function AccountInner() {
                           {discounted !== null ? (
                             <>
                               <span className="font-medium text-fg">
-                                {formatTokenValue(discounted, 4, meta.decimals)} {meta.symbol}
+                                <Money amount={discounted} meta={meta} digits={4} />
                               </span>{" "}
                               <span className="text-xs line-through">
-                                {formatTokenValue(m.amount, 4, meta.decimals)} {meta.symbol}
+                                <Money amount={m.amount} meta={meta} digits={4} />
                               </span>{" "}
                             </>
                           ) : (
                             <>
-                              {formatTokenValue(m.amount, 4, meta.decimals)} {meta.symbol}{" "}
+                              <Money amount={m.amount} meta={meta} digits={4} />{" "}
                             </>
                           )}
                           {formatPeriod(m.period)}{" "}{tr("· to")}{" "}<MerchantAccount value={m.merchant} />
@@ -1789,8 +1807,7 @@ function AccountInner() {
                         {badge && (
                           <div className="mt-1 text-xs text-accent">
                             {discounted !== null ? (
-                              <>{tr("You pay")}{" "}{formatTokenValue(discounted, 4, meta.decimals)}{" "}
-                                {meta.symbol}{" "}{tr("for the next charge")}{remaining === null
+                              <>{tr("You pay")}{" "}<Money amount={discounted} meta={meta} digits={4} />{" "}{tr("for the next charge")}{remaining === null
                                   ? "."
                                   : remaining === 1
                                     ?tr(", then the full price.")
@@ -1835,7 +1852,7 @@ function AccountInner() {
                             <div className="flex flex-wrap items-center justify-between gap-3">
                               <div>
                                 <p className="font-medium">{tr("This subscription is past due — your vault is short by")}{" "}
-                                  {formatAmount(pastDueShortfall, meta)}{" "}{tr("for the next charge.")}</p>
+                                  <Money amount={pastDueShortfall} meta={meta} />{" "}{tr("for the next charge.")}</p>
                                 {pastDueUntil && (
                                   <p className="mt-1 text-xs text-muted">{tr("The grace period ends")}{" "}{formatDate(pastDueUntil)}{tr(". After that, the mandate may expire if the charge cannot be settled.")}</p>
                                 )}
@@ -1947,6 +1964,25 @@ function AccountInner() {
                               Transfer…
                             </button>
                           ))}
+                        {nextAmount !== undefined && !isPastDue && (
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            disabled={busy !== null || networkMismatch || shortfall !== null}
+                            onClick={() =>
+                              void run(`deposit-quick-${m.id}`, () =>
+                                payflow.deposit(
+                                  address!,
+                                  signXdr,
+                                  config.contracts.token,
+                                  nextAmount!,
+                                ),
+                              )
+                            }
+                          >
+                            {tr("Top up")}
+                          </button>
+                        )}
                         {/* Offered only against a contract that carries
                             pause_until; see `pauseSupported`. */}
                         {pauseSupported &&
@@ -2142,13 +2178,18 @@ function AccountInner() {
                   </div>
                   {capFor === m.id && (
                     <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-edge pt-3">
-                      <div className="w-full sm:w-auto sm:min-w-[10rem] sm:flex-1">
-                        <label
-                          htmlFor={`cap-${m.id}`}
-                          className="block text-xs text-muted"
-                        >
-                          Max charges (0 = unlimited)
-                        </label>
+                      <div className="min-w-[10rem] flex-1">
+                        <div className="flex items-center gap-1">
+                          <label
+                            htmlFor={`cap-${m.id}`}
+                            className="block text-xs text-muted"
+                          >
+                            Max charges (0 = unlimited)
+                          </label>
+                          <InfoTip label={tr("About the charge cap")}>
+                            {tr("The mandate ends by itself once this many charges have been made. It cannot be set below the charges already made.")}
+                          </InfoTip>
+                        </div>
                         <input
                           id={`cap-${m.id}`}
                           type="text"
@@ -2199,7 +2240,7 @@ function AccountInner() {
                         <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
                           <h3 id={`schedule-${m.id}`} className="text-sm font-medium">{tr("Upcoming charges")}</h3>
                           <span className="text-xs text-muted">{tr("Next")}{" "}{formatNumber(schedule.charges.length)}{" "}{tr("total")}{" "}
-                            {formatAmount(schedule.total, meta)}
+                            <Money amount={schedule.total} meta={meta} />
                           </span>
                         </div>
                         <ol className="mt-2 space-y-1.5">
@@ -2208,14 +2249,11 @@ function AccountInner() {
                               key={charge.due}
                               className="flex items-baseline justify-between gap-3 text-sm"
                             >
-                              <time
-                                dateTime={new Date(charge.due * 1000).toISOString()}
-                                className="text-muted"
-                              >
-                                {formatDate(charge.due)}
-                              </time>
+                              <span className="text-muted">
+                                <TimeAgo value={charge.due} />
+                              </span>
                               <span className="tabular-nums">
-                                {formatAmount(charge.amount, meta)}
+                                <Money amount={charge.amount} meta={meta} />
                               </span>
                             </li>
                           ))}
@@ -2223,18 +2261,18 @@ function AccountInner() {
                         <div className="mt-2 flex flex-wrap justify-between gap-2 text-xs text-muted">
                           <span>{tr("Running total")}{" "}
                             <strong className="font-medium text-fg">
-                              {formatAmount(schedule.total, meta)}
+                              <Money amount={schedule.total} meta={meta} />
                             </strong>
                           </span>
                           {schedule.finalDate !== null && (
-                            <span>{tr("Final charge")}{" "}{formatDate(schedule.finalDate)}</span>
+                            <span>{tr("Final charge")}{" "}<TimeAgo value={schedule.finalDate} /></span>
                           )}
                         </div>
                         {shortfall !== null && (
                           <p
                             role="status"
                             className="mt-2 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger"
-                          >{tr("Your vault is short by")}{" "}{formatAmount(shortfall, meta)}{" "}{tr("for the next charge. Deposit before")}{" "}{formatDate(m.next_charge)}{" "}{tr("or it will fail.")}</p>
+                          >{tr("Your vault is short by")}{" "}<Money amount={shortfall} meta={meta} />{" "}{tr("for the next charge. Deposit before")}{" "}{formatDate(m.next_charge)}{" "}{tr("or it will fail.")}</p>
                         )}
                       </section>
                     )}
