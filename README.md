@@ -94,6 +94,13 @@ GitHub Pages deployment under `/payflow-frontend` is supported. It requests
 project ID or a custom network outside Testnet/Public omits the bridge while
 leaving default wallets available. No backend is required.
 
+The selected wallet ID and public account address are remembered in browser
+storage. Returning users must explicitly choose **Reconnect**; the app does not
+request wallet access or show a wallet prompt on page load. The shared app
+layout also shows a dismissible, per-network unaudited/testnet warning. Wallet
+network identity is checked before signing, and signing is blocked when the
+network is mismatched or cannot be verified.
+
 Automated mocked connection/signing checks cover **xBull, Albedo, Lobstr and
 Hana**, plus registration, optional-bridge configuration, sign-only permissions,
 and static-site metadata. These verify application delegation, not real wallet
