@@ -390,7 +390,7 @@ async function get<T>(
   try {
     const res = await fetch(`${config.apiUrl}${path}`, {
       cache: "no-store",
-      headers: options?.headers,
+      ...(options?.headers !== undefined ? { headers: options.headers } : {}),
     });
     if (!res.ok) return null;
     const data = (await res.json()) as T;
@@ -503,7 +503,7 @@ async function del(path: string, options?: { headers?: Record<string, string> })
     const res = await fetch(`${config.apiUrl}${path}`, {
       method: "DELETE",
       cache: "no-store",
-      headers: options?.headers,
+      ...(options?.headers !== undefined ? { headers: options.headers } : {}),
     });
     return res.ok;
   } catch {
@@ -538,8 +538,20 @@ export const api = {
     get<{ plans: ApiPlan[] }>(`/api/plans${merchant ? `?merchant=${merchant}` : ""}`),
   mandatesOf: (subscriber: string) =>
     get<{ mandates: ApiMandate[] }>(`/api/mandates?subscriber=${subscriber}`),
-  mandatesFor: (merchant: string) =>
-    get<{ mandates: ApiMandate[] }>(`/api/mandates?merchant=${merchant}`),
+  /**
+   * A merchant's mandates. `offset`/`limit` ask the indexer to page the list;
+   * a backend that ignores them returns everything, which the caller still
+   * handles (it dedupes by id and stops once a page is short).
+   */
+  mandatesFor: (
+    merchant: string,
+    page: { offset?: number; limit?: number } = {},
+  ) => {
+    const query = new URLSearchParams({ merchant });
+    if (page.offset !== undefined) query.set("offset", String(page.offset));
+    if (page.limit !== undefined) query.set("limit", String(page.limit));
+    return get<{ mandates: ApiMandate[] }>(`/api/mandates?${query.toString()}`);
+  },
   charges: (mandateId: number) =>
     get<{ charges: ApiCharge[] }>(`/api/mandates/${mandateId}/charges`),
   timeline,
@@ -634,7 +646,7 @@ export const api = {
       const response = await fetch(`${config.apiUrl}/api/webhooks/${encodeURIComponent(id)}/deliveries`, {
         cache: "no-store",
         redirect: "error",
-        signal,
+        ...(signal !== undefined ? { signal } : {}),
         headers: {
           "X-Payflow-Merchant": proof.merchant,
           "X-Payflow-Timestamp": String(proof.timestamp),

@@ -1,11 +1,14 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { Money, parseMoneyValue } from "@/components/Money";
 import { I18nProvider } from "@/i18n/provider";
 import { XLM, type TokenMeta } from "@/lib/format";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  window.localStorage.removeItem("payflow.locale");
+});
 
 const USDC: TokenMeta = { symbol: "USDC", decimals: 6 };
 
@@ -58,6 +61,8 @@ describe("parseMoneyValue", () => {
     expect(parseMoneyValue("abc").valid).toBe(false);
     expect(parseMoneyValue("12.34.56").valid).toBe(false);
     expect(parseMoneyValue(Number.NaN).valid).toBe(false);
+    expect(parseMoneyValue(1.5).valid).toBe(false);
+    expect(parseMoneyValue(Number.MAX_SAFE_INTEGER + 1).valid).toBe(false);
   });
 });
 
@@ -175,6 +180,27 @@ describe("Money component", () => {
       renderWithI18n(<Money amount={1500000n} meta={USDC} />);
       const el = screen.getByTestId("money-amount");
       expect(el.textContent).toBe("1.5 USDC");
+    });
+
+    it("preserves the token's full precision unless a display limit is requested", () => {
+      const { rerender } = renderWithI18n(<Money amount={12399999n} meta={XLM} />);
+      expect(screen.getByTestId("money-amount").textContent).toBe("1.2399999 XLM");
+
+      rerender(
+        <I18nProvider>
+          <Money amount={12399999n} meta={XLM} digits={2} />
+        </I18nProvider>,
+      );
+      expect(screen.getByTestId("money-amount").textContent).toBe("1.23 XLM");
+    });
+
+    it("localizes the decimal separator and grouping for French", async () => {
+      window.localStorage.setItem("payflow.locale", "fr");
+      renderWithI18n(<Money amount={12345678000n} meta={XLM} />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("money-amount").textContent).toBe("1 234,5678 XLM");
+      });
     });
 
     it("can hide symbol when showSymbol is false", () => {

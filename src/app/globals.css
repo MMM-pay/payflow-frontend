@@ -28,6 +28,18 @@
   --info: 3 105 161;
   --danger-solid: 190 30 45;
   --danger-solid-hover: 220 38 38;
+  /*
+   * Categorical chart palette. Every entry keeps at least 3:1 non-text
+   * contrast against `--panel` in its theme, so a line or cell remains
+   * distinguishable without relying on hue alone. Charts reference these
+   * tokens instead of hardcoded colours so a manual theme switch repaints
+   * them, not only the OS preference.
+   */
+  --chart-1: 6 118 71;
+  --chart-2: 3 105 161;
+  --chart-3: 146 64 14;
+  --chart-4: 180 35 24;
+  --chart-5: 82 94 111;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -43,6 +55,11 @@
     --danger: 253 164 175;
     --warn: 252 211 77;
     --info: 125 211 252;
+    --chart-1: 61 220 151;
+    --chart-2: 125 211 252;
+    --chart-3: 252 211 77;
+    --chart-4: 253 164 175;
+    --chart-5: 151 163 180;
   }
 }
 
@@ -58,6 +75,11 @@
   --danger: 253 164 175;
   --warn: 252 211 77;
   --info: 125 211 252;
+  --chart-1: 61 220 151;
+  --chart-2: 125 211 252;
+  --chart-3: 252 211 77;
+  --chart-4: 253 164 175;
+  --chart-5: 151 163 180;
 }
 
 :root[data-theme="light"] {
@@ -106,7 +128,7 @@ body {
  * Chart libraries that animate via JS/SVG attributes also need their own
  * animation flag disabled; see the reduced-motion handling in chart components.
  */
-@media (prefers-reduced-motion: reduce) {
+@media (prefers-reduced-motion: reduce), (prefers-reduced-data: reduce) {
   *,
   *::before,
   *::after {

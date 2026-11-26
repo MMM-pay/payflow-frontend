@@ -5,6 +5,8 @@ import {
   ogImageUrl,
   PAGES,
   pageMetadata,
+  planOgImageName,
+  planPageMetadata,
   type PageDefinition,
 } from "@/lib/metadata";
 
@@ -63,6 +65,38 @@ describe("ogImageUrl", () => {
     expect(ogImageUrl(page(), "https://mmm-pay.github.io", "/payflow-frontend")).toBe(
       "https://mmm-pay.github.io/payflow-frontend/og/subscribe.png",
     );
+  });
+});
+
+describe("planOgImageName", () => {
+  it("names the image of a plan", () => {
+    expect(planOgImageName(12)).toBe("plan-12");
+    expect(planOgImageName(12n)).toBe("plan-12");
+    expect(planOgImageName(" 12 ")).toBe("plan-12");
+  });
+
+  it("falls back to the first plan for an invalid id", () => {
+    for (const raw of ["", "abc", "0", "-1", "1.5", "99999999999999999999"]) {
+      expect(planOgImageName(raw), raw).toBe("plan-1");
+    }
+  });
+});
+
+describe("planPageMetadata", () => {
+  it("points canonical and social URLs at the plan's own card", () => {
+    const meta = planPageMetadata("12");
+    expect(meta.title).toBe("Plan #12");
+    expect(meta.alternates?.canonical).toBe(absoluteUrl("/plans/12/"));
+    expect(meta.openGraph).toMatchObject({
+      title: "Plan #12",
+      url: absoluteUrl("/plans/12/"),
+      images: [{ url: absoluteUrl("/og/plan-12.png") }],
+    });
+    expect(meta.twitter?.images).toEqual([absoluteUrl("/og/plan-12.png")]);
+  });
+
+  it("keeps the description specific to the plan", () => {
+    expect(planPageMetadata(7).description).toContain("View plan #7");
   });
 });
 

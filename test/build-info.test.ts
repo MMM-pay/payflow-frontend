@@ -123,7 +123,6 @@ describe("build-info pure helpers", () => {
       const links = getProtocolContractLinks({
         planRegistry: "",
         vault: "   ",
-        subscription: undefined,
       });
 
       expect(links).toHaveLength(3);

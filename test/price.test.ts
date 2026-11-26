@@ -1,10 +1,12 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest";
+import { rpc } from "@stellar/stellar-sdk";
 import {
   formatUsdEstimate,
   formatUsdcEstimate,
   getReflectorOracleId,
   REFLECTOR_TESTNET_ORACLE,
   clearPriceCache,
+  getRpcClient,
 } from "@/lib/price";
 
 describe("formatUsdEstimate", () => {
@@ -63,5 +65,20 @@ describe("getReflectorOracleId", () => {
     const id = getReflectorOracleId();
     expect(id).toBe(REFLECTOR_TESTNET_ORACLE);
     expect(id).toMatch(/^C[A-Z0-9]{55}$/);
+  });
+});
+
+describe("RPC client reuse", () => {
+  it("reuses a client for the same endpoint and replaces it when configuration changes", () => {
+    clearPriceCache();
+    const create = vi.fn((url: string) => new rpc.Server(url));
+    const first = getRpcClient("https://rpc-one.example", create);
+
+    expect(getRpcClient("https://rpc-one.example", create)).toBe(first);
+    expect(create).toHaveBeenCalledTimes(1);
+
+    const second = getRpcClient("https://rpc-two.example", create);
+    expect(second).not.toBe(first);
+    expect(create).toHaveBeenCalledTimes(2);
   });
 });

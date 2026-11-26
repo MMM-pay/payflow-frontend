@@ -32,6 +32,9 @@ const env = {
   NEXT_PUBLIC_READ_SOURCE: contracts.accounts.admin.publicKey,
   NEXT_PUBLIC_SITE_URL: "http://127.0.0.1:4174",
   NEXT_PUBLIC_API_URL: "",
+  // The test export needs its inline boot scripts to run without hashes: the
+  // RSC flight payload embeds the policy and would have to hash itself.
+  NEXT_PUBLIC_DISABLE_CSP: "1",
   // Compiles the keypair-backed wallet module the suite connects through.
   NEXT_PUBLIC_E2E_WALLET: "1",
 };

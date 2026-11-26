@@ -49,12 +49,15 @@ const payflowMock = vi.hoisted(() => ({
   endMandate: vi.fn(),
 }));
 const chainMock = vi.hoisted(() => ({
+  MERCHANT_MANDATE_PAGE_SIZE: 50,
   chainPlans: vi.fn(),
   chainMandatesFor: vi.fn(),
+  chainMerchantMandatesPage: vi.fn(async () => ({ rows: [], total: 0 })),
   chainMerchantSummary: vi.fn(),
   chainPlansOf: vi.fn(),
   chainPlanSubscriberCount: vi.fn(),
   endable: vi.fn(() => false),
+  mandateFunding: vi.fn(() => ({ status: "funded", shortfall: 0n })),
 }));
 
 vi.mock("@/lib/wallet", () => ({ useWallet: () => wallet }));

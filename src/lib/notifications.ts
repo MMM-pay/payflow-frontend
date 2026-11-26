@@ -176,7 +176,7 @@ export function evaluateMerchantNotifications(params: {
         title: `Failed charge: Mandate #${unpaid.mandate.id}`,
         message: `Subscriber balance short by ${shortfallFormatted}. Mandate is overdue for settlement.`,
         actionLabel: "View subscriber",
-        onAction: onSelectUnpaidTab,
+        ...(onSelectUnpaidTab ? { onAction: onSelectUnpaidTab } : {}),
       });
     }
   }

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { config } from "./config";
+import { useReducedData } from "./useReducedData";
 
 /**
  * Merchant display names, read from what the merchant itself publishes.
@@ -147,15 +148,17 @@ export async function loadOrgName(
 /**
  * `loadOrgName` for components. Returns the cached name immediately when the
  * address has been resolved before, then upgrades to `null` or the name.
+ * Skips automatic network lookups when the user signals reduced-data.
  */
 export function useOrgName(address: string | null | undefined): string | null {
+  const reducedData = useReducedData();
   const [name, setName] = useState<string | null>(
     () => (address && cache.get(address)) || null,
   );
 
   useEffect(() => {
-    if (!address) {
-      setName(null);
+    if (!address || reducedData) {
+      if (!address) setName(null);
       return;
     }
     let live = true;
@@ -165,7 +168,7 @@ export function useOrgName(address: string | null | undefined): string | null {
     return () => {
       live = false;
     };
-  }, [address]);
+  }, [address, reducedData]);
 
   return name;
 }

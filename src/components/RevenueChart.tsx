@@ -1,11 +1,13 @@
 "use client";
 
 import { useI18n } from "@/i18n/provider";
+import { useReducedData } from "@/lib/useReducedData";
 import { useReducedMotion } from "@/lib/useReducedMotion";
 
-import { useId, useMemo } from "react";
+import { useId, useMemo, useState } from "react";
 import type { TokenMeta } from "@/lib/format";
 import { scaleSeries, toPolyline, totalNet, type BucketSize, type RevenuePoint } from "@/lib/revenue";
+import { Money } from "@/components/Money";
 
 /**
  * Net revenue over time, drawn with plain SVG.
@@ -41,11 +43,17 @@ export function RevenueChart({
   const { formatAmount, t: tr, describeSeries, formatBucketLabel, bucketTitle } = useI18n();
   const tableId = useId();
   const reducedMotion = useReducedMotion();
+  const reducedData = useReducedData();
+  const [showVisual, setShowVisual] = useState(false);
+  const deferVisual = reducedData && !showVisual;
   const scaled = useMemo(
-    () => scaleSeries(points, WIDTH, HEIGHT, PADDING),
-    [points],
+    () => (deferVisual ? [] : scaleSeries(points, WIDTH, HEIGHT, PADDING)),
+    [points, deferVisual],
   );
-  const render = useMemo(() => (value: bigint) => formatAmount(value, meta), [meta, formatAmount]);
+  const render = useMemo(
+    () => (value: bigint) => formatAmount(value, meta, meta.decimals),
+    [meta, formatAmount],
+  );
   const summary = describeSeries(points, size, render);
   const allZero = points.length > 0 && totalNet(points) === 0n;
 
@@ -55,43 +63,63 @@ export function RevenueChart({
 
   return (
     <div className="space-y-3">
-      <svg
-        viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-        className={`h-44 w-full ${reducedMotion ? "transition-none" : ""}`}
-        preserveAspectRatio="none"
-        role="img"
-        aria-label={summary}
-      >
-        <line
-          x1={0}
-          x2={WIDTH}
-          y1={HEIGHT - PADDING}
-          y2={HEIGHT - PADDING}
-          className="stroke-edge"
-          strokeWidth={1}
-          vectorEffect="non-scaling-stroke"
-        />
-        {scaled.length > 0 && (
-          <polyline
-            points={toPolyline(scaled)}
-            fill="none"
-            className={`stroke-accent ${reducedMotion ? "transition-none" : "transition-[stroke] duration-200"}`}
-            strokeWidth={2}
-            strokeLinejoin="round"
-            strokeLinecap="round"
-            vectorEffect="non-scaling-stroke"
-          />
-        )}
-      </svg>
-
-      {scaled.length > 0 && (
-        <div className="flex justify-between text-xs text-muted" aria-hidden="true">
-          {points.map((p, i) =>
-            i % labelStride === 0 || i === points.length - 1 ? (
-              <span key={p.start}>{formatBucketLabel(p.start)}</span>
-            ) : null,
-          )}
+      {deferVisual ? (
+        <div
+          role="region"
+          aria-label={summary}
+          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-edge bg-fg/5 p-3 text-xs text-muted"
+        >
+          <span>{tr("Chart graphic paused to save data. The summary and table below remain available.")}</span>
+          <button
+            type="button"
+            className="btn-ghost text-xs"
+            aria-expanded={showVisual}
+            onClick={() => setShowVisual(true)}
+          >
+            {tr("Show chart")}
+          </button>
         </div>
+      ) : (
+        <>
+          <svg
+            viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+            className={`h-44 w-full ${reducedMotion ? "transition-none" : ""}`}
+            preserveAspectRatio="none"
+            role="img"
+            aria-label={summary}
+          >
+            <line
+              x1={0}
+              x2={WIDTH}
+              y1={HEIGHT - PADDING}
+              y2={HEIGHT - PADDING}
+              className="stroke-edge"
+              strokeWidth={1}
+              vectorEffect="non-scaling-stroke"
+            />
+            {scaled.length > 0 && (
+              <polyline
+                points={toPolyline(scaled)}
+                fill="none"
+                className={`stroke-accent ${reducedMotion ? "transition-none" : "transition-[stroke] duration-200"}`}
+                strokeWidth={2}
+                strokeLinejoin="round"
+                strokeLinecap="round"
+                vectorEffect="non-scaling-stroke"
+              />
+            )}
+          </svg>
+
+          {scaled.length > 0 && (
+            <div className="flex justify-between text-xs text-muted" aria-hidden="true">
+              {points.map((p, i) =>
+                i % labelStride === 0 || i === points.length - 1 ? (
+                  <span key={p.start}>{formatBucketLabel(p.start)}</span>
+                ) : null,
+              )}
+            </div>
+          )}
+        </>
       )}
 
       {allZero && (
@@ -119,9 +147,9 @@ export function RevenueChart({
                   <th scope="row" className="py-1.5 pr-3 font-normal" title={bucketTitle(p.start, size)}>
                     {formatBucketLabel(p.start)}
                   </th>
-                  <td className="py-1.5 pr-3 text-right">{render(p.gross)}</td>
-                  <td className="py-1.5 pr-3 text-right text-muted">{render(p.fee)}</td>
-                  <td className="py-1.5 text-right">{render(p.net)}</td>
+                  <td className="py-1.5 pr-3 text-right"><Money amount={p.gross} meta={meta} /></td>
+                  <td className="py-1.5 pr-3 text-right text-muted"><Money amount={p.fee} meta={meta} /></td>
+                  <td className="py-1.5 text-right"><Money amount={p.net} meta={meta} /></td>
                 </tr>
               ))}
             </tbody>
@@ -129,7 +157,7 @@ export function RevenueChart({
               <tr className="border-t border-edge font-medium">
                 <th scope="row" className="py-1.5 pr-3 text-left font-medium">{tr("Total")}</th>
                 <td className="sr-only" colSpan={2} />
-                <td className="py-1.5 text-right">{render(totalNet(points))}</td>
+                <td className="py-1.5 text-right"><Money amount={totalNet(points)} meta={meta} /></td>
               </tr>
             </tfoot>
           </table>

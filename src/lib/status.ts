@@ -37,6 +37,10 @@ export interface IndexerCheck {
   cursor: number | null;
   network: string | null;
   paused: boolean | null;
+  /** Seconds since the indexer last advanced, per the backend. */
+  freshnessSeconds: number | null;
+  /** The last indexing error the backend recorded, if any. */
+  lastError: string | null;
   error: string | null;
 }
 
@@ -97,6 +101,8 @@ export function indexerCheckFrom(body: ApiHealth | null, configured: boolean): I
       cursor: null,
       network: null,
       paused: null,
+      freshnessSeconds: null,
+      lastError: null,
       error: null,
     };
   }
@@ -108,6 +114,8 @@ export function indexerCheckFrom(body: ApiHealth | null, configured: boolean): I
       cursor: null,
       network: null,
       paused: null,
+      freshnessSeconds: null,
+      lastError: null,
       error: "The backend did not answer /health.",
     };
   }
@@ -125,6 +133,13 @@ export function indexerCheckFrom(body: ApiHealth | null, configured: boolean): I
     cursor: indexer?.cursor ?? null,
     network: body.network ?? null,
     paused: indexer?.paused ?? null,
+    freshnessSeconds:
+      typeof indexer?.freshnessSeconds === "number" && Number.isFinite(indexer.freshnessSeconds)
+        ? indexer.freshnessSeconds
+        : null,
+    lastError: typeof indexer?.lastError === "string" && indexer.lastError.trim()
+      ? indexer.lastError
+      : null,
     error: null,
   };
 }
@@ -193,6 +208,8 @@ export async function checkIndexer(): Promise<IndexerCheck> {
       cursor: null,
       network: null,
       paused: null,
+      freshnessSeconds: null,
+      lastError: null,
       error: usefulMessage(err) ?? "The backend did not answer /health.",
     };
   }
