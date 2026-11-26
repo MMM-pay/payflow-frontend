@@ -5,27 +5,81 @@ import { useI18n } from "@/i18n/provider";
 import { useWallet } from "@/lib/wallet";
 import { config } from "@/lib/config";
 import { fromStroops, shortAddress, spendableBalance } from "@/lib/format";
-import { Money } from "@/components/Money";
 
 /**
  * The header's wallet control: the connected address, what it can spend, and a
  * way out of the dead end a brand new testnet account is in.
  */
 export function WalletButton() {
-  const { t: tr } = useI18n();
-  const { address, connecting, connect, disconnect, account, funding, fund } =
-    useWallet();
+  const { t: tr, translateMessage } = useI18n();
+  const {
+    address,
+    connecting,
+    reconnecting = false,
+    error,
+    reconnectError = null,
+    connect,
+    disconnect,
+    reconnect,
+    account,
+    funding,
+    fund,
+  } = useWallet();
 
   if (!address) {
+    if (!reconnecting && !reconnectError && !error) {
+      return (
+        <button
+          type="button"
+          onClick={() => void connect()}
+          disabled={connecting}
+          className="btn-primary"
+        >
+          {connecting ? tr("Connecting…") : tr("Connect wallet")}
+        </button>
+      );
+    }
     return (
-      <button
-        type="button"
-        onClick={() => void connect()}
-        disabled={connecting}
-        className="btn-primary"
-      >
-        {connecting ? tr("Connecting…") : tr("Connect wallet")}
-      </button>
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {reconnecting && (
+          <span
+            role="status"
+            aria-live="polite"
+            aria-busy="true"
+            className="inline-flex items-center gap-1.5 text-xs text-muted"
+          >
+            <span
+              className="h-2 w-2 rounded-full bg-warn motion-safe:animate-pulse"
+              aria-hidden="true"
+            />
+            {tr("Reconnecting…")}
+          </span>
+        )}
+        {!reconnecting && (reconnectError || error) && (
+          <span role="alert" className="text-xs text-danger" title={reconnectError ?? error ?? undefined}>
+            {translateMessage(reconnectError ?? error ?? "")}
+          </span>
+        )}
+        {!reconnecting && reconnectError && reconnect && (
+          <button
+            type="button"
+            onClick={() => void reconnect()}
+            className="btn-ghost text-xs"
+            aria-label={tr("Reconnect wallet session")}
+          >
+            {tr("Reconnect")}
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => void connect()}
+          disabled={connecting || reconnecting}
+          aria-busy={connecting || reconnecting || undefined}
+          className="btn-primary"
+        >
+          {connecting ? tr("Connecting…") : reconnecting ? tr("Reconnecting…") : tr("Connect wallet")}
+        </button>
+      </div>
     );
   }
 
@@ -34,7 +88,38 @@ export function WalletButton() {
     // address and one short control, and an overflowing cluster would push
     // the logo off the screen.
     <div className="flex flex-wrap items-center justify-end gap-2">
-      <BalanceLabel account={account} />
+      {reconnecting ? (
+        <span
+          role="status"
+          aria-live="polite"
+          aria-busy="true"
+          className="inline-flex items-center gap-1.5 text-xs text-muted"
+        >
+          <span
+            className="h-2 w-2 rounded-full bg-warn motion-safe:animate-pulse"
+            aria-hidden="true"
+          />
+          {tr("Reconnecting…")}
+        </span>
+      ) : reconnectError ? (
+        <>
+          <span role="alert" className="text-xs text-warn" title={reconnectError}>
+            {tr("Session needs reconnect")}
+          </span>
+          {reconnect && (
+            <button
+              type="button"
+              onClick={() => void reconnect()}
+              className="btn-ghost text-xs"
+              aria-label={tr("Reconnect wallet session")}
+            >
+              {tr("Reconnect")}
+            </button>
+          )}
+        </>
+      ) : (
+        account && <BalanceLabel account={account} />
+      )}
       <button
         type="button"
         onClick={() => void disconnect()}
@@ -45,24 +130,24 @@ export function WalletButton() {
         {shortAddress(address, 5)}
       </button>
       {/* Friendbot is a testnet faucet; off testnet there is nothing to offer. */}
-      {account.state === "missing" && config.friendbotUrl && (
+      {account?.state === "missing" && config.friendbotUrl && (
         <button
           type="button"
           onClick={() => void fund()}
           disabled={funding}
           className="btn-primary"
-          aria-label="Fund with Friendbot"
-          title="This account does not exist on testnet yet. Friendbot will create it and give it 10,000 test XLM."
+          aria-label={tr("Fund with Friendbot")}
+          title={tr("This account does not exist on testnet yet. Friendbot will create it and give it 10,000 test XLM.")}
         >
           {funding ? (
-            "Funding…"
+            tr("Funding…")
           ) : (
             <>
               <span aria-hidden="true" className="sm:hidden">
-                Fund
+                {tr("Fund")}
               </span>
               <span aria-hidden="true" className="hidden sm:inline">
-                Fund with Friendbot
+                {tr("Fund with Friendbot")}
               </span>
             </>
           )}
@@ -83,17 +168,18 @@ function BalanceLabel({
 }: {
   account: ReturnType<typeof useWallet>["account"];
 }) {
+  const { t: tr } = useI18n();
   if (account.state === "loading") {
     return (
       <span className="text-xs text-muted tabular-nums" aria-live="polite">
-        Reading balance…
+        {tr("Reading balance…")}
       </span>
     );
   }
   if (account.state === "error") {
     return (
-      <span className="text-xs text-amber-300" title={account.message}>
-        Balance unavailable
+      <span className="text-xs text-warn" title={account.message}>
+        {tr("Balance unavailable")}
       </span>
     );
   }
@@ -101,23 +187,35 @@ function BalanceLabel({
     // The Fund button next to this says the same thing, so the label is only
     // worth the width where there is room for both.
     return (
-      <span className="hidden text-xs text-amber-300 sm:inline" aria-hidden="true">
-        Account not funded
+      <span className="hidden text-xs text-warn sm:inline" aria-hidden="true">
+        {tr("Account not funded")}
       </span>
     );
   }
 
   const { balance, subentryCount } = account.account;
   const spendable = spendableBalance(balance, subentryCount);
+  const balanceTitle =
+    subentryCount === 1
+      ? tr("{0} XLM held, {1} XLM spendable after the {2} ledger entry this account keeps", {
+          "0": fromStroops(balance),
+          "1": fromStroops(spendable),
+          "2": subentryCount,
+        })
+      : tr("{0} XLM held, {1} XLM spendable after the {2} ledger entries this account keeps", {
+          "0": fromStroops(balance),
+          "1": fromStroops(spendable),
+          "2": subentryCount,
+        });
   return (
     <span
       className="whitespace-nowrap text-xs text-muted tabular-nums"
       // Announced so a screen-reader user hears the balance change after a
       // transaction without having to go looking for it.
       aria-live="polite"
-      title={`${fromStroops(balance)} XLM held, ${fromStroops(spendable)} XLM spendable after the ${subentryCount} ledger ${subentryCount === 1 ? "entry" : "entries"} this account keeps`}
+      title={balanceTitle}
     >
-      <Money amount={spendable} className="text-xs" />
+      {fromStroops(spendable)} {tr("XLM")}
     </span>
   );
 }

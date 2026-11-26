@@ -2,6 +2,7 @@
 
 import { useState, useSyncExternalStore } from "react";
 import { useI18n } from "@/i18n/provider";
+import { GuideCard } from "@/components/ui";
 
 const STORAGE_KEY = "payflow.subscriber-guide.seen";
 const GUIDE_CHANGE_EVENT = "payflow-subscriber-guide-change";
@@ -58,11 +59,12 @@ export function SubscriberGuide() {
   }
 
   return (
-    <section className="rounded-lg border border-edge bg-surface/50 p-4" aria-labelledby="subscriber-guide-title">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 id="subscriber-guide-title" className="text-base font-semibold">
-          {tr("How subscriptions work")}
-        </h2>
+    <GuideCard
+      titleId="subscriber-guide-title"
+      title={tr("How subscriptions work")}
+      radius="lg"
+      headerAlign="center"
+      action={
         <button
           type="button"
           className="btn-ghost"
@@ -72,7 +74,8 @@ export function SubscriberGuide() {
         >
           {open ? tr("Skip guide") : tr("Show guide")}
         </button>
-      </div>
+      }
+    >
       <ol id="subscriber-guide-steps" className="mt-4 grid gap-4 sm:grid-cols-3" hidden={!open}>
         {STEPS.map((step, index) => (
           <li key={step.title} className="flex gap-3">
@@ -86,6 +89,6 @@ export function SubscriberGuide() {
           </li>
         ))}
       </ol>
-    </section>
+    </GuideCard>
   );
 }

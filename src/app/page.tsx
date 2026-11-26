@@ -63,12 +63,12 @@ export default function HomePage() {
         <Stat
           label={tr("Plans")}
           value={loaded ? (stats?.plans ?? contractPlanCount ?? "—") : "…"}
-          hint={!stats && contractPlanCount !== null ?tr("from contract") : undefined}
+          {...(!stats && contractPlanCount !== null ? { hint: tr("from contract") } : {})}
         />
         <Stat
           label={tr("Mandates")}
           value={loaded ? (stats?.mandates ?? "—") : "…"}
-          hint={!stats ?tr("needs indexer") : undefined}
+          {...(!stats ? { hint: tr("needs indexer") } : {})}
         />
         <Stat
           label={tr("Active")}
