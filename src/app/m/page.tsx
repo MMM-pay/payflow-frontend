@@ -4,6 +4,7 @@ import { useI18n } from "@/i18n/provider";
 
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import * as navigation from "next/navigation";
 import { useSearchParams } from "next/navigation";
 import { api, type ApiPlan } from "@/lib/api";
 import { chainPlansOf, merchantFromParam } from "@/lib/chain";
@@ -24,6 +25,7 @@ import {
   SkeletonPlanCards,
   TxLink,
 } from "@/components/ui";
+import { Money } from "@/components/Money";
 
 /**
  * The public catalogue a merchant can link to: `/m/?address=G…` lists that
@@ -40,11 +42,41 @@ import {
  * like every write in this app.
  */
 
+function usePrefetchRouter() {
+  if ("useRouter" in navigation) {
+    try {
+      const getRouter = (navigation as Record<string, unknown>)["useRouter"];
+      if (typeof getRouter === "function") {
+        return (getRouter as () => { prefetch?: (url: string) => void })() ?? null;
+      }
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 function MerchantCatalogue() {
-  const { t: tr, formatPeriod, translateMessage, formatTokenValue } = useI18n();
+  const { t: tr, formatPeriod, translateMessage } = useI18n();
   const params = useSearchParams();
   const merchant = merchantFromParam(params.get("address"));
   const { address, networkMismatch, signXdr } = useWallet();
+  const router = usePrefetchRouter();
+  const prefetchSubscribe = useCallback(
+    (planId?: number) => {
+      try {
+        if (router && typeof router.prefetch === "function") {
+          router.prefetch("/subscribe");
+          if (planId != null) {
+            router.prefetch(`/subscribe/?plan=${planId}`);
+          }
+        }
+      } catch {
+        // ignore
+      }
+    },
+    [router],
+  );
   const [plans, setPlans] = useState<ApiPlan[] | null>(null);
   const [direct, setDirect] = useState(false);
   const [maxCharges, setMaxCharges] = useState<Record<number, string>>({});
@@ -140,9 +172,9 @@ function MerchantCatalogue() {
       {direct && (
         <Notice tone="info">{tr("Reading plans directly from the contract — the indexer is not reachable, so this list may be capped at the merchant's newest plans.")}</Notice>
       )}
-      {error && <Notice tone="error">{translateMessage(error)}</Notice>}
+      {error && <Notice tone="error" role="alert">{translateMessage(error)}</Notice>}
       {done && (
-        <Notice tone="ok">{tr("Subscribed. Transaction")}{" "}<TxLink hash={done} />
+        <Notice tone="ok" role="status">{tr("Subscribed. Transaction")}{" "}<TxLink hash={done} />
         </Notice>
       )}
 
@@ -156,14 +188,16 @@ function MerchantCatalogue() {
             const meta = metaFor(metas, plan.token);
             const cap = checkChargeLimit(maxCharges[plan.id]);
             return (
-              <Panel key={plan.id} title={plan.name ||tr("Plan #{0}", { "0": plan.id })}>
+              <Panel
+                key={plan.id}
+                title={plan.name || tr("Plan #{0}", { "0": plan.id })}
+                onMouseEnter={() => prefetchSubscribe(plan.id)}
+                onFocusCapture={() => prefetchSubscribe(plan.id)}
+              >
                 <div className="space-y-3">
                   <div>
                     <div className="text-2xl font-semibold tabular-nums">
-                      {formatTokenValue(plan.amount, 4, meta.decimals)}{" "}
-                      <span className="text-sm font-normal text-muted">
-                        {meta.symbol}
-                      </span>
+                      <Money amount={plan.amount} meta={meta} digits={4} />
                     </div>
                     <div className="text-sm text-muted">
                       {formatPeriod(plan.period)}

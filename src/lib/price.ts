@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { config } from "./config";
-import type { rpc as StellarRpc } from "@stellar/stellar-sdk";
+import { useReducedData } from "./useReducedData";
 
 /**
  * Reflector Oracle Contract IDs:
@@ -24,7 +24,6 @@ export interface OraclePrice {
 
 let cachedPrice: OraclePrice | null = null;
 let inflightFetch: Promise<OraclePrice | null> | null = null;
-let cachedRpcClient: { url: string; client: StellarRpc.Server } | null = null;
 
 /**
  * Resolve the Reflector oracle contract address for the active network.
@@ -46,17 +45,6 @@ export function getReflectorOracleId(): string {
 export function clearPriceCache(): void {
   cachedPrice = null;
   inflightFetch = null;
-  cachedRpcClient = null;
-}
-
-export function getRpcClient(
-  url: string,
-  create: (endpoint: string) => StellarRpc.Server,
-): StellarRpc.Server {
-  if (cachedRpcClient?.url !== url) {
-    cachedRpcClient = { url, client: create(url) };
-  }
-  return cachedRpcClient.client;
 }
 
 /**
@@ -94,7 +82,7 @@ export async function fetchXlmUsdPrice(options?: {
       const { Account, Contract, TransactionBuilder, rpc, scValToNative, xdr } =
         await import("@stellar/stellar-sdk");
 
-      const server = getRpcClient(rpcUrl, (url) => new rpc.Server(url));
+      const server = new rpc.Server(rpcUrl);
       const contract = new Contract(oracleId);
 
       // 1. Query decimals()
@@ -221,12 +209,20 @@ export function formatUsdcEstimate(
 
 /**
  * React hook to read the active XLM/USD price from Reflector oracle.
+ *
+ * Defers downloading the Stellar SDK and querying the oracle when the user
+ * signals reduced-data (`prefers-reduced-data: reduce` or `Save-Data`),
+ * unless explicitly requested via `loadPrice()`.
  */
-export function useXlmUsdPrice() {
+export function useXlmUsdPrice(options?: { enabled?: boolean }) {
+  const reducedData = useReducedData();
+  const [manualLoad, setManualLoad] = useState(false);
   const [priceData, setPriceData] = useState<OraclePrice | null>(cachedPrice);
-  const [loading, setLoading] = useState<boolean>(!cachedPrice);
+  const shouldFetch = (options?.enabled ?? true) && (!reducedData || manualLoad);
+  const [loading, setLoading] = useState<boolean>(!cachedPrice && shouldFetch);
 
   useEffect(() => {
+    if (!shouldFetch) return;
     let cancelled = false;
     void fetchXlmUsdPrice().then((res) => {
       if (!cancelled) {
@@ -237,9 +233,14 @@ export function useXlmUsdPrice() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [shouldFetch]);
 
-  return { priceData, loading };
+  return {
+    priceData,
+    loading: shouldFetch ? loading : false,
+    skippedForReducedData: reducedData && !manualLoad && !cachedPrice,
+    loadPrice: () => setManualLoad(true),
+  };
 }
 
 /**

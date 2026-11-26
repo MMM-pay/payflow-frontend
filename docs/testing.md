@@ -13,6 +13,7 @@ Every layer is deterministic, runnable locally, and runs in CI.
 | **Unit** | `node` | Vitest | `test/*.test.ts` | Pure functions, formatters, math, contract bindings, API client fail-soft logic |
 | **Component** | `jsdom` | Vitest + RTL | `test/*.test.tsx` | UI rendering, user events, loading/empty/error states, accessibility, i18n, theme classes |
 | **Visual E2E** | Chromium | Playwright | `e2e/visual.spec.ts` | Desktop (1280×720) and mobile (375×812) layout regression against committed snapshots |
+| **Mocked-chain E2E** | Chromium | Playwright | `e2e/subscribe-mocked.spec.ts` | Subscribe flow with an injected keypair wallet and Soroban RPC mocked, including success, contract errors, on-chain failure and edge states |
 | **Network E2E** | Chromium | Playwright | `e2e/local/flow.spec.ts` | Real Soroban contracts on a local Stellar network; end-to-end plan publication, deposit, subscription, and cancellation |
 
 ---
@@ -151,8 +152,8 @@ npx vitest run test/account-page.test.tsx
 
 ## 3. End-to-end tests (Playwright)
 
-Payflow maintains two distinct E2E suites depending on whether a live blockchain
-is required.
+Payflow maintains three distinct E2E suites depending on whether a live
+blockchain is required.
 
 ### 3A. Visual regression suite (`e2e/visual.spec.ts`)
 
@@ -161,8 +162,8 @@ Screenshots every statically exported page at two standard viewports:
 - **Mobile:** 375 × 812
 
 Pages render from contract-only state: Soroban RPC is mocked with deterministic
-values (`e2e/mock-rpc.ts`) and all external network calls are blocked. No wallet,
-no indexer, and no network required.
+values (`e2e/mock-rpc.ts`) and all external network calls are blocked. No wallet
+is connected, and no indexer or network is required.
 
 #### How to run locally
 
@@ -185,7 +186,23 @@ see [docs/visual-regression.md](visual-regression.md).
 
 ---
 
-### 3B. Local network integration suite (`e2e/local/flow.spec.ts`)
+### 3B. Mocked-chain subscribe suite (`e2e/subscribe-mocked.spec.ts`)
+
+Drives the subscribe page in Chromium with a wallet and the whole RPC lifecycle
+mocked. The build enables `NEXT_PUBLIC_E2E_WALLET`, the test injects a fixed
+keypair before the app boots, and `e2e/mock-rpc.ts` answers simulations,
+submission and polling with deterministic XDR. No extension, indexer, Horizon
+instance, Docker container or live network is involved.
+
+The suite covers the successful mandate, a contract rejection before signing,
+an on-chain failure after submission, a wallet on the wrong network, a missing
+wallet, an invalid charge limit, and cancelling the confirmation dialog. It
+runs with the same `npm run build:visual` + `npm run test:visual` commands as
+the visual suite.
+
+---
+
+### 3C. Local network integration suite (`e2e/local/flow.spec.ts`)
 
 Drives the static export against real Payflow contracts deployed on a local
 Stellar standalone network container (`stellar/quickstart`).
@@ -237,4 +254,5 @@ keys, funding test accounts, and the `NEXT_PUBLIC_E2E_WALLET` test wallet module
 | New UI component or page section | **Component (`test/*.test.tsx`)** | Test loading, empty, error, and active states. Verify accessibility roles, labels, and theme tokens. |
 | Dashboard feature in `/account` or `/merchant` | **Component (`test/*.test.tsx`)** | Mock contract/indexer calls, verify buttons, form validations, notices, and i18n strings. |
 | Global layout, typography, or styling changes | **Visual E2E (`e2e/visual.spec.ts`)** | Run `npm run build:visual && npm run test:visual`. Update snapshots if visual changes are intentional. |
-| Contract call sequencing or wallet signing flow | **Local Network E2E (`e2e/local/flow.spec.ts`)** | Add steps to `e2e/local/flow.spec.ts` to test the full lifecycle on a standalone Stellar network. |
+| UI-level wallet signing flow, confirmation and error states | **Mocked-chain E2E (`e2e/subscribe-mocked.spec.ts`)** | Keep deterministic with the injected keypair and mocked RPC; no network or Docker needed. |
+| Contract call sequencing against real deployed code | **Local Network E2E (`e2e/local/flow.spec.ts`)** | Add steps to `e2e/local/flow.spec.ts` to test the full lifecycle on a standalone Stellar network. |

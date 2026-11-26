@@ -54,4 +54,9 @@ describe("copyToClipboard", () => {
       copyToClipboard(FULL_ADDRESS, { clipboard: { writeText }, fallback }),
     ).resolves.toBe(false);
   });
+
+  it("handles default clipboard and fallback gracefully", async () => {
+    // In node/jsdom without mock navigator.clipboard
+    await expect(copyToClipboard(FULL_ADDRESS)).resolves.toBe(false);
+  });
 });

@@ -16,6 +16,9 @@ export function Panel({
   subtitle,
   children,
   actions,
+  onMouseEnter,
+  onFocus,
+  onFocusCapture,
 }: {
   /** Optional DOM id, e.g. an anchor target for in-page links. */
   id?: string;
@@ -23,14 +26,28 @@ export function Panel({
   subtitle?: string;
   children: ReactNode;
   actions?: ReactNode;
+  onMouseEnter?: () => void;
+  onFocus?: () => void;
+  onFocusCapture?: () => void;
 }) {
   const { t: tr } = useI18n();
+  const titleId = useId();
   return (
-    <section className="panel" id={id}>
+    <section
+      className="panel"
+      id={id}
+      onMouseEnter={onMouseEnter}
+      onFocus={onFocus}
+      onFocusCapture={onFocusCapture}
+      // Naming the section after its heading lets screen-reader users jump
+      // between the panels of a long page (a plan card, a form, a table)
+      // instead of hearing one undifferentiated run of content.
+      aria-labelledby={title ? titleId : undefined}
+    >
       {(title || actions) && (
         <header className="mb-4 flex flex-wrap items-start justify-between gap-4">
           <div>
-            {title && <h2 className="text-base font-semibold">{tr(title)}</h2>}
+            {title && <h2 id={titleId} className="text-base font-semibold">{tr(title)}</h2>}
             {subtitle && <p className="mt-1 text-sm text-muted">{tr(subtitle)}</p>}
           </div>
           {actions}
@@ -49,7 +66,7 @@ export function Stat({
 }: {
   label: string;
   value: ReactNode;
-  hint?: string;
+  hint?: ReactNode;
   loading?: boolean;
 }) {
   const { t: tr, formatNumber } = useI18n();
@@ -99,6 +116,74 @@ export function SkeletonRows({ rows = 3, label = "Loading" }: { rows?: number; l
   );
 }
 
+/**
+ * Inline validation text for a form control.
+ *
+ * Forms used to spell this markup out by hand, which drifted in spacing,
+ * translation and, most importantly, whether the message was announced. This
+ * renders a single `role="alert"` paragraph and translates application
+ * messages through the same catalog as the rest of the UI. Point the control's
+ * `aria-describedby` at `id`; nothing is rendered when there is no message.
+ */
+export function InlineError({
+  id,
+  children,
+  className = "mt-1",
+}: {
+  /** Id referenced by the control's `aria-describedby`. */
+  id: string;
+  children?: ReactNode;
+  /** Spacing override; text size and danger tone are fixed. */
+  className?: string;
+}) {
+  const { translateMessage } = useI18n();
+  if (children === null || children === undefined || children === false || children === "") {
+    return null;
+  }
+  return (
+    <p id={id} role="alert" className={`${className} text-sm text-danger`}>
+      {typeof children === "string" ? translateMessage(children) : children}
+    </p>
+  );
+}
+
+/**
+ * Static help text under a form control.
+ *
+ * A hint is not an error: it stays visible alongside validation, uses the muted
+ * token in both themes, and is translated like every other label. Pass
+ * `live` when the hint is recomputed while the reader types (e.g. a summary of
+ * what the entered amount covers) so assistive technology hears the update.
+ */
+export function FieldHint({
+  id,
+  children,
+  className = "mt-1",
+  live = false,
+}: {
+  /** Id referenced by the control's `aria-describedby`. */
+  id: string;
+  children?: ReactNode;
+  /** Spacing override; text size and muted tone are fixed. */
+  className?: string;
+  /** Announce changes politely while the reader types. */
+  live?: boolean;
+}) {
+  const { t: tr } = useI18n();
+  if (children === null || children === undefined || children === false || children === "") {
+    return null;
+  }
+  return (
+    <p
+      id={id}
+      className={`${className} text-xs text-muted`}
+      aria-live={live ? "polite" : undefined}
+    >
+      {typeof children === "string" ? tr(children) : children}
+    </p>
+  );
+}
+
 /** Placeholder grid matching the plan cards on the subscribe page. */
 export function SkeletonPlanCards({ cards = 4, label = "Loading plans" }: { cards?: number; label?: string }) {
   const { t: tr } = useI18n();
@@ -127,6 +212,50 @@ export function SkeletonPlanCards({ cards = 4, label = "Loading plans" }: { card
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+/**
+ * Placeholder matching the plan detail page: the plan summary panel, the
+ * charge table and the subscribe form. Reserving those three blocks keeps the
+ * page from jumping when the data arrives, which is what the loading state is
+ * for (#304).
+ */
+export function SkeletonPlanDetail({ label = "Loading plan" }: { label?: string }) {
+  const { t: tr } = useI18n();
+  return (
+    <div role="status" aria-busy="true">
+      <span className="sr-only">{typeof label === "string" ? tr(label) : label}…</span>
+      <div aria-hidden="true" className="space-y-6">
+        <div className="panel">
+          <Skeleton className="h-6 w-40" />
+          <div className="mt-4 grid gap-4 sm:grid-cols-3">
+            {Array.from({ length: 4 }, (_, i) => (
+              <div key={i} className="space-y-1.5">
+                <Skeleton className="h-3 w-20" />
+                <Skeleton className="h-6 w-32" />
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="panel">
+          <Skeleton className="h-6 w-36" />
+          <div className="mt-4 space-y-3">
+            {Array.from({ length: 3 }, (_, i) => (
+              <Skeleton key={i} className="h-10 w-full rounded-lg" />
+            ))}
+          </div>
+        </div>
+        <div className="panel">
+          <Skeleton className="h-6 w-48" />
+          <Skeleton className="mt-2 h-4 w-full max-w-prose" />
+          <div className="mt-4 flex flex-wrap items-end gap-3">
+            <Skeleton className="h-[38px] w-52 max-w-full rounded-lg" />
+            <Skeleton className="h-[38px] w-28 rounded-lg" />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -326,9 +455,17 @@ export function TimeAgo({ value }: { value: number }) {
  * out loud in the tooltip and to screen readers, never implied to be vetted.
  * When no name resolves, this is just the address, exactly as before.
  */
-export function MerchantAccount({ value }: { value: string }) {
+export function MerchantAccount({
+  value,
+  resolvedName,
+}: {
+  value: string;
+  /** A name resolved by the caller; supplying one skips the external lookup. */
+  resolvedName?: string | null;
+}) {
   const { t: tr } = useI18n();
-  const name = useOrgName(value);
+  const lookedUpName = useOrgName(resolvedName === undefined ? value : null);
+  const name = resolvedName ?? lookedUpName;
   return (
     <span className="inline-flex max-w-full flex-wrap items-center gap-x-1.5 align-middle">
       {name && (
@@ -345,24 +482,62 @@ export function MerchantAccount({ value }: { value: string }) {
   );
 }
 
+/**
+ * A transaction hash from a settled on-chain action: the truncated hash links
+ * to the explorer and the copy button always receives the full value. An empty
+ * hash renders nothing, so a success notice never shows a dead link.
+ */
 export function TxLink({ hash }: { hash: string }) {
   const { t: tr } = useI18n();
+  const value = hash.trim();
+  if (!value) return null;
+
+  const label = tr("transaction hash");
   return (
     <span className="inline-flex max-w-full items-center gap-1 align-middle">
       <a
-        href={`${explorerBase}/tx/${hash}`}
+        href={`${explorerBase}/tx/${value}`}
         target="_blank"
         rel="noreferrer"
-        className="mono truncate text-muted underline-offset-2 hover:text-accent hover:underline"
+        className="mono inline-flex max-w-full items-center gap-1 text-muted underline-offset-2 hover:text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        title={value}
+        aria-label={tr("View transaction {0} on the Stellar explorer (opens in a new tab)", { 0: value })}
       >
-        {shortAddress(hash, 6)}
+        <span className="truncate">{shortAddress(value, 8)}</span>
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="h-3 w-3 shrink-0"
+          aria-hidden="true"
+        >
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+          <path d="M15 3h6v6" />
+          <path d="M10 14 21 3" />
+        </svg>
       </a>
-      <CopyButton value={hash} label={tr("transaction hash")} />
+      <CopyButton value={value} label={label} />
     </span>
   );
 }
 
-export function Notice({ tone, children }: { tone: "error" | "ok" | "info" | "warn"; children: ReactNode }) {
+export function Notice({
+  tone,
+  children,
+  role,
+}: {
+  tone: "error" | "ok" | "info" | "warn";
+  children: ReactNode;
+  /**
+   * Use `alert` for a failure the user is waiting on (it is announced at
+   * once) and `status` for a non-urgent update. Omitted, a notice is ordinary
+   * content and is only read when reached by navigation.
+   */
+  role?: "alert" | "status";
+}) {
   const { translateMessage } = useI18n();
   const tones = {
     error: "border-danger/40 bg-danger/10 text-danger",
@@ -371,7 +546,7 @@ export function Notice({ tone, children }: { tone: "error" | "ok" | "info" | "wa
     warn: "border-warn/40 bg-warn/10 text-warn",
   } as const;
   return (
-    <div className={`rounded-lg border px-3 py-2 text-sm ${tones[tone]}`}>
+    <div role={role} className={`rounded-lg border px-3 py-2 text-sm ${tones[tone]}`}>
       {typeof children === "string" ? translateMessage(children) : children}
     </div>
   );
@@ -396,7 +571,7 @@ export function Empty({
   const { t: tr } = useI18n();
   return (
     <div className="rounded-lg border border-dashed border-edge px-4 py-8 text-center">
-      {title && <p className="text-sm font-medium text-slate-200">{tr(title)}</p>}
+      {title && <p className="text-sm font-medium text-soft">{tr(title)}</p>}
       <p className={`mx-auto max-w-prose text-sm text-muted ${title ? "mt-1" : ""}`}>
         {children}
       </p>
@@ -405,23 +580,91 @@ export function Empty({
   );
 }
 
+type GuideCardRadius = "lg" | "xl";
+type GuideCardHeaderAlign = "start" | "center";
+
+const GUIDE_CARD_RADIUS: Record<GuideCardRadius, string> = {
+  lg: "rounded-lg",
+  xl: "rounded-xl",
+};
+
+const GUIDE_CARD_HEADER_ALIGN: Record<GuideCardHeaderAlign, string> = {
+  start: "flex items-start justify-between gap-3",
+  center: "flex flex-wrap items-center justify-between gap-3",
+};
+
+export function GuideCard({
+  titleId,
+  title,
+  subtitle,
+  action,
+  radius = "lg",
+  headerAlign = "start",
+  children,
+}: {
+  titleId: string;
+  title: string;
+  subtitle?: string;
+  action: ReactNode;
+  radius?: GuideCardRadius;
+  headerAlign?: GuideCardHeaderAlign;
+  children: ReactNode;
+}) {
+  return (
+    <section
+      aria-labelledby={titleId}
+      className={`${GUIDE_CARD_RADIUS[radius]} border border-edge bg-surface/50 p-4`}
+    >
+      <div className={GUIDE_CARD_HEADER_ALIGN[headerAlign]}>
+        <div>
+          <h2 id={titleId} className="text-base font-semibold">{title}</h2>
+          {subtitle && <p className="mt-1 text-sm text-muted">{subtitle}</p>}
+        </div>
+        {action}
+      </div>
+      {children}
+    </section>
+  );
+}
 
 export function NetworkMismatchBanner({
   walletNetwork,
   expectedNetwork,
+  expectedNetworkLabel,
+  status,
 }: {
   walletNetwork: string | null;
   expectedNetwork: string;
+  expectedNetworkLabel: string;
+  status: "unknown" | "mismatch";
 }) {
   const { t: tr } = useI18n();
-  if (!walletNetwork) return null;
   return (
-    <div className="flex items-center justify-between gap-4 rounded-lg border border-warn/40 bg-warn/10 px-4 py-3 text-sm text-warn">
+    <div
+      role="alert"
+      className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-warn/40 bg-warn/10 px-4 py-3 text-sm text-warn"
+    >
       <div className="flex items-center gap-2">
         <span aria-hidden="true">⚠</span>
-        <span>
-          <strong>{tr("Network mismatch detected.")}</strong>{" "}{tr("Your wallet is connected to a different network than this app. Switch to")}{" "}
-          <span className="font-mono text-xs">{expectedNetwork}</span>{" "}{tr("to interact with contracts. Contract write operations are disabled while mismatched.")}</span>
+        {status === "unknown" ? (
+          <span>
+            <strong>{tr("Wallet network could not be verified.")}</strong>{" "}
+            {tr("Check that your wallet is connected to")}{" "}
+            <strong>{tr(expectedNetworkLabel)}</strong>{" "}
+            <span className="font-mono text-xs">({expectedNetwork})</span>{" "}
+            {tr("before signing. Signing is disabled until the network can be verified.")}
+          </span>
+        ) : (
+          <span>
+            <strong>{tr("Network mismatch detected.")}</strong>{" "}
+            {tr("Wallet network:")}{" "}
+            <span className="font-mono text-xs">{walletNetwork}</span>.{" "}
+            {tr("This app expects")}{" "}
+            <strong>{tr(expectedNetworkLabel)}</strong>{" "}
+            <span className="font-mono text-xs">({expectedNetwork})</span>.{" "}
+            {tr("Contract write operations are disabled while mismatched.")}
+          </span>
+        )}
       </div>
     </div>
   );
@@ -603,7 +846,5 @@ export function Dialog({
   );
 }
 
-export { SyncLagIndicator } from "./SyncLagIndicator";
-export { Money } from "./Money";
-export { NotificationCentre } from "./NotificationCentre";
+
 

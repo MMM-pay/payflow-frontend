@@ -5,6 +5,7 @@ import type { Translation } from "@/i18n/translate";
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import * as navigation from "next/navigation";
 import { useSearchParams } from "next/navigation";
 import { api, type ApiPlan } from "@/lib/api";
 import { chainPlans } from "@/lib/chain";
@@ -67,7 +68,7 @@ function ComparisonTable({
   const { t: tr, formatPeriod, formatAmount, formatTokenValue, formatTrialLength, formatNumber } = useI18n();
   return (
     <div
-      className="mt-3 overflow-x-auto rounded-lg border border-edge"
+      className="mt-3 overflow-x-auto rounded-lg border border-edge focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
       tabIndex={0}
       role="region"
       aria-label={tr("Plan comparison, scroll horizontally if needed")}
@@ -155,8 +156,35 @@ function ComparisonTable({
   );
 }
 
+function usePrefetchRouter() {
+  if ("useRouter" in navigation) {
+    try {
+      const getRouter = (navigation as Record<string, unknown>)["useRouter"];
+      if (typeof getRouter === "function") {
+        return (getRouter as () => { prefetch?: (url: string) => void })() ?? null;
+      }
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 function SubscribeInner() {
   const { t: tr, formatPeriod, formatDate, formatWhen, translateMessage, formatTrialLength, trialBadge, formatTokenValue, formatUsdString, formatNumber, formatAmount, formatFeeBps } = useI18n();
+  const router = usePrefetchRouter();
+  const prefetchPlan = useCallback(
+    (planId: number) => {
+      try {
+        if (router && typeof router.prefetch === "function") {
+          router.prefetch(`/subscribe/?plan=${planId}`);
+        }
+      } catch {
+        // ignore
+      }
+    },
+    [router],
+  );
   const searchParams = useSearchParams();
   const sortParam = (searchParams?.get("sort") as PlanSortOption) || "newest";
   // A shared link (?plan=12) shows that one plan instead of the catalogue.
@@ -174,7 +202,7 @@ function SubscribeInner() {
   const [compareIds, setCompareIds] = useState<number[]>([]);
   const [showComparison, setShowComparison] = useState(false);
 
-  const { address, networkMismatch, signXdr } = useWallet();
+  const { address, networkMismatch, signXdr, signing } = useWallet();
   const [plans, setPlans] = useState<ApiPlan[] | null>(null);
   const [maxCharges, setMaxCharges] = useState<Record<number, string>>({});
   const [depositBusy, setDepositBusy] = useState<number | null>(null);
@@ -591,9 +619,11 @@ function SubscribeInner() {
         <Notice tone="info">{tr("Reading plans directly from the contract — the indexer is not reachable, so this list is capped at the first 24 plans.")}</Notice>
       )}
       <ContractVersionNotice />
-      {error && <Notice tone="error">{translateMessage(error)}</Notice>}
+      {/* Announced as soon as it appears: a keyboard or screen-reader user
+          should not have to hunt for the reason a subscribe attempt failed. */}
+      {error && <Notice tone="error" role="alert">{translateMessage(error)}</Notice>}
       {done && (
-        <Notice tone="ok">{tr("Subscribed. Transaction")}{" "}<TxLink hash={done} />
+        <Notice tone="ok" role="status">{tr("Subscribed. Transaction")}{" "}<TxLink hash={done} />
           {doneTrial && (
             <>
               {" "}
@@ -694,6 +724,8 @@ function SubscribeInner() {
                 <option value="price_desc">{tr("Price: High to Low")}</option>
                 <option value="period_asc">{tr("Period: Short to Long")}</option>
                 <option value="period_desc">{tr("Period: Long to Short")}</option>
+                <option value="popularity_desc">{tr("Popularity: Most subscribers")}</option>
+                <option value="popularity_asc">{tr("Popularity: Fewest subscribers")}</option>
               </select>
             </div>
 
@@ -750,6 +782,7 @@ function SubscribeInner() {
           ) : (
             <div className="grid gap-4 sm:grid-cols-2">
               {filteredPlans.map((plan) => {
+
                 const meta = metaFor(metas, plan.token);
                 const badge = trialBadge(plan);
                 const availability = planAvailability(plan, now);
@@ -769,6 +802,8 @@ function SubscribeInner() {
                   <Panel
                     key={plan.id}
                     title={plan.name ||tr("Plan #{0}", { "0": plan.id })}
+                    onMouseEnter={() => prefetchPlan(plan.id)}
+                    onFocusCapture={() => prefetchPlan(plan.id)}
                     actions={
                       <label htmlFor={`compare-plan-${plan.id}`} className="inline-flex cursor-pointer items-center gap-2 rounded-lg px-1 py-1 text-sm text-muted">
                         <input
@@ -850,6 +885,14 @@ function SubscribeInner() {
                           }
                           aria-invalid={!cap.ok || undefined}
                           aria-describedby={!cap.ok ? `limit-error-${plan.id}` : undefined}
+                          onKeyDown={(e) => {
+                            // Enter submits the card's small form from its only
+                            // text field. Without it a keyboard user has to tab
+                            // through the vault controls to reach Subscribe.
+                            if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+                            e.preventDefault();
+                            if (busy === null) openConfirmation(plan);
+                          }}
                         />
                         {!cap.ok && (
                           <p id={`limit-error-${plan.id}`} role="alert" className="mt-1 text-sm text-danger">
@@ -862,7 +905,7 @@ function SubscribeInner() {
                             <div className="rounded-lg border border-edge bg-surface/40 p-2 text-xs space-y-1">
                               <div className="flex items-center justify-between font-medium">
                                 <span className="text-muted">{tr("Guided Flow")}</span>
-                                <span className={funded ? "text-emerald-500 font-semibold" : "text-amber-500 font-semibold"}>
+                                <span className={funded ? "text-accent font-semibold" : "text-warn font-semibold"}>
                                   {funded ? tr("Step 2: Ready to Subscribe") : tr("Step 1: Fund Vault First")}
                                 </span>
                               </div>
@@ -900,8 +943,10 @@ function SubscribeInner() {
                               {networkMismatch
                                 ?tr("Wrong network")
                                 : address
-                                ?tr("Subscribe")
-                                :tr("Connect wallet")}
+                                  ? busy === plan.id && signing
+                                    ? tr("Signing…")
+                                    : tr("Subscribe")
+                                  : tr("Connect wallet")}
                             </LoadingButton>
                           </div>
                     </div>
@@ -966,6 +1011,14 @@ function SubscribeInner() {
                       : tr("{0} charges, then the mandate completes.", { "0": confirmation.limit })}
                 </dd>
               </div>
+              {confirmation.totalCommitment !== null && (
+                <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                  <dt className="text-muted">{tr("Total authorised")}</dt>
+                  <dd className="font-medium tabular-nums">
+                    {formatAmount(confirmation.totalCommitment, pendingMeta)}
+                  </dd>
+                </div>
+              )}
               <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
                 <dt className="text-muted">{tr("First charge")}</dt>
                 <dd>
@@ -974,7 +1027,24 @@ function SubscribeInner() {
                     : `${formatDate(confirmation.firstChargeAt)} (${formatWhen(confirmation.firstChargeAt)})`}
                 </dd>
               </div>
+              {confirmation.lastChargeAt !== null && (
+                <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                  <dt className="text-muted">{tr("Final charge")}</dt>
+                  <dd>
+                    <time dateTime={new Date(confirmation.lastChargeAt * 1000).toISOString()}>
+                      {formatDate(confirmation.lastChargeAt)} ({formatWhen(confirmation.lastChargeAt)})
+                    </time>
+                  </dd>
+                </div>
+              )}
             </dl>
+            {!confirmation.openEnded && confirmation.lastChargeAt !== null && confirmation.totalCommitment !== null && (
+              <p className="mt-4 rounded-lg border border-edge/80 bg-fg/[0.02] p-3 text-sm text-muted">
+                {confirmation.limit === 1
+                  ? tr("This cap ends the mandate automatically: its only charge is due {0} ({1}). Once that charge settles, no further charges are taken and the mandate completes — there is nothing left to cancel.", { "0": formatDate(confirmation.lastChargeAt), "1": formatWhen(confirmation.lastChargeAt) })
+                  : tr("This cap ends the mandate automatically: the final charge is number {0} of the {1} authorised in total, due {2} ({3}). After it settles, no further charges are taken and the mandate completes. Cancel from your account page before then to stop it sooner.", { "0": confirmation.limit, "1": formatAmount(confirmation.totalCommitment, pendingMeta), "2": formatDate(confirmation.lastChargeAt), "3": formatWhen(confirmation.lastChargeAt) })}
+              </p>
+            )}
             {confirmation.fee === null && !feeLoading && (
               <p className="mt-3 text-xs text-muted">
                 {tr("The protocol fee could not be read from the contract right now. It is still taken from the amount above when the charge settles.")}
