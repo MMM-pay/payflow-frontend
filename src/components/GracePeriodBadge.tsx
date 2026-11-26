@@ -14,7 +14,7 @@ import { graceState } from "@/lib/grace";
  * Renders nothing when the contract does not report a grace period (an older
  * contract, or a mandate that is not past due).
  */
-export function GracePeriodBadge({ until, now }: { until: number | null; now?: number }) {
+export function GracePeriodBadge({ until, now }: { until: number | null; now?: number | undefined }) {
   const { t: tr } = useI18n();
   const state = graceState(until, now);
   if (state.kind === "none") return null;

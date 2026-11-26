@@ -32,6 +32,9 @@ const connectSources = [
     ? "http://localhost:8080"
     : process.env.NEXT_PUBLIC_API_URL,
   ...(process.env.NEXT_PUBLIC_STELLAR_TOML_ORIGINS ?? "").split(","),
+  // The optional first-party vitals endpoint must be allowed by connect-src,
+  // or the deferred beacon would be blocked by the page's own CSP.
+  process.env.NEXT_PUBLIC_TELEMETRY_URL,
   "https://relay.walletconnect.com",
   "wss://relay.walletconnect.com",
   "https://api.web3modal.org",
@@ -97,7 +100,6 @@ const nextConfig = {
     NEXT_PUBLIC_APP_VERSION: appVersion,
     NEXT_PUBLIC_COMMIT_HASH: commitHash,
     NEXT_PUBLIC_BASE_PATH: basePath,
-    NEXT_PUBLIC_CSP_CONNECT_SRC: [...new Set(connectSources)].join(" "),
   },
 };
 

@@ -6,6 +6,7 @@ import {
   assetFile,
   budgetFor,
   checkRoutes,
+  routeForDirectory,
   scriptSources,
 } from "../scripts/check-js-budget.mjs";
 
@@ -46,6 +47,22 @@ describe("assetFile", () => {
     expect(assetFile("/_next/static/chunks/app/plans/%5Bid%5D/page.js")).toBe(
       "_next/static/chunks/app/plans/[id]/page.js",
     );
+  });
+});
+
+describe("routeForDirectory", () => {
+  it("uses forward slashes so nested routes inherit their prefix budget", () => {
+    expect(routeForDirectory(join(ROOT, "out"), join(ROOT, "out", "plans", "1"))).toBe(
+      "/plans/1",
+    );
+    expect(budgetFor(routeForDirectory(join(ROOT, "out"), join(ROOT, "out", "plans", "1")), {
+      default: 100,
+      routes: { "/plans": 140 },
+    })).toBe(140);
+  });
+
+  it("keeps the root route as /", () => {
+    expect(routeForDirectory(join(ROOT, "out"), join(ROOT, "out"))).toBe("/");
   });
 });
 
@@ -94,7 +111,6 @@ describe("checkRoutes", () => {
 
   it("passes a route with no budget but reports it", () => {
     const [only] = checkRoutes([{ route: "/unknown", bytes: 900 * 1024 }], {
-      default: undefined,
       routes: {},
     });
     expect(only?.ok).toBe(true);
@@ -141,6 +157,25 @@ describe("static import graph", () => {
         if (
           specifier === "@stellar/stellar-sdk" ||
           specifier === "@creit.tech/stellar-wallets-kit"
+        ) {
+          offenders.push(`${file} statically imports ${specifier}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("keeps the telemetry collector out of every static import graph", () => {
+    // PerformanceObserver setup and payload code must be requested on idle
+    // after first paint (#331), never bundled into a route's first load.
+    // TelemetryLoader is allowed to name it only inside `import(...)`.
+    const offenders: string[] = [];
+    for (const file of sourceFiles(SRC)) {
+      for (const specifier of staticImports(readFileSync(file, "utf8"))) {
+        if (
+          specifier === "@/lib/telemetry-client" ||
+          specifier === "./telemetry-client" ||
+          specifier === "../telemetry-client"
         ) {
           offenders.push(`${file} statically imports ${specifier}`);
         }

@@ -5,8 +5,10 @@ import {
   useCallback,
   useContext,
   useEffect,
+  lazy,
   useMemo,
   useRef,
+  Suspense,
   useState,
   type ReactNode,
 } from "react";
@@ -14,7 +16,11 @@ import type { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit";
 import { config } from "./config";
 import { createWalletModules } from "./wallet-modules";
 import type { SignXdr } from "./payflow";
-import { translateSignatureError } from "./signature-error";
+import {
+  SIGNATURE_CANCELLED_MESSAGE,
+  isSignatureRejection,
+  translateSignatureError,
+} from "./signature-error";
 import { fundWithFriendbot, readNativeAccount, type NativeAccount } from "./account";
 import {
   clearMerchantSession,
@@ -22,6 +28,12 @@ import {
   merchantSession,
   setMerchantTokenProvider,
 } from "./sep10";
+
+const SigningExplanationDialog = lazy(() =>
+  import("@/components/SigningExplanationDialog").then(
+    (module) => ({ default: module.SigningExplanationDialog }),
+  ),
+);
 
 export const STORAGE_KEY = "payflow.wallet";
 export const ACCOUNT_CHANGED_ERROR =
@@ -89,6 +101,8 @@ export type AccountState =
 export interface WalletState {
   address: string | null;
   connecting: boolean;
+  /** True while a wallet modal is open or a signature request is in flight. */
+  connectingWallet: boolean;
   error: string | null;
   networkMismatch: boolean;
   walletNetwork: string | null;
@@ -96,6 +110,12 @@ export interface WalletState {
   account: AccountState;
   /** True while a Friendbot request is in flight. */
   funding: boolean;
+  /** True while a signature is pending from the wallet. */
+  signing: boolean;
+  /** Error from the most recent signing attempt, if any. */
+  signError: string | null;
+  /** True while the wallet is locked or unresponsive. */
+  locked: boolean;
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
   /** Re-reads the native balance. Safe to call after any transaction. */
@@ -142,10 +162,45 @@ export function setKitPromiseForTesting(p: Promise<StellarWalletsKit> | null) {
 export function WalletProvider({ children }: { children: ReactNode }) {
   const [address, setAddress] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [connectingWallet, setConnectingWallet] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [signing, setSigning] = useState(false);
+  const [signError, setSignError] = useState<string | null>(null);
+  const [locked, setLocked] = useState(false);
   const [walletNetwork, setWalletNetwork] = useState<string | null>(null);
   const [account, setAccount] = useState<AccountState>({ state: "loading" });
   const [funding, setFunding] = useState(false);
+  const [signingDescription, setSigningDescription] = useState<string | null>(null);
+  const signingDecisionRef = useRef<{
+    resolve: () => void;
+    reject: (error: Error) => void;
+  } | null>(null);
+
+  const requestSigningConfirmation = useCallback((description: string) => {
+    return new Promise<void>((resolve, reject) => {
+      if (signingDecisionRef.current) {
+        reject(new Error("A wallet signing request is already awaiting confirmation."));
+        return;
+      }
+      signingDecisionRef.current = { resolve, reject };
+      setSigningDescription(description);
+    });
+  }, []);
+
+  const decideSigning = useCallback((approved: boolean) => {
+    const decision = signingDecisionRef.current;
+    if (!decision) return;
+    signingDecisionRef.current = null;
+    setSigningDescription(null);
+    if (approved) decision.resolve();
+    else decision.reject(new Error(SIGNATURE_CANCELLED_MESSAGE));
+  }, []);
+
+  useEffect(() => () => {
+    const decision = signingDecisionRef.current;
+    signingDecisionRef.current = null;
+    decision?.reject(new Error(SIGNATURE_CANCELLED_MESSAGE));
+  }, []);
 
   // Keep a ref of the current address to avoid stale closures in event listeners
   // and async callbacks. Every setter below already writes the ref alongside the
@@ -254,7 +309,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         applyAccountChange(detected);
       }
     } catch {
-      // Wallet extension may be closed, locked, or busy; ignore background errors
+      // Wallet extension may be closed, locked, or busy; ignore background
+      // errors but remember that the next signature may need the user to
+      // unlock the wallet first.
+      setLocked(true);
     } finally {
       syncingRef.current = false;
     }
@@ -327,7 +385,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   const connect = useCallback(async () => {
     setConnecting(true);
+    setConnectingWallet(true);
     setError(null);
+    setLocked(false);
     try {
       const kit = await getKit();
       await kit.openModal({
@@ -353,13 +413,18 @@ export function WalletProvider({ children }: { children: ReactNode }) {
             setWalletNetwork(null);
           } finally {
             setConnecting(false);
+            setConnectingWallet(false);
           }
         },
-        onClosed: () => setConnecting(false),
+        onClosed: () => {
+          setConnecting(false);
+          setConnectingWallet(false);
+        },
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not open wallet");
       setConnecting(false);
+      setConnectingWallet(false);
     }
   }, []);
 
@@ -377,44 +442,69 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     addressRef.current = null;
     setAddress(null);
     setWalletNetwork(null);
+    setSigning(false);
+    setSignError(null);
+    setLocked(false);
   }, []);
 
   const signXdr = useCallback<SignXdr>(
-    async (xdrString) => {
+    async (xdrString): Promise<string> => {
       if (!address) throw new Error("Connect a wallet first.");
       if (networkMismatch) throw new Error("Switch your wallet to the correct network first.");
-      const kit = await getKit();
-
-      // Re-read the address before signing. If the user switched accounts
-      // in the wallet extension popup, the prepared transaction was built
-      // for the previous address. Signing it would fail verification or act
-      // on the wrong account.
-      let currentAddress: string | null = null;
+      setSigning(true);
+      setSignError(null);
+      setLocked(false);
       try {
-        const res = await kit.getAddress();
-        currentAddress = res.address;
-      } catch (err) {
-        throw new Error(
-          err instanceof Error ? err.message : "Could not read address from wallet.",
-        );
-      }
+        const kit = await getKit();
 
-      if (shouldUpdateAddress(address, currentAddress)) {
-        applyAccountChange(currentAddress!);
-        throw new Error(ACCOUNT_CHANGED_ERROR);
-      }
+        // Re-read the address before signing. If the user switched accounts
+        // in the wallet extension popup, the prepared transaction was built
+        // for the previous address. Signing it would fail verification or act
+        // on the wrong account.
+        let currentAddress: string | null = null;
+        try {
+          const res = await kit.getAddress();
+          currentAddress = res.address;
+        } catch (err) {
+          // The wallet could not be read at all (closed, locked or busy), so
+          // surface that the user may need to unlock it.
+          setLocked(true);
+          throw new Error(
+            err instanceof Error ? err.message : "Could not read address from wallet.",
+          );
+        }
 
-      try {
+        if (shouldUpdateAddress(address, currentAddress)) {
+          applyAccountChange(currentAddress!);
+          throw new Error(ACCOUNT_CHANGED_ERROR);
+        }
+
+        // translateSignatureError always throws: it replaces a cancellation
+        // with a friendly message and rethrows anything else. A rejection is
+        // not a locked wallet, so `locked` is left alone here.
         const { signedTxXdr } = await kit.signTransaction(xdrString, {
           networkPassphrase: config.networkPassphrase,
           address,
         });
         return signedTxXdr;
       } catch (err) {
+        // Record the message callers will see, then translate the raw error so
+        // a wallet that rejects with a plain object (Albedo) is still detected.
+        setSignError(
+          isSignatureRejection(err)
+            ? SIGNATURE_CANCELLED_MESSAGE
+            : err instanceof Error
+              ? err.message
+              : String(err),
+        );
         translateSignatureError(err);
+      } finally {
+        // Every path, including a wallet rejection or an account switch, must
+        // clear the pending state or the Subscribe buttons stay disabled.
+        setSigning(false);
       }
     },
-    [address, networkMismatch, applyAccountChange],
+    [address, networkMismatch, applyAccountChange, requestSigningConfirmation],
   );
 
   // Bind the SEP-10 merchant-session token provider to the connected account,
@@ -450,11 +540,15 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     () => ({
       address,
       connecting,
+      connectingWallet,
       error,
       networkMismatch,
       walletNetwork,
       account,
       funding,
+      signing,
+      signError,
+      locked,
       connect,
       disconnect,
       refreshAccount,
@@ -464,17 +558,35 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     [
       address,
       connecting,
+      connectingWallet,
       error,
       networkMismatch,
       walletNetwork,
       account,
+      funding,
+      signing,
+      signError,
+      locked,
       connect,
       disconnect,
       signXdr,
     ],
   );
 
-  return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>;
+  return (
+    <WalletContext.Provider value={value}>
+      {children}
+      {signingDescription !== null && (
+        <Suspense fallback={null}>
+          <SigningExplanationDialog
+            description={signingDescription}
+            onCancel={() => decideSigning(false)}
+            onConfirm={() => decideSigning(true)}
+          />
+        </Suspense>
+      )}
+    </WalletContext.Provider>
+  );
 }
 
 export function useWallet(): WalletState {

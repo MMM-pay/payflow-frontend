@@ -21,6 +21,7 @@ import {
 } from "./bindings";
 import { config } from "./config";
 import { MAX_NAME_LEN, decodeContractError, nameByteLength } from "./payflow-core";
+import { signingActionDescription } from "./signing-action";
 
 import {
   checkProfileName,
@@ -281,7 +282,10 @@ export async function writeContract(
   onProgress?.("signing");
   let signedXdr: string;
   try {
-    signedXdr = await signXdr(prepared.toXDR());
+    signedXdr = await signXdr(
+      prepared.toXDR(),
+      signingActionDescription(method),
+    );
   } catch (err) {
     onProgress?.("failed");
     // A declined prompt must not look like a failed payment. Wallets that

@@ -124,12 +124,12 @@ export function DiscountForm({
       </div>
 
       {!bpsCheck.ok && (
-        <p id="discount-percent-error" className="mt-2 text-sm text-danger">
+        <p id="discount-percent-error" role="alert" className="mt-2 text-sm text-danger">
           {translateMessage(bpsCheck.message)}
         </p>
       )}
       {!chargesCheck.ok && (
-        <p id="discount-charges-error" className="mt-2 text-sm text-danger">
+        <p id="discount-charges-error" role="alert" className="mt-2 text-sm text-danger">
           {translateMessage(chargesCheck.message)}
         </p>
       )}

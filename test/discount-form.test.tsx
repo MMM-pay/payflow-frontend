@@ -18,8 +18,8 @@ function setup(props: { amount?: bigint; maxCharges?: number; chargesMade?: numb
       amount={props.amount ?? 10_000_000n}
       meta={XLM}
       busy={false}
-      maxCharges={props.maxCharges}
-      chargesMade={props.chargesMade}
+      maxCharges={props.maxCharges ?? 0}
+      chargesMade={props.chargesMade ?? 0}
       onCancel={() => {}}
       onApply={onApply}
     />,
