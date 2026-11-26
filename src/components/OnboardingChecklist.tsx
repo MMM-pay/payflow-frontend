@@ -3,6 +3,7 @@
 import { useI18n } from "@/i18n/provider";
 
 import Link from "next/link";
+import { GuideCard } from "@/components/ui";
 
 /** Which of the four first steps a merchant has behind them. */
 export interface OnboardingState {
@@ -64,24 +65,18 @@ export function OnboardingChecklist({
   const done = STEPS.filter((step) => state[step.key]).length;
 
   return (
-    <section
-      aria-labelledby="onboarding-heading"
-      className="rounded-xl border border-edge bg-surface/50 p-4"
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 id="onboarding-heading" className="text-base font-semibold">
-            {tr("Getting started")}
-          </h2>
-          <p className="mt-1 text-sm text-muted">
-            {tr("{0} of {1} done", { "0": done, "1": STEPS.length })}
-          </p>
-        </div>
+    <GuideCard
+      titleId="onboarding-heading"
+      title={tr("Getting started")}
+      subtitle={tr("{0} of {1} done", { "0": done, "1": STEPS.length })}
+      radius="xl"
+      headerAlign="start"
+      action={
         <button type="button" className="btn-ghost text-xs" onClick={onDismiss}>
           {tr("Dismiss")}
         </button>
-      </div>
-
+      }
+    >
       <ol className="mt-3 space-y-2">
         {STEPS.map((step) => {
           const complete = state[step.key];
@@ -108,6 +103,6 @@ export function OnboardingChecklist({
           );
         })}
       </ol>
-    </section>
+    </GuideCard>
   );
 }

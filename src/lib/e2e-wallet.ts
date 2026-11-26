@@ -3,14 +3,14 @@
 import type { ModuleInterface } from "@creit.tech/stellar-wallets-kit";
 
 /**
- * A Stellar Wallets Kit module backed by a keypair the page is handed at load
- * time (payflow-frontend#117).
+ * A Stellar Wallets Kit module backed by a keypair supplied by the test
+ * before the wallet modal opens (payflow-frontend#117).
  *
  * The end-to-end job runs the real app against a local Stellar network. The
- * browser there has no wallet extension to install, so the test injects an
- * ephemeral secret with `addInitScript` before any app script runs, and this
- * module — compiled in only when `NEXT_PUBLIC_E2E_WALLET=1` — signs with it
- * through the same kit interface the production wallets implement. That keeps
+ * browser there has no wallet extension to install, so the test sets an
+ * ephemeral secret on the loaded page. This module — compiled in only when
+ * `NEXT_PUBLIC_E2E_WALLET=1` — signs with it through the same kit interface
+ * the production wallets implement. That keeps
  * the test on the production code path: `useWallet().signXdr`, the kit's
  * `signTransaction`, and the app's own RPC submission are all exercised.
  *
@@ -19,7 +19,7 @@ import type { ModuleInterface } from "@creit.tech/stellar-wallets-kit";
  * can neither show it nor sign with anything.
  */
 
-/** Key the test writes onto `window` before the app boots. */
+/** Key the test writes onto `window` before opening the wallet modal. */
 export const E2E_WALLET_CONFIG_KEY = "__PAYFLOW_E2E_WALLET__";
 
 /** Id the tests select in the kit's wallet modal. */

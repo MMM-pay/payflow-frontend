@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { Dialog } from "@/components/ui";
+import { Dialog } from "@/components/Dialog";
 
 /**
  * Focus behaviour for `Dialog` (issue #83), which is the acceptance criterion:
@@ -116,11 +116,16 @@ describe("Dialog rendering", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("is a modal named by its title", () => {
+  it("is a modal named by its title and described by its body", () => {
     const { dialog } = opened();
     expect(dialog.getAttribute("aria-modal")).toBe("true");
     const heading = screen.getByRole("heading", { level: 2, name: "Cancel 2 subscriptions?" });
     expect(dialog.getAttribute("aria-labelledby")).toBe(heading.id);
+    const describedBy = dialog.getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    expect(document.getElementById(describedBy!)?.textContent).toContain(
+      "Both mandates stop billing immediately.",
+    );
   });
 
   it("holds its content and its actions", () => {
@@ -295,6 +300,40 @@ describe("Dialog dismissal", () => {
     fireEvent.keyDown(field, { key: "Enter" });
     expect(onClosed).not.toHaveBeenCalled();
     expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("closes on backdrop click and returns focus to the opener, ignoring clicks inside the panel", () => {
+    const onClosed = vi.fn();
+    const { dialog, opener } = opened({ onClosed });
+    const backdrop = dialog.parentElement as HTMLElement;
+
+    // Clicking inside the dialog panel must not dismiss it.
+    fireEvent.click(dialog);
+    expect(onClosed).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+
+    // Clicking the backdrop dismisses it and returns focus to the opener.
+    fireEvent.click(backdrop);
+    expect(onClosed).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it("locks document body scroll while open and restores it on close", () => {
+    document.body.style.overflow = "auto";
+    const { close } = opened();
+    expect(document.body.style.overflow).toBe("hidden");
+    fireEvent.click(close);
+    expect(document.body.style.overflow).toBe("auto");
+    document.body.style.overflow = "";
+  });
+
+  it("prevents backdrop mousedown from moving focus out of the dialog", () => {
+    const { dialog } = opened();
+    const backdrop = dialog.parentElement as HTMLElement;
+    const event = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    backdrop.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
   });
 });
 

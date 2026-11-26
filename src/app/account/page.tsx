@@ -2,7 +2,7 @@
 
 import { useI18n } from "@/i18n/provider";
 
-import { Suspense, startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 // `/base` is the SDK without the RPC client or transaction builder: StrKey is
@@ -86,11 +86,14 @@ import { computeVaultRunway } from "@/lib/runway";
 
 import { loadTokenMeta, metaFor, useTokenMetas } from "@/lib/token";
 import { VirtualList } from "@/components/VirtualList";
+import { cursorPage, TABLE_PAGE_SIZE } from "@/lib/pagination";
 import { AmountInput } from "@/components/AmountInput";
-import { ConfirmDialog, confirmTitle } from "@/components/ConfirmDialog";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { confirmTitle } from "@/lib/confirm-title";
 import { observeContractRecord } from "@/lib/contract-compat";
 import { ContractVersionNotice } from "@/components/ContractVersionNotice";
 import { SyncLagIndicator } from "@/components/SyncLagIndicator";
+import { StaleDataNotice } from "@/components/StaleDataNotice";
 import { Money } from "@/components/Money";
 import { NotificationCentre } from "@/components/NotificationCentre";
 import { evaluateSubscriberNotifications } from "@/lib/notifications";
@@ -98,6 +101,7 @@ import { LoadingButton } from "@/components/LoadingButton";
 import {
   Badge,
   Empty,
+  InlineError,
   MerchantAccount,
   Notice,
   Panel,
@@ -119,6 +123,12 @@ type PaymentsState =
   | { status: "error"; message: string }
   | { status: "data"; rows: PaymentRecord[] };
 
+const PaginationControl = lazy(() =>
+  import("@/components/Pagination").then((module) => ({
+    default: module.Pagination,
+  })),
+);
+
 /**
  * Past charges with a receipt per row.
  *
@@ -137,6 +147,9 @@ function PaymentHistoryPanel({
 }) {
   const { t: tr, translateMessage } = useI18n();
   const [busyHash, setBusyHash] = useState<string | null>(null);
+  const [cursor, setCursor] = useState(0);
+  const visibleRows =
+    state.status === "data" ? cursorPage(state.rows, cursor) : [];
 
   async function download(record: PaymentRecord) {
     setBusyHash(record.row.txHash);
@@ -152,7 +165,7 @@ function PaymentHistoryPanel({
       // RPC history is finite; the receipt still downloads with its ledger
       // and a dash for the date rather than inventing one.
     }
-    downloadReceipt(receipt);
+    void downloadReceipt(receipt);
     setBusyHash(null);
   }
 
@@ -173,60 +186,72 @@ function PaymentHistoryPanel({
       ) : state.rows.length === 0 ? (
         <Empty title={tr("No charges yet")}>{tr("Charges appear here with a downloadable receipt once they settle on-chain.")}</Empty>
       ) : (
-        <div
-          className="overflow-x-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-          role="region"
-          aria-label={tr("Payment history table")}
-          tabIndex={0}
-        >
-          <table className="w-full min-w-[640px] text-left text-sm">
-            <caption className="sr-only">{tr("Charges settled against your subscriptions, newest first.")}</caption>
-            <thead>
-              <tr className="border-b border-edge text-muted">
-                <th scope="col" className="py-2 pr-3 font-medium">{tr("Subscription")}</th>
-                <th scope="col" className="py-2 pr-3 font-medium">{tr("Ledger")}</th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Amount")}</th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Fee")}</th>
-                <th scope="col" className="py-2 text-right font-medium">{tr("Receipt")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {state.rows.map((record) => {
-                const { row } = record;
-                const label = tr("Receipt for charge {0} on subscription #{1}", {
-                  "0": row.txHash.slice(0, 8),
-                  "1": row.mandateId,
-                });
-                return (
-                  <tr key={`${row.mandateId}:${row.txHash}`} className="border-b border-edge last:border-0">
-                    <th scope="row" className="py-2 pr-3 font-medium">#{row.mandateId}</th>
-                    <td className="py-2 pr-3 tabular-nums text-muted">#{row.ledger}</td>
-                    <td className="py-2 pr-3 text-right tabular-nums">{row.amount} {row.token}</td>
-                    <td className="py-2 pr-3 text-right tabular-nums text-muted">{row.fee} {row.token}</td>
-                    <td className="py-2">
-                      <div className="flex flex-wrap items-center justify-end gap-2">
-                        <Link
-                          href={`/receipt/?tx=${encodeURIComponent(row.txHash)}&mandate=${row.mandateId}`}
-                          className="btn-ghost text-xs"
-                          aria-label={tr("Open {0}", { "0": label })}
-                        >{tr("View")}</Link>
-                        <button
-                          type="button"
-                          className="btn-ghost text-xs"
-                          disabled={busyHash === row.txHash}
-                          aria-label={tr("Download {0}", { "0": label })}
-                          onClick={() => void download(record)}
-                        >
-                          {busyHash === row.txHash ? tr("Preparing…") : tr("Download")}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <>
+          <div
+            className="overflow-x-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            role="region"
+            aria-label={tr("Payment history table")}
+            tabIndex={0}
+          >
+            <table className="w-full min-w-[640px] text-left text-sm">
+              <caption className="sr-only">{tr("Charges settled against your subscriptions, newest first.")}</caption>
+              <thead>
+                <tr className="border-b border-edge text-muted">
+                  <th scope="col" className="py-2 pr-3 font-medium">{tr("Subscription")}</th>
+                  <th scope="col" className="py-2 pr-3 font-medium">{tr("Ledger")}</th>
+                  <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Amount")}</th>
+                  <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Fee")}</th>
+                  <th scope="col" className="py-2 text-right font-medium">{tr("Receipt")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleRows.map((record) => {
+                  const { row } = record;
+                  const label = tr("Receipt for charge {0} on subscription #{1}", {
+                    "0": row.txHash.slice(0, 8),
+                    "1": row.mandateId,
+                  });
+                  return (
+                    <tr key={`${row.mandateId}:${row.txHash}`} className="border-b border-edge last:border-0">
+                      <th scope="row" className="py-2 pr-3 font-medium">#{row.mandateId}</th>
+                      <td className="py-2 pr-3 tabular-nums text-muted">#{row.ledger}</td>
+                      <td className="py-2 pr-3 text-right tabular-nums">{row.amount} {row.token}</td>
+                      <td className="py-2 pr-3 text-right tabular-nums text-muted">{row.fee} {row.token}</td>
+                      <td className="py-2">
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                          <Link
+                            href={`/receipt/?tx=${encodeURIComponent(row.txHash)}&mandate=${row.mandateId}`}
+                            className="btn-ghost text-xs"
+                            aria-label={tr("Open {0}", { "0": label })}
+                          >{tr("View")}</Link>
+                          <button
+                            type="button"
+                            className="btn-ghost text-xs"
+                            disabled={busyHash === row.txHash}
+                            aria-label={tr("Download {0}", { "0": label })}
+                            onClick={() => void download(record)}
+                          >
+                            {busyHash === row.txHash ? tr("Preparing…") : tr("Download")}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {state.rows.length > TABLE_PAGE_SIZE && (
+            <Suspense fallback={null}>
+              <PaginationControl
+                cursor={cursor}
+                limit={TABLE_PAGE_SIZE}
+                total={state.rows.length}
+                onCursorChange={setCursor}
+              />
+            </Suspense>
+          )}
+        </>
       )}
     </Panel>
   );
@@ -273,8 +298,12 @@ function AccountInner() {
   // The mandate whose date picker is open, and the date typed into it.
   const [pauseFor, setPauseFor] = useState<number | null>(null);
   const [pauseDate, setPauseDate] = useState("");
+  const [pauseError, setPauseError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  // When the projections on this page were last received, for staleness.
+  const [lastLoadedAt, setLastLoadedAt] = useState<number | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [capFor, setCapFor] = useState<number | null>(null);
   const [capAmount, setCapAmount] = useState("");
   const [capError, setCapError] = useState<string | null>(null);
@@ -324,6 +353,13 @@ function AccountInner() {
   useEffect(() => {
     addressRef.current = viewAddress;
   }, [viewAddress]);
+  // Once the page unmounts no address is current, so every guarded callback
+  // returns instead of setting state on a page that is gone.
+  useEffect(() => {
+    return () => {
+      addressRef.current = null;
+    };
+  }, []);
 
   // The vault holds the configured token; each mandate carries the token it
   // was opened against, which the indexer does not report.
@@ -360,6 +396,7 @@ function AccountInner() {
   const load = useCallback(async () => {
     addressRef.current = viewAddress;
     if (!viewAddress) return;
+    setRefreshing(true);
     const who = viewAddress;
     const [bal, res, hist] = await Promise.allSettled([
       payflow.vaultBalance(source, who, config.contracts.token),
@@ -422,6 +459,10 @@ function AccountInner() {
         setMissingTrustlines(missing);
       }
     }
+    if (addressRef.current === who) {
+      setLastLoadedAt(Date.now());
+      setRefreshing(false);
+    }
   }, [viewAddress, source, configuredTokens]);
 
   // SSE stream for live updates (payflow-backend#19)
@@ -472,6 +513,8 @@ function AccountInner() {
       setError(null);
       setDone(null);
       setExporting(false);
+      setLastLoadedAt(null);
+      setRefreshing(false);
     });
     void load();
   }, [load]);
@@ -834,13 +877,14 @@ function AccountInner() {
     try {
       setBusy(`trustline-${token.symbol}`);
       setError(null);
-      await payflow.addTrustline(
+      setDone(null);
+      const hash = await payflow.addTrustline(
         address,
         signXdr,
         token.classicAsset.code,
         token.classicAsset.issuer,
       );
-      setDone(`Added trustline for ${token.symbol}.`);
+      setDone(hash);
       await checkTrustlines();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -1016,6 +1060,7 @@ function AccountInner() {
     setPauseFor(mandateId);
     const week = new Date(Date.now() + 7 * 86_400_000);
     setPauseDate(week.toISOString().slice(0, 10));
+    setPauseError(null);
     setConfirmCancel(null);
     setError(null);
   }
@@ -1024,13 +1069,16 @@ function AccountInner() {
     if (!address || isReadOnly) return;
     const until = parsePauseDate(pauseDate);
     if (until === null) {
-      setError(tr("Pick a date for the mandate to resume on."));
+      setPauseError(tr("Pick a date for the mandate to resume on."));
+      document.getElementById(`pause-until-${mandateId}`)?.focus();
       return;
     }
     if (until * 1000 <= Date.now()) {
-      setError(tr("Pick a date in the future."));
+      setPauseError(tr("Pick a date in the future."));
+      document.getElementById(`pause-until-${mandateId}`)?.focus();
       return;
     }
+    setPauseError(null);
     await run(`pause-until-${mandateId}`, () =>
       payflow.pauseUntil(address, signXdr, mandateId, until),
     );
@@ -1243,13 +1291,13 @@ function AccountInner() {
         <Stat
           label={tr("Vault balance")}
           loading={balance === null}
-          value={formatAmount(balance ?? 0n, vaultMeta)}
+          value={<Money amount={balance ?? 0n} meta={vaultMeta} />}
           hint={tr("Available to be charged")}
         />
         <Stat
           label={tr("Committed to subscriptions")}
           loading={commitment === null}
-          value={formatAmount(commitment?.committed ?? 0n, vaultMeta)}
+          value={<Money amount={commitment?.committed ?? 0n} meta={vaultMeta} />}
           hint={
             commitment && commitment.shortfall > 0n
               ? tr("Short of the next charges by {0}", {
@@ -1261,7 +1309,7 @@ function AccountInner() {
         <Stat
           label={tr("Freely withdrawable")}
           loading={commitment === null}
-          value={formatAmount(commitment?.free ?? 0n, vaultMeta)}
+          value={<Money amount={commitment?.free ?? 0n} meta={vaultMeta} />}
           hint={tr("Balance left after those charges")}
         />
         <Stat
@@ -1305,6 +1353,12 @@ function AccountInner() {
 
       <ContractVersionNotice />
       <SyncLagIndicator />
+      <StaleDataNotice
+        fetchedAt={lastLoadedAt}
+        refreshing={refreshing}
+        onRefresh={() => { void load(); }}
+        className="mb-4"
+      />
       <NotificationCentre
         address={address}
         notifications={evaluateSubscriberNotifications({
@@ -1358,12 +1412,11 @@ function AccountInner() {
                     : tr("Accepts 5, 5.0 — and 5,0 where commas are decimals.")
                 }
                 hideError={withdrawError !== null}
-                describedBy={withdrawError ? "withdraw-amount-error" : undefined}
+                invalid={withdrawError !== null}
+                {...(withdrawError ? { describedBy: "withdraw-amount-error" } : {})}
               />
               {withdrawError && (
-                <p id="withdraw-amount-error" role="alert" className="mt-1 text-sm text-danger">
-                  {translateMessage(withdrawError)}
-                </p>
+                <InlineError id="withdraw-amount-error">{withdrawError}</InlineError>
               )}
             </div>
             <button
@@ -1483,7 +1536,7 @@ function AccountInner() {
                   disabled={busy !== null}
                 />
                 {recipientDisplayError && (
-                  <p id="fund-recipient-error" className="mt-1 text-sm text-danger">
+                  <p id="fund-recipient-error" role="alert" className="mt-1 text-sm text-danger">
                     {translateMessage(recipientDisplayError)}
                   </p>
                 )}
@@ -1522,7 +1575,7 @@ function AccountInner() {
         subtitle={tr("Deposits, withdrawals and debits behind your balance.")}
       >
         {history === null ? (
-          <Empty>{tr("Loading history…")}</Empty>
+          <SkeletonRows rows={3} label={tr("Loading history")} />
         ) : history.length === 0 ? (
           indexerAvailable ? (
             <Empty
@@ -1738,15 +1791,15 @@ function AccountInner() {
                           {discounted !== null ? (
                             <>
                               <span className="font-medium text-fg">
-                                {formatTokenValue(discounted, 4, meta.decimals)} {meta.symbol}
+                                <Money amount={discounted} meta={meta} digits={4} />
                               </span>{" "}
                               <span className="text-xs line-through">
-                                {formatTokenValue(m.amount, 4, meta.decimals)} {meta.symbol}
+                                <Money amount={m.amount} meta={meta} digits={4} />
                               </span>{" "}
                             </>
                           ) : (
                             <>
-                              {formatTokenValue(m.amount, 4, meta.decimals)} {meta.symbol}{" "}
+                              <Money amount={m.amount} meta={meta} digits={4} />{" "}
                             </>
                           )}
                           {formatPeriod(m.period)}{" "}{tr("· to")}{" "}<MerchantAccount value={m.merchant} />
@@ -1754,8 +1807,7 @@ function AccountInner() {
                         {badge && (
                           <div className="mt-1 text-xs text-accent">
                             {discounted !== null ? (
-                              <>{tr("You pay")}{" "}{formatTokenValue(discounted, 4, meta.decimals)}{" "}
-                                {meta.symbol}{" "}{tr("for the next charge")}{remaining === null
+                              <>{tr("You pay")}{" "}<Money amount={discounted} meta={meta} digits={4} />{" "}{tr("for the next charge")}{remaining === null
                                   ? "."
                                   : remaining === 1
                                     ?tr(", then the full price.")
@@ -1800,7 +1852,7 @@ function AccountInner() {
                             <div className="flex flex-wrap items-center justify-between gap-3">
                               <div>
                                 <p className="font-medium">{tr("This subscription is past due — your vault is short by")}{" "}
-                                  {formatAmount(pastDueShortfall, meta)}{" "}{tr("for the next charge.")}</p>
+                                  <Money amount={pastDueShortfall} meta={meta} />{" "}{tr("for the next charge.")}</p>
                                 {pastDueUntil && (
                                   <p className="mt-1 text-xs text-muted">{tr("The grace period ends")}{" "}{formatDate(pastDueUntil)}{tr(". After that, the mandate may expire if the charge cannot be settled.")}</p>
                                 )}
@@ -1929,7 +1981,12 @@ function AccountInner() {
                                 min={minPauseDate()}
                                 value={pauseDate}
                                 disabled={busy !== null}
-                                onChange={(e) => setPauseDate(e.target.value)}
+                                aria-invalid={pauseError !== null || undefined}
+                                aria-describedby={pauseError ? `pause-until-error-${m.id}` : undefined}
+                                onChange={(e) => {
+                                  setPauseDate(e.target.value);
+                                  setPauseError(null);
+                                }}
                               />
                               <button
                                 type="button"
@@ -1945,8 +2002,20 @@ function AccountInner() {
                                 type="button"
                                 className="btn-ghost"
                                 disabled={busy !== null}
-                                onClick={() => setPauseFor(null)}
+                                onClick={() => {
+                                  setPauseFor(null);
+                                  setPauseError(null);
+                                }}
                               >{tr("Back")}</button>
+                              {pauseError && (
+                                <p
+                                  id={`pause-until-error-${m.id}`}
+                                  role="alert"
+                                  className="w-full text-xs text-danger"
+                                >
+                                  {pauseError}
+                                </p>
+                              )}
                             </>
                           ) : (
                             <button
@@ -2053,6 +2122,7 @@ function AccountInner() {
                             {transferDisplayError && (
                               <p
                                 id={`transfer-to-error-${m.id}`}
+                                role="alert"
                                 className="mt-1 text-sm text-danger"
                               >
                                 {transferDisplayError}
@@ -2102,7 +2172,12 @@ function AccountInner() {
                           inputMode="numeric"
                           className="input mt-1 w-full"
                           value={capAmount}
-                          onChange={(e) => setCapAmount(e.target.value)}
+                          onChange={(e) => {
+                            setCapAmount(e.target.value);
+                            setCapError(null);
+                          }}
+                          aria-invalid={capError !== null || undefined}
+                          aria-describedby={capError ? `cap-error-${m.id}` : undefined}
                           disabled={busy !== null}
                         />
                       </div>
@@ -2118,12 +2193,15 @@ function AccountInner() {
                         type="button"
                         className="btn-ghost"
                         disabled={busy !== null}
-                        onClick={() => setCapFor(null)}
+                        onClick={() => {
+                          setCapFor(null);
+                          setCapError(null);
+                        }}
                       >
                         Close
                       </button>
                       {capError && (
-                        <p className="w-full text-xs text-rose-300" role="alert">
+                        <p id={`cap-error-${m.id}`} className="w-full text-xs text-danger" role="alert">
                           {capError}
                         </p>
                       )}
@@ -2138,7 +2216,7 @@ function AccountInner() {
                         <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
                           <h3 id={`schedule-${m.id}`} className="text-sm font-medium">{tr("Upcoming charges")}</h3>
                           <span className="text-xs text-muted">{tr("Next")}{" "}{formatNumber(schedule.charges.length)}{" "}{tr("total")}{" "}
-                            {formatAmount(schedule.total, meta)}
+                            <Money amount={schedule.total} meta={meta} />
                           </span>
                         </div>
                         <ol className="mt-2 space-y-1.5">
@@ -2154,7 +2232,7 @@ function AccountInner() {
                                 {formatDate(charge.due)}
                               </time>
                               <span className="tabular-nums">
-                                {formatAmount(charge.amount, meta)}
+                                <Money amount={charge.amount} meta={meta} />
                               </span>
                             </li>
                           ))}
@@ -2162,7 +2240,7 @@ function AccountInner() {
                         <div className="mt-2 flex flex-wrap justify-between gap-2 text-xs text-muted">
                           <span>{tr("Running total")}{" "}
                             <strong className="font-medium text-fg">
-                              {formatAmount(schedule.total, meta)}
+                              <Money amount={schedule.total} meta={meta} />
                             </strong>
                           </span>
                           {schedule.finalDate !== null && (
@@ -2173,7 +2251,7 @@ function AccountInner() {
                           <p
                             role="status"
                             className="mt-2 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger"
-                          >{tr("Your vault is short by")}{" "}{formatAmount(shortfall, meta)}{" "}{tr("for the next charge. Deposit before")}{" "}{formatDate(m.next_charge)}{" "}{tr("or it will fail.")}</p>
+                          >{tr("Your vault is short by")}{" "}<Money amount={shortfall} meta={meta} />{" "}{tr("for the next charge. Deposit before")}{" "}{formatDate(m.next_charge)}{" "}{tr("or it will fail.")}</p>
                         )}
                       </section>
                     )}
@@ -2203,6 +2281,8 @@ function AccountInner() {
         confirmLabel={tr("Cancel subscriptions")}
         busy={busy === "cancel-all"}
         busyLabel={tr("Cancelling…")}
+        confirmDisabled={networkMismatch}
+        error={error ?? undefined}
         danger
       >
         <p className="text-muted">

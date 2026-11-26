@@ -1,20 +1,23 @@
 // @vitest-environment jsdom
 import { useEffect } from "react";
-import { act, cleanup, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SIGNATURE_CANCELLED_MESSAGE } from "@/lib/signature-error";
 import {
   ACCOUNT_CHANGED_ERROR,
+  RECONNECT_DISCONNECTED_ERROR,
   STORAGE_KEY,
   WalletProvider,
   checkNetworkMismatch,
   parseStoredSession,
+  resolveReconnectSession,
   serializeSession,
   setKitPromiseForTesting,
   shouldUpdateAddress,
   updateStoredSessionAddress,
   useWallet,
 } from "@/lib/wallet";
+import { merchantAuthToken } from "@/lib/sep10";
 import type { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit";
 
 const ADDRESS_A = "GAEWDXVDI3WI35TWTZXNQ4NTRYIG6J34XPRSNKX655LBA377M5ZOCBY5";
@@ -105,6 +108,26 @@ describe("wallet pure functions", () => {
     it("returns null when updating an invalid session string", () => {
       expect(updateStoredSessionAddress(null, ADDRESS_B)).toBeNull();
       expect(updateStoredSessionAddress("invalid", ADDRESS_B)).toBeNull();
+    });
+
+    it("resolves reconnect session from storage or in-memory fallback", () => {
+      expect(resolveReconnectSession(null, null, null)).toBeNull();
+      expect(resolveReconnectSession("bad-json", null, null)).toBeNull();
+      expect(
+        resolveReconnectSession(
+          JSON.stringify({ walletId: WALLET_ID, address: ADDRESS_A }),
+          null,
+          null,
+        ),
+      ).toEqual({ walletId: WALLET_ID, address: ADDRESS_A });
+      expect(resolveReconnectSession(null, WALLET_ID, ADDRESS_A)).toEqual({
+        walletId: WALLET_ID,
+        address: ADDRESS_A,
+      });
+      expect(resolveReconnectSession(null, null, ADDRESS_A)).toEqual({
+        walletId: "",
+        address: ADDRESS_A,
+      });
     });
   });
 });
@@ -588,6 +611,53 @@ describe("WalletProvider connection and signing lifecycle", () => {
     expect(kit.signTransaction).not.toHaveBeenCalled();
   });
 
+  it("rechecks the wallet network immediately before signing", async () => {
+    kit.getNetwork
+      .mockResolvedValueOnce({ networkPassphrase: TESTNET_PASSPHRASE })
+      .mockResolvedValueOnce({ networkPassphrase: PUBLIC_PASSPHRASE });
+    const { result } = mountWallet();
+    await act(async () => result.current.connect());
+
+    await expect(result.current.signXdr("UNSIGNED")).rejects.toThrow("correct network");
+    await waitFor(() => expect(result.current.networkMismatch).toBe(true));
+    expect(kit.signTransaction).not.toHaveBeenCalled();
+  });
+
+  it("shows an action explanation and only opens the wallet after confirmation", async () => {
+    const { result } = mountWallet();
+    await act(async () => result.current.connect());
+
+    let signing!: Promise<string>;
+    act(() => {
+      signing = result.current.signXdr("UNSIGNED", "deposit tokens into a vault");
+    });
+
+    const dialog = await screen.findByRole("dialog", { name: "Review this wallet action?" });
+    expect(dialog.textContent).toContain(
+      "This transaction will deposit tokens into a vault.",
+    );
+    expect(kit.signTransaction).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue to wallet" }));
+    await expect(signing).resolves.toBe("SIGNED_XDR");
+    expect(kit.signTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not ask the wallet to sign when the action explanation is cancelled", async () => {
+    const { result } = mountWallet();
+    await act(async () => result.current.connect());
+
+    let signing!: Promise<string>;
+    act(() => {
+      signing = result.current.signXdr("UNSIGNED", "deposit tokens into a vault");
+    });
+    await screen.findByRole("dialog", { name: "Review this wallet action?" });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await expect(signing).rejects.toThrow(SIGNATURE_CANCELLED_MESSAGE);
+    expect(kit.signTransaction).not.toHaveBeenCalled();
+  });
+
   it("rejects signing while disconnected before accessing the wallet", async () => {
     const { result } = mountWallet();
     await expect(result.current.signXdr("UNSIGNED")).rejects.toThrow("Connect a wallet first");
@@ -632,7 +702,110 @@ describe("WalletProvider connection and signing lifecycle", () => {
     unmount();
     kit.getAddress.mockClear();
     window.dispatchEvent(new Event("focus"));
+    window.dispatchEvent(new Event("pageshow"));
     document.dispatchEvent(new Event("visibilitychange"));
     expect(kit.getAddress).not.toHaveBeenCalled();
+  });
+
+  it("re-establishes the wallet session on visibility resume without a full reload", async () => {
+    localStorage.setItem(STORAGE_KEY, serializeSession(WALLET_ID, ADDRESS_A));
+    const { result } = mountWallet();
+    await waitFor(() => expect(result.current.address).toBe(ADDRESS_A));
+
+    kit.setWallet.mockClear();
+    kit.getAddress.mockClear();
+    kit.getNetwork.mockResolvedValue({ networkPassphrase: PUBLIC_PASSPHRASE });
+
+    Object.defineProperty(document, "visibilityState", {
+      value: "hidden",
+      configurable: true,
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+
+    Object.defineProperty(document, "visibilityState", {
+      value: "visible",
+      configurable: true,
+    });
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    expect(kit.setWallet).toHaveBeenCalledWith(WALLET_ID);
+    expect(kit.getAddress).toHaveBeenCalled();
+    expect(result.current.networkMismatch).toBe(true);
+    expect(result.current.reconnecting).toBe(false);
+    expect(result.current.reconnectError).toBeNull();
+  });
+
+  it("exposes loading and error states while reconnecting and recovers on retry", async () => {
+    const { WalletButton } = await import("@/components/WalletButton");
+    localStorage.setItem(STORAGE_KEY, serializeSession(WALLET_ID, ADDRESS_A));
+
+    let resolveReconnect!: (value: { address: string }) => void;
+    kit.getAddress.mockResolvedValueOnce({ address: ADDRESS_A });
+
+    render(
+      <WalletProvider>
+        <WalletButton />
+      </WalletProvider>,
+    );
+
+    expect(await screen.findByTitle(`${ADDRESS_A} — click to disconnect`)).toBeTruthy();
+
+    // Simulate failed background resume first
+    kit.getAddress.mockRejectedValueOnce(new Error("Extension locked"));
+    await act(async () => {
+      window.dispatchEvent(new Event("pageshow"));
+    });
+
+    const alertEl = await screen.findByRole("alert");
+    expect(alertEl.textContent).toContain("Session needs reconnect");
+    expect(alertEl.className).toContain("text-warn");
+
+    // Retry reconnect via button: verify loading state then active state
+    kit.getAddress.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveReconnect = resolve;
+        }),
+    );
+
+    const retryButton = screen.getByRole("button", { name: "Reconnect wallet session" });
+    act(() => {
+      retryButton.click();
+    });
+
+    const statusEl = await screen.findByRole("status");
+    expect(statusEl.getAttribute("aria-busy")).toBe("true");
+    expect(statusEl.textContent).toContain("Reconnecting…");
+
+    await act(async () => {
+      resolveReconnect({ address: ADDRESS_A });
+    });
+
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(screen.getByTitle(`${ADDRESS_A} — click to disconnect`)).toBeTruthy();
+  });
+
+  it("sets reconnectError when wallet returns an empty address on resume", async () => {
+    localStorage.setItem(STORAGE_KEY, serializeSession(WALLET_ID, ADDRESS_A));
+    const { result } = mountWallet();
+    await waitFor(() => expect(result.current.address).toBe(ADDRESS_A));
+
+    kit.getAddress.mockResolvedValueOnce({ address: "" });
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+
+    expect(result.current.reconnectError).toBe(RECONNECT_DISCONNECTED_ERROR);
+    expect(result.current.address).toBe(ADDRESS_A);
+  });
+
+  it("configures merchant auth token provider only for connected account", async () => {
+    localStorage.setItem(STORAGE_KEY, serializeSession(WALLET_ID, ADDRESS_A));
+    const { result } = mountWallet();
+    await waitFor(() => expect(result.current.address).toBe(ADDRESS_A));
+
+    expect(await merchantAuthToken(ADDRESS_B)).toBeNull();
   });
 });

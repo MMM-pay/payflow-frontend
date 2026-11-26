@@ -268,9 +268,13 @@ describe("AccountPage", () => {
     render(<AccountPage />);
 
     // 50_000_000 stroops renders as 5 XLM, not 50000000.
-    expect(await screen.findByText("5 XLM")).toBeTruthy();
+    expect(await screen.findByLabelText("5 XLM")).toBeTruthy();
     expect(screen.getByText("Mandate #7")).toBeTruthy();
-    expect(screen.getByText(/1 XLM per month/)).toBeTruthy();
+    expect(
+      (await screen.findAllByLabelText("1 XLM")).some((amount) =>
+        amount.closest("div")?.textContent?.includes("1 XLM per month"),
+      ),
+    ).toBe(true);
     expect(screen.getByRole("button", { name: "Pause" })).toBeTruthy();
     expect(
       screen.getByRole("button", { name: "Cancel subscription #7" }),
@@ -400,8 +404,12 @@ describe("AccountPage", () => {
 
     render(<AccountPage />);
 
-    expect(await screen.findByText("50 USDC")).toBeTruthy();
-    expect(await screen.findByText(/10 USDC per month/)).toBeTruthy();
+    expect(await screen.findByLabelText("50 USDC")).toBeTruthy();
+    expect(
+      (await screen.findAllByLabelText("10 USDC")).some((amount) =>
+        amount.closest("div")?.textContent?.includes("10 USDC per month"),
+      ),
+    ).toBe(true);
     expect(screen.getByLabelText("Amount (USDC)")).toBeTruthy();
     expect(payflowMock.readContract).toHaveBeenCalledWith(
       expect.any(String),
@@ -418,7 +426,7 @@ describe("AccountPage", () => {
     render(<AccountPage />);
 
     // Degrades to the native assumption rather than blanking the page.
-    expect(await screen.findByText("5 XLM")).toBeTruthy();
+    expect(await screen.findByLabelText("5 XLM")).toBeTruthy();
   });
 
   it("asks for confirmation before cancelling a subscription", async () => {
