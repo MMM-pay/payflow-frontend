@@ -30,7 +30,7 @@ const mocks = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("@/lib/api", () => ({ api: { plans: mocks.plans } }));
+vi.mock("@/lib/api", () => ({ api: { plans: mocks.plans, planStats: async () => null } }));
 vi.mock("@/lib/chain", () => ({ chainPlans: mocks.chainPlans }));
 // The page reads these from the SDK-free core, so the stubs stand there too.
 vi.mock("@/lib/payflow-core", async (importOriginal) => ({
@@ -106,7 +106,7 @@ describe("subscribe confirmation: gating the signature", () => {
     const dialog = openDialog(button);
     const inside = within(dialog);
 
-    expect(inside.getByText("5 XLM")).toBeTruthy();
+    expect(inside.getByLabelText("5 XLM")).toBeTruthy();
     expect(inside.getByText("per month")).toBeTruthy();
     expect(inside.getByText("Due now")).toBeTruthy();
     expect(inside.getByText("No limit — charges continue until you cancel.")).toBeTruthy();
@@ -114,7 +114,10 @@ describe("subscribe confirmation: gating the signature", () => {
     expect(inside.getByText(/A mandate is a standing permission/)).toBeTruthy();
     // The fee is read from the contract as basis points; 1% of 5 XLM is 0.05 XLM.
     // It resolves after the dialog opens, so the row starts on "Checking…".
-    await waitFor(() => expect(inside.getByText("0.05 XLM (1%)")).toBeTruthy());
+    await waitFor(() => {
+      expect(inside.getByLabelText("0.05 XLM")).toBeTruthy();
+      expect(inside.getByText("(1%)")).toBeTruthy();
+    });
   });
 
   it("says when a trial pushes the first charge back", async () => {
@@ -225,8 +228,11 @@ describe("subscribe confirmation: degraded sources", () => {
     const { button } = await openPage(null);
     expect(screen.getByText(/Reading plans directly from the contract/)).toBeTruthy();
     const inside = within(openDialog(button));
-    expect(inside.getByText("5 XLM")).toBeTruthy();
-    await waitFor(() => expect(inside.getByText("0.05 XLM (1%)")).toBeTruthy());
+    expect(inside.getByLabelText("5 XLM")).toBeTruthy();
+    await waitFor(() => {
+      expect(inside.getByLabelText("0.05 XLM")).toBeTruthy();
+      expect(inside.getByText("(1%)")).toBeTruthy();
+    });
   });
 
   it("says the fee is unavailable when the contract read fails, and still confirms", async () => {

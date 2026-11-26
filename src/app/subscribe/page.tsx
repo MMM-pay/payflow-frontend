@@ -5,6 +5,7 @@ import type { Translation } from "@/i18n/translate";
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import * as navigation from "next/navigation";
 import { useSearchParams } from "next/navigation";
 import { api, type ApiPlan } from "@/lib/api";
 import { chainPlans } from "@/lib/chain";
@@ -28,7 +29,7 @@ import { filterAndSortPlans, type PlanPeriodOption, type PlanSortOption } from "
 import { formatUsdEstimate, formatUsdcEstimate, useXlmUsdPrice } from "@/lib/price";
 import { checkChargeLimit, confirmationFor } from "@/lib/subscribe-confirmation";
 import { observeContractRecord } from "@/lib/contract-compat";
-import { Empty, MerchantAccount, Notice, Panel, SkeletonPlanCards, TxLink } from "@/components/ui";
+import { Empty, MerchantAccount, Notice, Panel, SkeletonPlanCards, TimeAgo, TxLink } from "@/components/ui";
 import { useAction } from "@/lib/useAction";
 import { Search } from "@/components/Search";
 import { SubscriberGuide } from "@/components/SubscriberGuide";
@@ -155,8 +156,35 @@ function ComparisonTable({
   );
 }
 
+function usePrefetchRouter() {
+  if ("useRouter" in navigation) {
+    try {
+      const getRouter = (navigation as Record<string, unknown>)["useRouter"];
+      if (typeof getRouter === "function") {
+        return (getRouter as () => { prefetch?: (url: string) => void })() ?? null;
+      }
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 function SubscribeInner() {
   const { t: tr, formatPeriod, formatDate, formatWhen, translateMessage, formatTrialLength, trialBadge, formatTokenValue, formatUsdString, formatNumber, formatAmount, formatFeeBps } = useI18n();
+  const router = usePrefetchRouter();
+  const prefetchPlan = useCallback(
+    (planId: number) => {
+      try {
+        if (router && typeof router.prefetch === "function") {
+          router.prefetch(`/subscribe/?plan=${planId}`);
+        }
+      } catch {
+        // ignore
+      }
+    },
+    [router],
+  );
   const searchParams = useSearchParams();
   const sortParam = (searchParams?.get("sort") as PlanSortOption) || "newest";
   // A shared link (?plan=12) shows that one plan instead of the catalogue.
@@ -176,6 +204,17 @@ function SubscribeInner() {
 
   const { address, networkMismatch, signXdr, signing } = useWallet();
   const [plans, setPlans] = useState<ApiPlan[] | null>(null);
+  /**
+   * Per-plan stats keyed by plan id, populated from the stats API.
+   *
+   * A missing key means the fetch for that plan has not returned yet — the
+   * card shows a loading placeholder rather than a misleading zero.
+   * `null` means neither the API nor any source could supply the data — the
+   * count is hidden entirely rather than fabricated.
+   */
+  const [planStats, setPlanStats] = useState<
+    Record<number, { subscriber_count: number } | null>
+  >({});
   const [maxCharges, setMaxCharges] = useState<Record<number, string>>({});
   const [depositBusy, setDepositBusy] = useState<number | null>(null);
   const [vaultBalances, setVaultBalances] = useState<Record<string, bigint>>({});
@@ -294,6 +333,28 @@ function SubscribeInner() {
       setPlans(loaded);
       setDirect(!res);
       setLoadFailed(failed);
+
+      // Popularity signal: fetch each plan's subscriber count from the stats
+      // API. Every call fails soft, so a backend that does not serve the
+      // endpoint simply leaves the count hidden.
+      if (loaded.length > 0) {
+        void Promise.all(
+          loaded.map(async (plan) => {
+            // The backend fails soft and the stat source may be unable to
+            // supply a count; treat anything but a real object as absent.
+            const stats = await api.planStats(plan.id);
+            if (generation === request.current) {
+              setPlanStats((prev) => ({
+                ...prev,
+                [plan.id]:
+                  stats !== null && stats !== undefined && typeof stats.subscriber_count === "number"
+                    ? { subscriber_count: stats.subscriber_count }
+                    : null,
+              }));
+            }
+          }),
+        );
+      }
     }
     return loaded;
   }, [address]);
@@ -765,15 +826,14 @@ function SubscribeInner() {
                       ? formatUsdString(formatUsdcEstimate(plan.amount, meta.decimals))
                       : null;
                 const selectedForCompare = compareIds.includes(plan.id);
-                const cap = checkChargeLimit(maxCharges[plan.id]);
-                const currentBal = vaultBalances[plan.token] ?? 0n;
-                const periods = cap.ok && cap.limit > 0 ? cap.limit : 3;
-                const required = BigInt(plan.amount) * BigInt(periods);
-                const funded = currentBal >= required;
+                const stats = planStats[plan.id];
+                const statsLoading = !(plan.id in planStats);
                 return (
                   <Panel
                     key={plan.id}
                     title={plan.name ||tr("Plan #{0}", { "0": plan.id })}
+                    onMouseEnter={() => prefetchPlan(plan.id)}
+                    onFocusCapture={() => prefetchPlan(plan.id)}
                     actions={
                       <label htmlFor={`compare-plan-${plan.id}`} className="inline-flex cursor-pointer items-center gap-2 rounded-lg px-1 py-1 text-sm text-muted">
                         <input
@@ -815,13 +875,32 @@ function SubscribeInner() {
                         {badge && (
                           <p className="mt-1 text-xs text-muted">{tr("Nothing is charged for")}{" "}{formatTrialLength(trialSeconds(plan))}{tr(". You can cancel any time before the first charge and pay nothing.")}</p>
                         )}
+                        {/* Per-plan subscriber count from the stats API. While the
+                            fetch is in flight nothing is shown (never a
+                            misleading zero); when no source can supply it the
+                            block is hidden entirely. */}
+                        {statsLoading ? (
+                          <div
+                            className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted"
+                            aria-busy="true"
+                            role="status"
+                          >
+                            <span className="sr-only">{tr("Loading subscribers")}</span>
+                            <span className="h-3 w-12 rounded bg-fg/10 motion-safe:animate-pulse" aria-hidden="true" />
+                          </div>
+                        ) : stats ? (
+                          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
+                            <span className="text-muted">{tr("Subscribers")}</span>
+                            <span className="font-medium tabular-nums">
+                              {formatNumber(stats.subscriber_count)}
+                            </span>
+                          </div>
+                        ) : null}
                       </div>
 
                       {availability.until !== null && (
                         <p className="text-sm text-muted">{tr("Available until")}{" "}
-                          <time dateTime={new Date(availability.until * 1000).toISOString()}>
-                            {formatDate(availability.until)} ({formatWhen(availability.until, now * 1000)})
-                          </time>
+                          <TimeAgo value={availability.until} now={now * 1000} />
                         </p>
                       )}
                       {availability.seats !== null && (
@@ -875,7 +954,7 @@ function SubscribeInner() {
                             <div className="rounded-lg border border-edge bg-surface/40 p-2 text-xs space-y-1">
                               <div className="flex items-center justify-between font-medium">
                                 <span className="text-muted">{tr("Guided Flow")}</span>
-                                <span className={funded ? "text-emerald-500 font-semibold" : "text-amber-500 font-semibold"}>
+                                <span className={funded ? "text-accent font-semibold" : "text-warn font-semibold"}>
                                   {funded ? tr("Step 2: Ready to Subscribe") : tr("Step 1: Fund Vault First")}
                                 </span>
                               </div>

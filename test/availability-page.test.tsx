@@ -6,11 +6,12 @@ import SubscribePage from "@/app/subscribe/page";
 import type { ApiPlan } from "@/lib/api";
 
 const mocks = vi.hoisted(() => ({ plans: vi.fn(), chain: vi.fn(), subscribe: vi.fn(),
+  charges: vi.fn(),
   feeBps: vi.fn(),
   wallet: { address: "wallet-a" as string | null, networkMismatch: false, signXdr: vi.fn() } }));
 // The subscribe page reads the `?plan=` parameter of a shared link.
 vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams() }));
-vi.mock("@/lib/api", () => ({ api: { plans: mocks.plans, mandatesFor: async () => ({ mandates: [] }) } }));
+vi.mock("@/lib/api", () => ({ api: { plans: mocks.plans, mandatesFor: async () => ({ mandates: [] }), charges: mocks.charges, planStats: async () => null } }));
 vi.mock("@/lib/chain", () => ({ chainPlans: mocks.chain }));
 vi.mock("@/lib/payflow", () => ({
   // The account page reads the trustline check as a module export.
@@ -158,6 +159,14 @@ it.each([
   fireEvent.click(button);
   expect(mocks.subscribe).not.toHaveBeenCalled();
 });
+it("guides an empty charge list rather than leaving it blank", async () => {
+  mocks.plans.mockResolvedValue({ plans: [plan()] });
+  render(<PlanPageClient planId="1" />);
+  expect(await screen.findByText("No charges yet")).toBeTruthy();
+  expect(screen.getByRole("link", { name: "Subscribe to this plan" }).getAttribute("href")).toBe(
+    "#plan-subscribe",
+  );
+});
 it("rechecks seats on the detail route before submission", async () => {
   mocks.plans.mockResolvedValueOnce({ plans: [plan({ max_subscribers: 1, subscriber_count: 0 })] })
     .mockResolvedValue({ plans: [plan({ max_subscribers: 1, subscriber_count: 1 })] });
@@ -165,6 +174,19 @@ it("rechecks seats on the detail route before submission", async () => {
   fireEvent.click(await screen.findByRole("button", { name: "Subscribe" }));
   await vi.waitFor(() => expect(screen.getAllByText(/This plan is full/).length).toBeGreaterThan(0));
   expect(mocks.subscribe).not.toHaveBeenCalled();
+});
+it("shows the full plan terms — fee, seats, cutoff and trial — on the detail route", async () => {
+  const cutoff = Math.floor(Date.now() / 1000) + 30 * 86400;
+  mocks.plans.mockResolvedValue({
+    plans: [plan({ max_subscribers: 5, subscriber_count: 2, available_until: cutoff, trial: 86400 })],
+  });
+  render(<PlanPageClient planId="1" />);
+  expect(await screen.findByText("3 seats left")).toBeTruthy();
+  // The live protocol fee is disclosed next to the price it applies to.
+  expect(await screen.findByText("1%")).toBeTruthy();
+  expect(screen.getByText("Protocol fee")).toBeTruthy();
+  expect(screen.getByText("1-day free trial")).toBeTruthy();
+  expect(screen.getByText("Available until")).toBeTruthy();
 });
 it("keeps unlimited detail-route subscriptions working", async () => {
   mocks.plans.mockResolvedValue({ plans: [plan({ max_subscribers: 0, available_until: 0 })] });

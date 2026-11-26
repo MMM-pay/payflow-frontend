@@ -144,6 +144,24 @@ describe("SyncLagIndicator", () => {
       expect(indicator.textContent).toContain("Backend is catching up — numbers may lag on-chain activity.");
     });
 
+    it("does not fetch backend state when an explicit state override is supplied", () => {
+      vi.spyOn(api, "isConfigured").mockReturnValue(true);
+      const health = vi.spyOn(api, "health");
+
+      renderWithI18n(
+        <SyncLagIndicator
+          state={{
+            state: "catching_up",
+            isCatchingUp: true,
+            lag: 18,
+            status: "catching_up",
+          }}
+        />,
+      );
+
+      expect(health).not.toHaveBeenCalled();
+    });
+
     it("renders loading state only when showLoading is true", () => {
       const { container, rerender } = renderWithI18n(
         <SyncLagIndicator state={{ loading: true, isCatchingUp: false }} />,

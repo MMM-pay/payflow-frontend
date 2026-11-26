@@ -78,6 +78,15 @@ before review.
 3. Wire it into a page with the `run()` pattern already used in
    `/account` and `/merchant`: set busy, clear notices, refresh on success.
 
+## Adding a page
+
+[docs/adding-a-page.md](docs/adding-a-page.md) walks a new route through end to
+end: where the file goes in the static export, the `pages.json` entry and the
+`layout.tsx` that exports its metadata, the loader hook that reads the indexer
+and falls back to contract state, the i18n catalogues, the JS budget and the
+tests that keep it honest. Read it before copying an existing page — a copy
+inherits the export's constraints without the explanation.
+
 ## Commits
 
 Conventional commits, one logical change each:

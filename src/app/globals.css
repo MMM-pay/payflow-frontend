@@ -128,7 +128,7 @@ body {
  * Chart libraries that animate via JS/SVG attributes also need their own
  * animation flag disabled; see the reduced-motion handling in chart components.
  */
-@media (prefers-reduced-motion: reduce) {
+@media (prefers-reduced-motion: reduce), (prefers-reduced-data: reduce) {
   *,
   *::before,
   *::after {

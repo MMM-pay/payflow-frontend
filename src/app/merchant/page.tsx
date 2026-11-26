@@ -33,8 +33,6 @@ const DEFAULT_TOKENS: readonly ConfiguredToken[] = [
   },
 ];
 import {
-  checkDiscountBps,
-  checkDiscountCharges,
   discountedAmount,
   discountBadge,
   remainingDiscountCharges,
@@ -80,6 +78,8 @@ import { SectionShortcuts } from "@/components/SectionShortcuts";
 import { AddressLink, Badge, Empty, InlineError, Notice, Panel, SkeletonRows, Stat, TimeAgo, TxLink } from "@/components/ui";
 import { Search } from "@/components/Search";
 import { ConfirmDialog, confirmTitle } from "@/components/ConfirmDialog";
+import { DiscountForm } from "@/components/DiscountForm";
+import { InfoTip } from "@/components/Tooltip";
 import { observeContractRecord } from "@/lib/contract-compat";
 import { ContractVersionNotice } from "@/components/ContractVersionNotice";
 import { SyncLagIndicator } from "@/components/SyncLagIndicator";
@@ -182,7 +182,10 @@ function FeePreview({
     <span>{tr("Subscriber pays")}{" "}{formatAmount(split.gross, meta)}
       {usdEstimate ? ` (≈ ${usdEstimate})` : ""}{" "}{tr("· protocol fee")}{" "}
       {formatAmount(split.fee, meta)} ({formatFeeBps(feeBps)}{tr(") · you receive")}{" "}
-      {formatAmount(split.net, meta)}.
+      {formatAmount(split.net, meta)}.{" "}
+      <InfoTip label={tr("About the protocol fee")}>
+        {tr("The protocol takes {0} of every charge. The subscriber always pays the plan price; the fee is deducted from your payout.", { "0": formatFeeBps(feeBps) })}
+      </InfoTip>
     </span>
   );
 }
@@ -221,18 +224,17 @@ function ProfilePanel({
 
   const nameCheck = checkProfileName(name);
   const urlCheck = checkProfileUrl(url);
+  const { t: tr } = useI18n();
   const usable = nameCheck.ok && urlCheck.ok;
 
   if (!supported) {
     return (
       <Panel
-        title="Merchant profile"
-        subtitle="A display name and URL shown to subscribers on plan cards."
+        title={tr("Merchant profile")}
+        subtitle={tr("A display name and URL shown to subscribers on plan cards.")}
       >
         <Notice tone="info">
-          The deployed contract does not support merchant profiles yet, so this
-          control is hidden. It will appear once the contract exposes
-          set_profile and get_profile.
+          {tr("The deployed contract does not support merchant profiles yet, so this control is hidden. It will appear once the contract exposes set_profile and get_profile.")}
         </Notice>
       </Panel>
     );
@@ -259,20 +261,18 @@ function ProfilePanel({
 
   return (
     <Panel
-      title="Merchant profile"
-      subtitle="A display name and URL shown to subscribers on plan cards. Stored on-chain."
+      title={tr("Merchant profile")}
+      subtitle={tr("A display name and URL shown to subscribers on plan cards. Stored on-chain.")}
     >
       {error && <Notice tone="error">{error}</Notice>}
       {done && (
         <Notice tone="ok">
-          Profile saved. Transaction <TxLink hash={done} />
+          {tr("Profile saved. Transaction")} <TxLink hash={done} />
         </Notice>
       )}
       <div className="flex flex-wrap items-end gap-3">
         <div className="min-w-[12rem] flex-1">
-          <label className="label" htmlFor="profile-name">
-            Display name
-          </label>
+          <label className="label" htmlFor="profile-name">{tr("Display name")}</label>
           <input
             id="profile-name"
             className="input"
@@ -291,9 +291,7 @@ function ProfilePanel({
           )}
         </div>
         <div className="min-w-[16rem] flex-1">
-          <label className="label" htmlFor="profile-url">
-            URL
-          </label>
+          <label className="label" htmlFor="profile-url">{tr("URL")}</label>
           <input
             id="profile-url"
             className="input"
@@ -317,15 +315,15 @@ function ProfilePanel({
           disabled={busy || !usable}
           onClick={() => void save()}
         >
-          {busy ? "Saving…" : "Save profile"}
+          {busy ? tr("Saving…") : tr("Save profile")}
         </button>
       </div>
 
       <div className="mt-4 rounded-lg border border-edge p-3">
-        <p className="text-xs font-medium text-muted">Preview on plan cards</p>
+        <p className="text-xs font-medium text-muted">{tr("Preview on plan cards")}</p>
         <div className="mt-2">
           <div className="font-medium">
-            {nameCheck.ok && nameCheck.name ? nameCheck.name : "Your business name"}
+            {nameCheck.ok && nameCheck.name ? nameCheck.name : tr("Your business name")}
           </div>
           {urlCheck.ok && urlCheck.url ? (
             <div className="text-xs text-muted mono truncate" title={urlCheck.url}>
@@ -354,7 +352,7 @@ function ChargeAttemptsHistory({
   mandateId: number;
   apiConfigured: boolean;
 }) {
-  const { t: tr, formatDate, translateMessage } = useI18n();
+  const { t: tr, translateMessage } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const [attempts, setAttempts] = useState<ApiChargeAttempt[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -423,7 +421,7 @@ function ChargeAttemptsHistory({
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-muted">
-                        {formatDate(attempt.attempted_at)}
+                        <TimeAgo value={attempt.attempted_at} />
                       </span>
                       {attempt.result === "success" ? (
                         <Badge status="Active" />
@@ -579,7 +577,7 @@ function WebhooksPanel({
   merchant: string;
   apiConfigured: boolean;
 }) {
-  const { t: tr, formatDate, translateMessage } = useI18n();
+  const { t: tr, translateMessage } = useI18n();
   const [webhooks, setWebhooks] = useState<ApiWebhook[] | null>(null);
   const [url, setUrl] = useState("");
   const [events, setEvents] = useState<string[]>([]);
@@ -797,7 +795,7 @@ function WebhooksPanel({
                         {w.url}
                       </div>
                       <div className="mt-1 text-xs text-muted">
-                        {w.events.join(", ")} · {formatDate(w.created_at)}
+                        {w.events.join(", ")} · <TimeAgo value={w.created_at} />
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -874,101 +872,6 @@ function WebhooksPanel({
   );
 }
 
-/**
- * The discount a merchant can attach to one mandate.
- *
- * The rate is a percentage the merchant types; it is converted to basis
- * points in integer arithmetic, and the preview says what the subscriber pays
- * while the discount runs and what they pay after it. The discount can only
- * lower the price, so the preview never shows more than the plan's price.
- */
-function DiscountForm({
-  amount,
-  meta,
-  busy,
-  onCancel,
-  onApply,
-}: {
-  amount: bigint;
-  meta: TokenMeta;
-  busy: boolean;
-  onCancel: () => void;
-  onApply: (bps: number, charges: number) => void;
-}) {
-  const { t: tr, formatAmount, translateMessage } = useI18n();
-  const [percent, setPercent] = useState("10");
-  const [charges, setCharges] = useState("3");
-  const bpsCheck = checkDiscountBps(percent);
-  const chargesCheck = checkDiscountCharges(charges);
-  const usable = bpsCheck.ok && chargesCheck.ok;
-
-  return (
-    <div className="mt-3 rounded-lg border border-edge p-3">
-      <p className="text-sm font-medium">{tr("Discount this mandate")}</p>
-      <div className="mt-2 flex flex-wrap items-end gap-3">
-        <div className="min-w-[7rem] flex-1">
-          <label className="label" htmlFor="discount-percent">{tr("Discount (%)")}</label>
-          <input
-            id="discount-percent"
-            className="input"
-            inputMode="decimal"
-            placeholder="10"
-            value={percent}
-            onChange={(e) => setPercent(e.target.value)}
-            aria-invalid={!bpsCheck.ok}
-            aria-describedby={bpsCheck.ok ? undefined : "discount-percent-error"}
-            disabled={busy}
-          />
-        </div>
-        <div className="min-w-[9rem] flex-1">
-          <label className="label" htmlFor="discount-charges">{tr("Charges to cover")}</label>
-          <input
-            id="discount-charges"
-            className="input"
-            inputMode="numeric"
-            placeholder="3"
-            value={charges}
-            onChange={(e) => setCharges(e.target.value)}
-            aria-invalid={!chargesCheck.ok}
-            aria-describedby={chargesCheck.ok ? undefined : "discount-charges-error"}
-            disabled={busy}
-          />
-        </div>
-        <button
-          type="button"
-          className="btn-primary"
-          disabled={busy || !usable}
-          onClick={() => {
-            if (!bpsCheck.ok || !chargesCheck.ok) return;
-            onApply(bpsCheck.bps, chargesCheck.charges);
-          }}
-        >
-          {busy ?tr("Applying…") :tr("Apply discount")}
-        </button>
-        <button type="button" className="btn-ghost" disabled={busy} onClick={onCancel}>{tr("Cancel")}</button>
-      </div>
-
-      {!bpsCheck.ok && (
-        <p id="discount-percent-error" role="alert" className="mt-2 text-sm text-danger">
-          {translateMessage(bpsCheck.message)}
-        </p>
-      )}
-      {!chargesCheck.ok && (
-        <p id="discount-charges-error" role="alert" className="mt-2 text-sm text-danger">
-          {translateMessage(chargesCheck.message)}
-        </p>
-      )}
-
-      {bpsCheck.ok && chargesCheck.ok && (
-        <p className="mt-2 text-sm text-muted">{tr("Subscriber pays")}{" "}{formatAmount(discountedAmount(amount, bpsCheck.bps), meta)}{" "}{tr("for the next")}{" "}{chargesCheck.charges === 1 ?tr("charge") :tr("{0} charges", { "0": chargesCheck.charges })},{" "}{tr("then")}{" "}{formatAmount(amount, meta)}.
-          {discountedAmount(amount, bpsCheck.bps) === 0n && (
-            <>{" "}{tr("This discount rounds the charge down to zero, which the vault cannot debit.")}</>
-          )}
-        </p>
-      )}
-    </div>
-  );
-}
 
 /**
  * The refund a merchant can issue on one mandate.
@@ -2878,10 +2781,10 @@ export default function MerchantPage() {
                       </div>
                       <p className="text-muted">{tr("Add this snippet to any HTML website. Subscribers can click it to subscribe in a secure popup window.")}</p>
                       <pre className="overflow-x-auto rounded border border-edge bg-background p-2 font-mono text-[11px] text-muted">
-                        <code>{`<script src="${typeof window !== "undefined" ? window.location.origin : ""}/payflow-frontend/embed/payflow-embed.js" defer></script>\n<payflow-button\n  plan-id="${p.id}"\n  merchant="${address}"\n  name="${p.name || `Plan #${p.id}`}"\n  amount="${fromStroops(p.amount, 4, meta.decimals)} ${meta.symbol}"\n  period="${formatPeriod(p.period)}">\n</payflow-button>`}</code>
+                        <code>{`<script src="${config.basePath}/payflow-frontend/embed/payflow-embed.js" defer></script>\n<payflow-button\n  plan-id="${p.id}"\n  merchant="${address}"\n  name="${p.name || `Plan #${p.id}`}"\n  amount="${fromStroops(p.amount, 4, meta.decimals)} ${meta.symbol}"\n  period="${formatPeriod(p.period)}">\n</payflow-button>`}</code>
                       </pre>
                       <CopyButton
-                        value={`<script src="${typeof window !== "undefined" ? window.location.origin : ""}/payflow-frontend/embed/payflow-embed.js" defer></script>\n<payflow-button plan-id="${p.id}" merchant="${address}" name="${p.name || `Plan #${p.id}`}" amount="${fromStroops(p.amount, 4, meta.decimals)} ${meta.symbol}" period="${formatPeriod(p.period)}"></payflow-button>`}
+                        value={`<script src="${config.basePath}/payflow-frontend/embed/payflow-embed.js" defer></script>\n<payflow-button plan-id="${p.id}" merchant="${address}" name="${p.name || `Plan #${p.id}`}" amount="${fromStroops(p.amount, 4, meta.decimals)} ${meta.symbol}" period="${formatPeriod(p.period)}"></payflow-button>`}
                         label={tr("embed snippet")}
                       />
                     </div>
@@ -3310,6 +3213,8 @@ export default function MerchantPage() {
                       amount={BigInt(m.amount)}
                       meta={meta}
                       busy={busy === `discount-${m.id}`}
+                      maxCharges={Number(m.max_charges ?? 0)}
+                      chargesMade={Number(m.charges_made ?? 0)}
                       onCancel={() => setDiscountFor(null)}
                       onApply={(bps, charges) =>
                         void run(`discount-${m.id}`, () =>

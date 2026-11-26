@@ -9,6 +9,7 @@ import { chainProtocolStats } from "@/lib/chain";
 import { config } from "@/lib/config";
 import { useNetwork } from "@/lib/network";
 import { AddressLink, Panel, Stat, TxLink } from "@/components/ui";
+import { Money } from "@/components/Money";
 import { SubscriberGuide } from "@/components/SubscriberGuide";
 import{ shortAddress } from "@/lib/format";
 import { metaFor, useTokenMetas } from "@/lib/token";
@@ -101,7 +102,7 @@ export default function HomePage() {
                 </div>
                 <div className="flex flex-wrap items-center gap-3 text-sm text-muted">
                   <span className="tabular-nums font-medium text-fg">
-                    {formatAmount(charge.amount, tokenMeta)}
+                    <Money amount={charge.amount} meta={tokenMeta} />
                   </span>
                   <time dateTime={new Date(charge.timestamp * 1000).toISOString()}>
                     {formatDate(charge.timestamp)}

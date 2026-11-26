@@ -5,6 +5,7 @@ import { useI18n } from "@/i18n/provider";
 import { useEffect, useId, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { CopyButton } from "@/components/CopyButton";
+import { Tooltip } from "@/components/Tooltip";
 import { explorerBase } from "@/lib/config";
 import{ shortAddress } from "@/lib/format";
 import { LABEL_MAX_LENGTH, saveLabel, useAddressLabel } from "@/lib/labels";
@@ -16,6 +17,9 @@ export function Panel({
   subtitle,
   children,
   actions,
+  onMouseEnter,
+  onFocus,
+  onFocusCapture,
 }: {
   /** Optional DOM id, e.g. an anchor target for in-page links. */
   id?: string;
@@ -23,6 +27,9 @@ export function Panel({
   subtitle?: string;
   children: ReactNode;
   actions?: ReactNode;
+  onMouseEnter?: () => void;
+  onFocus?: () => void;
+  onFocusCapture?: () => void;
 }) {
   const { t: tr } = useI18n();
   const titleId = useId();
@@ -30,6 +37,9 @@ export function Panel({
     <section
       className="panel"
       id={id}
+      onMouseEnter={onMouseEnter}
+      onFocus={onFocus}
+      onFocusCapture={onFocusCapture}
       // Naming the section after its heading lets screen-reader users jump
       // between the panels of a long page (a plan card, a form, a table)
       // instead of hearing one undifferentiated run of content.
@@ -57,7 +67,7 @@ export function Stat({
 }: {
   label: string;
   value: ReactNode;
-  hint?: string;
+  hint?: ReactNode;
   loading?: boolean;
 }) {
   const { t: tr, formatNumber } = useI18n();
@@ -425,18 +435,23 @@ export function AddressLink({
 }
 
 /**
- * A timestamp as relative text ("in 3 days") with the exact local time in the
- * tooltip — and, unlike a bare `title`, in text a screen reader reads out too.
+ * A timestamp as relative text ("in 3 days") with the exact time in a tooltip
+ * that opens on hover and on keyboard focus, and in text a screen reader reads
+ * out too. Use it wherever a single moment is shown, so every page reads the
+ * same way. `now` (milliseconds) lets a caller that already holds a reference
+ * time keep this text consistent with its own.
  */
-export function TimeAgo({ value }: { value: number }) {
+export function TimeAgo({ value, now }: { value: number; now?: number | undefined }) {
   const { formatExactTime, formatWhen } = useI18n();
   if (!value) return <span className="text-muted">—</span>;
   const exact = formatExactTime(value);
   return (
-    <time dateTime={new Date(value * 1000).toISOString()} title={exact}>
-      {formatWhen(value)}
-      <span className="sr-only"> ({exact})</span>
-    </time>
+    <Tooltip content={exact} announce={false}>
+      <time dateTime={new Date(value * 1000).toISOString()}>
+        {formatWhen(value, now)}
+        <span className="sr-only"> ({exact})</span>
+      </time>
+    </Tooltip>
   );
 }
 
@@ -446,9 +461,17 @@ export function TimeAgo({ value }: { value: number }) {
  * out loud in the tooltip and to screen readers, never implied to be vetted.
  * When no name resolves, this is just the address, exactly as before.
  */
-export function MerchantAccount({ value }: { value: string }) {
+export function MerchantAccount({
+  value,
+  resolvedName,
+}: {
+  value: string;
+  /** A name resolved by the caller; supplying one skips the external lookup. */
+  resolvedName?: string | null;
+}) {
   const { t: tr } = useI18n();
-  const name = useOrgName(value);
+  const lookedUpName = useOrgName(resolvedName === undefined ? value : null);
+  const name = resolvedName ?? lookedUpName;
   return (
     <span className="inline-flex max-w-full flex-wrap items-center gap-x-1.5 align-middle">
       {name && (
@@ -554,7 +577,7 @@ export function Empty({
   const { t: tr } = useI18n();
   return (
     <div className="rounded-lg border border-dashed border-edge px-4 py-8 text-center">
-      {title && <p className="text-sm font-medium text-slate-200">{tr(title)}</p>}
+      {title && <p className="text-sm font-medium text-soft">{tr(title)}</p>}
       <p className={`mx-auto max-w-prose text-sm text-muted ${title ? "mt-1" : ""}`}>
         {children}
       </p>
@@ -613,19 +636,41 @@ export function GuideCard({
 export function NetworkMismatchBanner({
   walletNetwork,
   expectedNetwork,
+  expectedNetworkLabel,
+  status,
 }: {
   walletNetwork: string | null;
   expectedNetwork: string;
+  expectedNetworkLabel: string;
+  status: "unknown" | "mismatch";
 }) {
   const { t: tr } = useI18n();
-  if (!walletNetwork) return null;
   return (
-    <div className="flex items-center justify-between gap-4 rounded-lg border border-warn/40 bg-warn/10 px-4 py-3 text-sm text-warn">
+    <div
+      role="alert"
+      className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-warn/40 bg-warn/10 px-4 py-3 text-sm text-warn"
+    >
       <div className="flex items-center gap-2">
         <span aria-hidden="true">⚠</span>
-        <span>
-          <strong>{tr("Network mismatch detected.")}</strong>{" "}{tr("Your wallet is connected to a different network than this app. Switch to")}{" "}
-          <span className="font-mono text-xs">{expectedNetwork}</span>{" "}{tr("to interact with contracts. Contract write operations are disabled while mismatched.")}</span>
+        {status === "unknown" ? (
+          <span>
+            <strong>{tr("Wallet network could not be verified.")}</strong>{" "}
+            {tr("Check that your wallet is connected to")}{" "}
+            <strong>{tr(expectedNetworkLabel)}</strong>{" "}
+            <span className="font-mono text-xs">({expectedNetwork})</span>{" "}
+            {tr("before signing. Signing is disabled until the network can be verified.")}
+          </span>
+        ) : (
+          <span>
+            <strong>{tr("Network mismatch detected.")}</strong>{" "}
+            {tr("Wallet network:")}{" "}
+            <span className="font-mono text-xs">{walletNetwork}</span>.{" "}
+            {tr("This app expects")}{" "}
+            <strong>{tr(expectedNetworkLabel)}</strong>{" "}
+            <span className="font-mono text-xs">({expectedNetwork})</span>.{" "}
+            {tr("Contract write operations are disabled while mismatched.")}
+          </span>
+        )}
       </div>
     </div>
   );
@@ -807,7 +852,5 @@ export function Dialog({
   );
 }
 
-export { SyncLagIndicator } from "./SyncLagIndicator";
-export { Money } from "./Money";
-export { NotificationCentre } from "./NotificationCentre";
+
 

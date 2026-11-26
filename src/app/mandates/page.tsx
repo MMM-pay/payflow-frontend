@@ -24,9 +24,17 @@ import {
   Panel,
   SkeletonRows,
   Stat,
+  TimeAgo,
   TxLink,
 } from "@/components/ui";
-import { ConfirmDialog, confirmTitle } from "@/components/ConfirmDialog";
+import dynamic from "next/dynamic";
+import { confirmTitle } from "@/lib/confirm-title";
+
+// Only rendered once the visitor asks to cancel or end the mandate.
+const ConfirmDialog = dynamic(
+  () => import("@/components/ConfirmDialog").then((m) => m.ConfirmDialog),
+  { ssr: false },
+);
 
 const PaginationControl = lazy(() =>
   import("@/components/Pagination").then((module) => ({
@@ -36,7 +44,7 @@ const PaginationControl = lazy(() =>
 import { cursorPage, TABLE_PAGE_SIZE } from "@/lib/pagination";
 
 function MandateDetailsInner() {
-  const { t: tr, formatPeriod, formatDate, formatWhen, formatAmount, translateMessage, formatTokenValue, formatNumber } = useI18n();
+  const { t: tr, formatPeriod, formatAmount, translateMessage, formatTokenValue, formatNumber } = useI18n();
   const searchParams = useSearchParams();
   const idParam = searchParams?.get("id");
   const mandateId =
@@ -257,8 +265,8 @@ function MandateDetailsInner() {
         />
         <Stat
           label={tr("Next charge")}
-          value={!isTerminal && mandate.next_charge > 0 ? formatDate(mandate.next_charge) : tr("None")}
-          hint={isDue ?tr("Due now") : !isTerminal ? (mandate.next_charge > 0 ? formatWhen(mandate.next_charge) : tr("Scheduled")) :tr("Terminal")}
+          value={!isTerminal && mandate.next_charge > 0 ? <TimeAgo value={mandate.next_charge} /> : tr("None")}
+          hint={isDue ?tr("Due now") : !isTerminal ?tr("Scheduled") :tr("Terminal")}
         />
         <Stat
           label={tr("Protocol fee")}
@@ -305,7 +313,7 @@ function MandateDetailsInner() {
           {mandate.last_charge > 0 && (
             <div className="flex flex-wrap items-center justify-between py-2.5">
               <span className="text-muted">{tr("Last charge settled")}</span>
-              <span>{formatDate(mandate.last_charge)}</span>
+              <span><TimeAgo value={mandate.last_charge} /></span>
             </div>
           )}
         </div>
@@ -486,6 +494,9 @@ function MandateDetailsInner() {
                   <th className="py-2 px-4">{tr("Amount")}</th>
                   <th className="py-2 px-4">{tr("Fee")}</th>
                   <th className="py-2 ps-4">{tr("Transaction")}</th>
+                  <th className="py-2 px-4 text-right">{tr("Amount")}</th>
+                  <th className="py-2 px-4 text-right">{tr("Fee")}</th>
+                  <th className="py-2 pl-4">{tr("Transaction")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-edge">
@@ -497,10 +508,10 @@ function MandateDetailsInner() {
                     <td className="py-3 px-4 tabular-nums">
                       #{formatNumber(c.charges_made)}
                     </td>
-                    <td className="py-3 px-4 font-medium tabular-nums">
+                    <td className="py-3 px-4 text-right font-mono tabular-nums">
                       {formatTokenValue(c.amount, 4, tokenMeta.decimals)} {tokenMeta.symbol}
                     </td>
-                    <td className="py-3 px-4 text-muted tabular-nums">
+                    <td className="py-3 px-4 text-right font-mono tabular-nums text-muted">
                       {formatTokenValue(c.fee, 4, tokenMeta.decimals)} {tokenMeta.symbol}
                     </td>
                     <td className="py-3 ps-4">
