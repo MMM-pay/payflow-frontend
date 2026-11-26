@@ -234,3 +234,40 @@ export function nextChargeAmount(
   if (remaining === 0) return null;
   return discountedAmount(BigInt(mandate.amount), bps);
 }
+
+/**
+ * What a discount would do to the subscriber, so the merchant is told before
+ * signing rather than after.
+ *
+ * - `zeroCharge`: the rate rounds the charge to nothing. The vault cannot
+ *   debit a zero charge, so the charge fails, the mandate goes past due and it
+ *   can end when its grace period runs out.
+ * - `outlastsCap`: the mandate's charge cap (`max_charges`, 0 = open-ended)
+ *   ends it before the discount has covered every charge, so only `remaining`
+ *   of the `covered` charges are ever discounted.
+ */
+export interface DiscountImpact {
+  zeroCharge: boolean;
+  outlastsCap: { remaining: number; covered: number } | null;
+}
+
+export function discountImpact(
+  amount: bigint,
+  bps: number,
+  charges: number,
+  maxCharges: number,
+  chargesMade: number,
+): DiscountImpact {
+  const zeroCharge = amount > 0n && discountedAmount(amount, bps) === 0n;
+  let outlastsCap: DiscountImpact["outlastsCap"] = null;
+  if (Number.isFinite(maxCharges) && maxCharges > 0) {
+    const remaining = Math.max(0, Math.trunc(maxCharges) - Math.max(0, Math.trunc(chargesMade || 0)));
+    if (charges > remaining) outlastsCap = { remaining, covered: charges };
+  }
+  return { zeroCharge, outlastsCap };
+}
+
+/** True when `discountImpact` found something the merchant must confirm. */
+export function discountNeedsConfirmation(impact: DiscountImpact): boolean {
+  return impact.zeroCharge || impact.outlastsCap !== null;
+}

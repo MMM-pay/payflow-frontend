@@ -28,7 +28,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     // first paint, so the server markup (no attribute) and the DOM can differ
     // by design. Suppressing the warning is the documented pattern for a
     // pre-paint theme script.
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" dir="ltr" suppressHydrationWarning>
       <head>
         <meta name="theme-color" content="#0b0e14" />
         <link rel="apple-touch-icon" href={`${basePath}/icon-192.png`} />

@@ -338,9 +338,12 @@ export function canonicalAmount(input: string, locale?: string): string | null {
     return null;
   }
 
-  // With an explicit English locale a dot is always decimal, including 1.234.
+  // Locales formatted with Latin digits use a dot as the decimal mark,
+  // including 1.234. Arabic is supplied with `-u-nu-latn` so amounts stay
+  // transcribable into the same forms they are displayed in.
   // Preserve historical separator inference for callers without a locale.
-  if (locale?.toLowerCase().startsWith("en") && /^\d+(?:\.\d*)?$/.test(stripped)) return stripped;
+  const dotDecimal = /^(?:en|ar)/i.test(locale ?? "");
+  if (dotDecimal && /^\d+(?:\.\d*)?$/.test(stripped)) return stripped;
 
   // "1,234" / "1.234.567": every separator groups thousands, none is decimal.
   if (/^\d{1,3}([.,]\d{3})+$/.test(stripped)) {

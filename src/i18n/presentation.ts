@@ -16,7 +16,7 @@ export function presentation(locale: f.Locale) {
     const units = [[86_400, "day"], [3_600, "hour"], [60, "minute"], [1, "second"]] as const;
     const [size, unit] = units.find(([size]) => seconds >= size && seconds % size === 0) ?? units[3];
     const count = seconds / size;
-    return new Intl.NumberFormat(f.localeTag(locale), { style: "unit", unit, unitDisplay: "long" }).format(count);
+    return f.formatUnit(count, unit, locale);
   }
   function discountLabel(bps: number, charges: number) {
     const percent = f.formatFeeBps(bps, locale);

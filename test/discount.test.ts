@@ -3,6 +3,8 @@ import {
   checkDiscountBps,
   checkDiscountCharges,
   discountedAmount,
+  discountImpact,
+  discountNeedsConfirmation,
   discountBadge,
   discountBps,
   discountCharges,
@@ -231,5 +233,45 @@ describe("the token's own scale", () => {
     // A 6-decimal token: the discount is still a share of the smallest unit.
     expect(discountedAmount(1_000_000n, 2000)).toBe(800_000n);
     expect(XLM.decimals).toBe(7);
+  });
+});
+
+/**
+ * What a discount would do to the subscriber (issue #396), checked before the
+ * merchant signs.
+ */
+describe("discountImpact", () => {
+  it("finds nothing to confirm for an ordinary discount on an open-ended mandate", () => {
+    const impact = discountImpact(10_000_000n, 2000, 3, 0, 5);
+    expect(impact).toEqual({ zeroCharge: false, outlastsCap: null });
+    expect(discountNeedsConfirmation(impact)).toBe(false);
+  });
+
+  it("flags a rate that rounds the charge to zero, which the vault cannot debit", () => {
+    // 99.99% of 9,999 stroops is under one stroop, so it rounds to 0.
+    const impact = discountImpact(9_999n, 9_999, 1, 0, 0);
+    expect(impact.zeroCharge).toBe(true);
+    expect(discountNeedsConfirmation(impact)).toBe(true);
+    // One stroop more and the charge is still debitable.
+    expect(discountImpact(10_001n, 9_999, 1, 0, 0).zeroCharge).toBe(false);
+  });
+
+  it("flags more discounted charges than the mandate's charge cap leaves", () => {
+    const impact = discountImpact(10_000_000n, 1000, 5, 6, 4);
+    expect(impact.outlastsCap).toEqual({ remaining: 2, covered: 5 });
+    expect(discountNeedsConfirmation(impact)).toBe(true);
+  });
+
+  it("accepts exactly as many discounted charges as the cap leaves", () => {
+    expect(discountImpact(10_000_000n, 1000, 2, 6, 4).outlastsCap).toBeNull();
+  });
+
+  it("treats a cap that has already been reached as no charges left", () => {
+    expect(discountImpact(10_000_000n, 1000, 1, 3, 3).outlastsCap).toEqual({ remaining: 0, covered: 1 });
+    expect(discountImpact(10_000_000n, 1000, 1, 3, 9).outlastsCap).toEqual({ remaining: 0, covered: 1 });
+  });
+
+  it("does not call a zero-priced plan a zero charge caused by the discount", () => {
+    expect(discountImpact(0n, 1000, 1, 0, 0).zeroCharge).toBe(false);
   });
 });

@@ -1,4 +1,32 @@
 import type { Config } from "tailwindcss";
+import plugin from "tailwindcss/plugin";
+
+/**
+ * Tailwind 3 has logical text/border/radius utilities but not logical spacing
+ * or inset ones. These four pairs keep existing LTR pixels identical while
+ * mirroring under `dir="rtl"` (which the i18n provider sets for Arabic).
+ */
+const logicalSpacing = plugin(({ matchUtilities, theme }) => {
+  // `auto` and `full` are margin/inset values, not spacing values, but the
+  // existing code uses `ml-auto`, so the logical alias needs them too.
+  const values = { ...(theme("spacing") as Record<string, string>), auto: "auto", full: "100%" };
+  matchUtilities(
+    {
+      ps: (value) => ({ paddingInlineStart: value }),
+      pe: (value) => ({ paddingInlineEnd: value }),
+      ms: (value) => ({ marginInlineStart: value }),
+      me: (value) => ({ marginInlineEnd: value }),
+    },
+    { values, supportsNegativeValues: true },
+  );
+  matchUtilities(
+    {
+      start: (value) => ({ insetInlineStart: value }),
+      end: (value) => ({ insetInlineEnd: value }),
+    },
+    { values, supportsNegativeValues: true },
+  );
+});
 
 /**
  * Colours are CSS custom properties rather than fixed hex values so the light
@@ -35,5 +63,5 @@ export default {
       },
     },
   },
-  plugins: [],
+  plugins: [logicalSpacing],
 } satisfies Config;

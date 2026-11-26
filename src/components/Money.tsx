@@ -207,7 +207,7 @@ export function Money({
       {isRefund && (
         <>
           <span
-            className="mr-1.5 rounded bg-danger/15 px-1 py-0.2 text-[10px] font-semibold uppercase tracking-wider text-danger"
+            className="me-1.5 rounded bg-danger/15 px-1 py-0.2 text-[10px] font-semibold uppercase tracking-wider text-danger"
             aria-hidden="true"
           >
             {tr("Refund")}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useI18n } from "@/i18n/provider";
 import { api } from "@/lib/api";
 import {
   formatRetentionPercent,
@@ -8,6 +9,7 @@ import {
   retentionColorClass,
   type CohortRetentionData,
 } from "@/lib/cohort-retention";
+import { useReducedData } from "@/lib/useReducedData";
 import { Empty, Notice, Panel, SkeletonRows } from "./ui";
 
 type CohortRetentionState =
@@ -22,11 +24,18 @@ interface CohortRetentionTableProps {
 }
 
 export function CohortRetentionTable({ merchant, apiConfigured }: CohortRetentionTableProps) {
+  const { t: tr, formatNumber } = useI18n();
+  const reducedData = useReducedData();
+  const [forceLoad, setForceLoad] = useState(false);
   const [state, setState] = useState<CohortRetentionState>({ status: "loading" });
+  const pausedForReducedData = apiConfigured && reducedData && !forceLoad;
 
   useEffect(() => {
     if (!apiConfigured) {
       setState({ status: "unavailable" });
+      return;
+    }
+    if (pausedForReducedData) {
       return;
     }
 
@@ -50,59 +59,73 @@ export function CohortRetentionTable({ merchant, apiConfigured }: CohortRetentio
     return () => {
       live = false;
     };
-  }, [apiConfigured, merchant]);
+  }, [apiConfigured, merchant, pausedForReducedData]);
 
   return (
     <Panel
-      title="Cohort retention"
-      subtitle="Percentage of each signup month's subscribers still active in subsequent months. Higher percentages indicate better retention."
+      title={tr("Cohort retention")}
+      subtitle={tr("Percentage of each signup month's subscribers still active in subsequent months. Higher percentages indicate better retention.")}
     >
       {!apiConfigured ? (
         <Notice tone="info">
-          Cohort retention analysis requires the payflow backend. Configure NEXT_PUBLIC_API_URL
-          to enable this report; contract-only mode does not retain historical signup and churn
-          data needed for cohort tracking.
+          {tr("Cohort retention analysis requires the payflow backend. Configure NEXT_PUBLIC_API_URL to enable this report; contract-only mode does not retain historical signup and churn data needed for cohort tracking.")}
         </Notice>
+      ) : pausedForReducedData ? (
+        <Empty
+          title={tr("Cohort retention paused to save data")}
+          action={
+            <button
+              type="button"
+              className="btn-ghost text-xs"
+              onClick={() => setForceLoad(true)}
+            >
+              {tr("Load cohort retention")}
+            </button>
+          }
+        >
+          {tr("Automatic analytics requests are paused when reduced-data mode is active.")}
+        </Empty>
       ) : state.status === "loading" ? (
-        <SkeletonRows rows={3} label="Loading cohort retention data" />
+        <SkeletonRows rows={3} label={tr("Loading cohort retention data")} />
       ) : state.status === "unavailable" ? (
-        <Empty title="Cohort retention analysis unavailable">
-          The payflow backend is not reachable or does not serve this report yet. Contract state
-          cannot reconstruct historical cohort retention data.
+        <Empty title={tr("Cohort retention analysis unavailable")}>
+          {tr("The payflow backend is not reachable or does not serve this report yet. Contract state cannot reconstruct historical cohort retention data.")}
         </Empty>
       ) : state.status === "error" ? (
         <Notice tone="error">
-          The backend returned an incomplete or inconsistent cohort retention report, so these
-          metrics are hidden rather than shown as misleading data.
+          {tr("The backend returned an incomplete or inconsistent cohort retention report, so these metrics are hidden rather than shown as misleading data.")}
         </Notice>
       ) : state.data.cohorts.length === 0 ? (
-        <Empty title="No cohort data available">
-          No signup cohorts were returned for this merchant. Cohort retention requires at least
-          one month of subscription history.
+        <Empty title={tr("No cohort data available")}>
+          {tr("No signup cohorts were returned for this merchant. Cohort retention requires at least one month of subscription history.")}
         </Empty>
       ) : (
         <div
           className="overflow-x-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
           role="region"
-          aria-label="Cohort retention table"
+          aria-label={tr("Cohort retention table")}
           tabIndex={0}
         >
-          <table className="w-full text-left text-sm">
+          <table className="w-full text-start text-sm">
             <caption className="sr-only">
-              Cohort retention: percentage of subscribers from each signup month still active after
-              0, 1, 2, ... months
+              {tr("Cohort retention: percentage of subscribers from each signup month still active after 0, 1, 2, ... months")}
             </caption>
             <thead>
               <tr className="border-b border-edge text-muted">
-                <th scope="col" className="sticky left-0 bg-panel py-2 pr-3 font-medium z-10">
+                <th scope="col" className="sticky start-0 bg-panel py-2 pe-3 font-medium z-10">
                   Signup month
                 </th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">
+                <th scope="col" className="py-2 pe-3 text-end font-medium">
                   Cohort size
+                <th scope="col" className="sticky left-0 bg-panel py-2 pr-3 font-medium z-10">
+                  {tr("Signup month")}
+                </th>
+                <th scope="col" className="py-2 pr-3 text-right font-medium">
+                  {tr("Cohort size")}
                 </th>
                 {Array.from({ length: state.data.maxAge + 1 }, (_, i) => (
                   <th key={i} scope="col" className="py-2 px-2 text-center font-medium min-w-[4rem]">
-                    {i === 0 ? "Month 0" : `+${i}m`}
+                    {i === 0 ? tr("Month 0") : tr("+{0}m", { "0": i })}
                   </th>
                 ))}
               </tr>
@@ -110,10 +133,11 @@ export function CohortRetentionTable({ merchant, apiConfigured }: CohortRetentio
             <tbody>
               {state.data.cohorts.map((cohort) => (
                 <tr key={cohort.cohort} className="border-b border-edge last:border-0">
-                  <th scope="row" className="sticky left-0 bg-panel py-2 pr-3 font-medium z-10">
+                  <th scope="row" className="sticky start-0 bg-panel py-2 pe-3 font-medium z-10">
                     {cohort.cohort}
                   </th>
-                  <td className="py-2 pr-3 text-right tabular-nums">{cohort.size}</td>
+                  <td className="py-2 pe-3 text-end tabular-nums">{cohort.size}</td>
+                  <td className="py-2 pr-3 text-right tabular-nums">{formatNumber(cohort.size)}</td>
                   {Array.from({ length: state.data.maxAge + 1 }, (_, monthIndex) => {
                     const percent = cohort.retention[monthIndex];
                     return (
@@ -124,11 +148,11 @@ export function CohortRetentionTable({ merchant, apiConfigured }: CohortRetentio
                         }`}
                       >
                         {percent !== undefined ? (
-                          <span aria-label={`${percent}% retained after ${monthIndex} months`}>
+                          <span aria-label={tr("{0}% retained after {1} months", { "0": percent, "1": monthIndex })}>
                             {formatRetentionPercent(percent)}
                           </span>
                         ) : (
-                          <span className="text-muted" aria-label="Data not yet available">
+                          <span className="text-muted" aria-label={tr("Data not yet available")}>
                             —
                           </span>
                         )}

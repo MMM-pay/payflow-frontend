@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  buildReceiptHtml,
-  escapeReceiptHtml,
-  receiptFilename,
-  type ReceiptData,
-} from "@/lib/receipt";
+import { buildReceiptHtml, escapeReceiptHtml } from "@/lib/receipt-html";
+import { receiptFilename, type ReceiptData } from "@/lib/receipt";
 import type { TokenMeta } from "@/lib/format";
 
 const meta: TokenMeta = { symbol: "USDC", decimals: 6 };

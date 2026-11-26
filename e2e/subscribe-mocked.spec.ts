@@ -18,9 +18,10 @@ interface SetupOptions extends MockRpcOptions {
 }
 
 async function setup(page: Page, options: SetupOptions = {}): Promise<MockRpc> {
+  const rpc = await installMockRpc(page, options.subscribe === undefined ? {} : { subscribe: options.subscribe });
   const rpc = await installMockRpc(
     page,
-    options.subscribe === undefined ? {} : { subscribe: options.subscribe },
+    options.subscribe !== undefined ? { subscribe: options.subscribe } : {},
   );
   await page.addInitScript(
     ({ secret, passphrase }) => {
@@ -65,6 +66,15 @@ async function openConfirmation(page: Page, cap = "0") {
   return dialog;
 }
 
+async function approveSigningIfShown(page: Page) {
+  const dialog = page.getByRole("dialog");
+  const continueBtn = dialog.getByRole("button", { name: "Continue to wallet" });
+  await continueBtn
+    .waitFor({ state: "visible", timeout: 5000 })
+    .then(() => continueBtn.click())
+    .catch(() => {});
+}
+
 function hasWrite(rpc: MockRpc): boolean {
   return rpc.calls.some((call) => call.kind === "sendTransaction");
 }
@@ -78,6 +88,7 @@ test("subscribes end to end with a mocked wallet and chain", async ({ page }) =>
   await expect(dialog.getByText("Subscribe to Coffee subscription?")).toBeVisible();
   await expect(dialog.getByText("2 charges, then the mandate completes.")).toBeVisible();
   await dialog.getByRole("button", { name: "Confirm and sign" }).click();
+  await approveSigningIfShown(page);
 
   await expect(page.getByText("Subscribed. Transaction")).toBeVisible();
   expect(rpc.lastHash).toMatch(/^[0-9a-f]{64}$/);
@@ -116,6 +127,7 @@ test("reports an on-chain failure after submitting the signed transaction", asyn
 
   const dialog = await openConfirmation(page);
   await dialog.getByRole("button", { name: "Confirm and sign" }).click();
+  await approveSigningIfShown(page);
 
   await expect(page.getByText("subscribe failed on-chain (FAILED)")).toBeVisible();
   await expect(page.getByText("Subscribed. Transaction")).toHaveCount(0);

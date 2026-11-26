@@ -19,7 +19,7 @@
 /** Five minutes: long enough not to nag, short enough to catch a lagging indexer. */
 export const DEFAULT_STALE_AFTER_MS = 5 * 60_000;
 
-export type StaleDataState = "loading" | "empty" | "error" | "fresh" | "stale";
+type StaleDataState = "loading" | "empty" | "error" | "fresh" | "stale";
 
 export interface StaleDataInput {
   /** When the displayed projection was received, in ms since the epoch. */

@@ -21,7 +21,7 @@ import type { ApiMandate } from "./api";
 export const MONTH_SECONDS = 2_592_000;
 
 /** Months of history the merchant dashboard shows. */
-export const MRR_WINDOW_MONTHS = 6;
+const MRR_WINDOW_MONTHS = 6;
 
 export interface MrrPoint {
   /** Unix seconds at the start of the UTC month. */

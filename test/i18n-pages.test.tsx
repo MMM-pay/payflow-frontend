@@ -5,9 +5,34 @@ import HomePage from "@/app/page";
 import SubscribePage from "@/app/subscribe/page";
 import AccountPage from "@/app/account/page";
 import MerchantPage from "@/app/merchant/page";
+import StatusPage from "@/app/status/page";
+import NotFound from "@/app/not-found";
+import { Activity } from "@/components/Activity";
+import { CohortRetentionTable } from "@/components/CohortRetentionTable";
+import { WalletButton } from "@/components/WalletButton";
 import { I18nProvider, LOCALE_STORAGE_KEY } from "@/i18n/provider";
 import { LanguagePicker } from "@/i18n/LanguagePicker";
-const state = vi.hoisted(() => ({ address: null as string | null, networkMismatch: false, configured: true }));
+const state = vi.hoisted(() => ({
+  address: null as string | null,
+  networkMismatch: false,
+  configured: true,
+  connecting: false,
+  reconnecting: false,
+  reconnectError: null as string | null,
+  error: null as string | null,
+  account: { state: "loading" as const },
+  funding: false,
+  reconnect: vi.fn(),
+  fund: vi.fn(),
+}));
+const apiMocks = vi.hoisted(() => ({
+  mandatesOf: vi.fn(async () => ({ mandates: [] as unknown[] })),
+  mandatesFor: vi.fn(async () => ({ mandates: [] as unknown[] })),
+  timeline: vi.fn(async () => ({ events: [] as unknown[] })),
+  health: vi.fn(async () => null as unknown),
+  keeper: vi.fn(async () => null as unknown),
+  cohortRetention: vi.fn(async () => null as unknown),
+}));
 const plan = { id: 7, merchant: "merchant.fixture", name: "English merchant name", token: "", amount: "12345678901", period: 2592000, active: 1, ledger: 1, trial: 259200 };
 vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams() }));
 vi.mock("@/lib/wallet", () => ({ useWallet: () => ({ ...state, signXdr: vi.fn(), connect: vi.fn(), disconnect: vi.fn() }) }));
@@ -21,23 +46,42 @@ vi.mock("@/lib/api", async original => {
     stats: async () => state.configured ? { plans: 1234, mandates: 12, activeMandates: 4, charges: 9 } : null,
     recentCharges: async () => ({ charges: [] }),
     plans: async () => state.configured ? { plans: [plan] } : null,
-    mandatesOf: async () => ({ mandates: [] }), mandatesFor: async () => ({ mandates: [] }),
+    mandatesOf: apiMocks.mandatesOf,
+    mandatesFor: apiMocks.mandatesFor,
+    timeline: apiMocks.timeline,
+    health: apiMocks.health,
+    keeper: apiMocks.keeper,
     vaultHistory: async () => null, merchantSummary: async () => null,
     merchantRevenue: async () => null, merchantChurn: async () => null,
-    merchantCohortRetention: async () => null,
+    merchantCohortRetention: apiMocks.cohortRetention,
     webhooks: async () => [], planStats: async () => null, stream: () => null,
   } };
 });
 vi.mock("@/lib/payflow", async original => {
   const real = await original<typeof import("@/lib/payflow")>();
-  return { ...real, payflow: { ...real.payflow, vaultBalance: async () => 12345678901n, feeBps: async () => 100, getPlan: async () => null }, vaultSupportsDepositFor: async () => false };
+  return { ...real, server: { getHealth: async () => ({ latestLedger: 987654 }) }, payflow: { ...real.payflow, vaultBalance: async () => 12345678901n, feeBps: async () => 100, getPlan: async () => null }, vaultSupportsDepositFor: async () => false };
 });
 vi.mock("@/lib/chain", async original => {
   const real = await original<typeof import("@/lib/chain")>();
   return { ...real, chainProtocolStats: async () => ({ plans: 1234 }), chainPlans: async () => [plan], chainPlansOf: async () => [plan], chainMandatesOf: async () => [], chainMandatesFor: async () => [], chainMerchantSummary: async () => null, chainPlanSubscriberCount: async () => null };
 });
 function App({ children }: { children: React.ReactNode }) { return <I18nProvider><LanguagePicker />{children}</I18nProvider>; }
-beforeEach(() => { localStorage.clear(); localStorage.setItem(LOCALE_STORAGE_KEY, "fr"); state.address = null; state.networkMismatch = false; state.configured = true; });
+beforeEach(() => {
+  localStorage.clear();
+  localStorage.setItem(LOCALE_STORAGE_KEY, "fr");
+  state.address = null;
+  state.networkMismatch = false;
+  state.configured = true;
+  state.reconnecting = false;
+  state.reconnectError = null;
+  state.error = null;
+  apiMocks.mandatesOf.mockResolvedValue({ mandates: [] });
+  apiMocks.mandatesFor.mockResolvedValue({ mandates: [] });
+  apiMocks.timeline.mockResolvedValue({ events: [] });
+  apiMocks.health.mockResolvedValue(null);
+  apiMocks.keeper.mockResolvedValue(null);
+  apiMocks.cohortRetention.mockResolvedValue(null);
+});
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 describe("French on the four main pages", () => {
   it("translates the overview instructions and number counters", async () => {
@@ -75,5 +119,47 @@ describe("French on the four main pages", () => {
     await screen.findByText("English merchant name");
     await waitFor(() => expect(screen.getByText(/Lecture directe des offres dans le contrat/)).toBeTruthy());
     expect(screen.queryByText(/Reading plans directly from the contract/)).toBeNull();
+  });
+
+  it("translates status, activity, cohort retention, and wallet states into French", async () => {
+    state.configured = false;
+    render(<App><StatusPage /></App>);
+    await screen.findByText("État des services");
+    expect(await screen.findByText("Opérationnel")).toBeTruthy();
+    expect(screen.getAllByText("Non configuré")).toHaveLength(2);
+
+    cleanup();
+    state.configured = true;
+    state.address = "merchant.fixture";
+    render(<App><Activity /></App>);
+    await screen.findByText("Activité");
+    expect(await screen.findByText("Aucune activité pour le moment.")).toBeTruthy();
+
+    cleanup();
+    apiMocks.cohortRetention.mockResolvedValue({
+      merchant: "merchant.fixture",
+      cohorts: [],
+    });
+    render(<App><CohortRetentionTable merchant="merchant.fixture" apiConfigured={true} /></App>);
+    await screen.findByText("Rétention par cohorte");
+    expect(await screen.findByText("Aucune donnée de cohorte disponible")).toBeTruthy();
+
+    cleanup();
+    state.reconnecting = true;
+    render(<App><WalletButton /></App>);
+    const status = await screen.findByRole("status");
+    expect(status.textContent).toContain("Reconnexion…");
+
+    cleanup();
+    state.reconnecting = false;
+    state.reconnectError = "Extension locked";
+    render(<App><WalletButton /></App>);
+    expect(await screen.findByText("Reconnexion requise")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Reconnecter la session du portefeuille" })).toBeTruthy();
+
+    cleanup();
+    render(<App><NotFound /></App>);
+    await screen.findByText("Page introuvable");
+    expect(screen.queryByText("Page not found")).toBeNull();
   });
 });

@@ -6,7 +6,8 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { AddressLink, Notice, Skeleton, TxLink } from "@/components/ui";
-import { downloadReceipt, loadReceipt, parseReceiptParams, type ReceiptData } from "@/lib/receipt";
+import { copyToClipboard } from "@/lib/clipboard";
+import { downloadReceipt, loadReceipt, parseReceiptParams, receiptShareUrl, type ReceiptData } from "@/lib/receipt";
 
 function ReceiptSkeleton() {
   const { t: tr } = useI18n();
@@ -38,36 +39,42 @@ function ReceiptContent() {
   const txParam = searchParams.get("tx");
   const mandateParam = searchParams.get("mandate");
 
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const [apiAvailable, setApiAvailable] = useState(true);
+  const [shareState, setShareState] = useState<"idle" | "copied" | "error">("idle");
+  const [resolvedRequest, setResolvedRequest] = useState<string | null>(null);
+  const { txHash, mandateId, error: parameterError } = parseReceiptParams({
+    tx: txParam,
+    mandate: mandateParam,
+  });
+  const requestKey = JSON.stringify([txHash, mandateId]);
 
   useEffect(() => {
-    const { txHash, mandateId, error: parseError } = parseReceiptParams({
-      tx: txParam,
-      mandate: mandateParam,
-    });
-
-    if (parseError || !txHash || mandateId === null) {
-      setError(parseError || "Invalid receipt parameters.");
-      setLoading(false);
-      return;
-    }
+    if (parameterError || !txHash || mandateId === null) return;
 
     let active = true;
     void loadReceipt(mandateId, txHash).then((res) => {
       if (!active) return;
       setReceipt(res.receipt);
       setApiAvailable(res.apiAvailable);
-      setError(res.error);
-      setLoading(false);
+      setLoadError(res.error);
+      setShareState("idle");
+      setResolvedRequest(requestKey);
+    }).catch((cause: unknown) => {
+      if (!active) return;
+      setLoadError(cause instanceof Error ? cause.message : String(cause));
+      setReceipt(null);
+      setResolvedRequest(requestKey);
     });
 
     return () => {
       active = false;
     };
-  }, [txParam, mandateParam]);
+  }, [mandateId, parameterError, requestKey, txHash]);
+
+  const loading = !parameterError && resolvedRequest !== requestKey;
+  const error = parameterError ?? (resolvedRequest === requestKey ? loadError : null);
 
   if (loading) {
     return <ReceiptSkeleton />;
@@ -79,7 +86,7 @@ function ReceiptContent() {
         <div className="flex items-center justify-between print:hidden">
           <Link
             href="/"
-            className="text-sm text-muted transition hover:text-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            className="text-sm text-muted transition hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
           >{tr("← Back to overview")}</Link>
         </div>
 
@@ -91,7 +98,7 @@ function ReceiptContent() {
         </Notice>
 
         <p className="text-xs text-muted">{tr("A receipt requires both a transaction hash and mandate ID in the URL, for example:")}{" "}
-          <code className="rounded bg-white/10 px-1.5 py-0.5">
+          <code className="rounded bg-fg/10 px-1.5 py-0.5">
             /receipt/?tx=abc…&mandate=1
           </code>
         </p>
@@ -102,6 +109,11 @@ function ReceiptContent() {
   const grossFormatted = formatAmount(receipt.gross, receipt.tokenMeta);
   const feeFormatted = formatAmount(receipt.fee, receipt.tokenMeta);
   const netFormatted = formatAmount(receipt.net, receipt.tokenMeta);
+  const shareReceipt = async () => {
+    const url = receiptShareUrl(window.location.href, receipt);
+    const copied = await copyToClipboard(url);
+    setShareState(copied ? "copied" : "error");
+  };
 
   return (
     <div className="mx-auto max-w-2xl space-y-6 py-2 print:max-w-none print:space-y-3 print:py-0">
@@ -109,9 +121,17 @@ function ReceiptContent() {
       <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
         <Link
           href="/"
-          className="text-sm text-muted transition hover:text-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          className="text-sm text-muted transition hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         >{tr("← Back to overview")}</Link>
         <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => void shareReceipt()}
+          className="btn-ghost"
+          aria-label={tr("Share this receipt")}
+        >
+          {tr("Share")}
+        </button>
         <button
           type="button"
           onClick={() => downloadReceipt(receipt)}
@@ -157,13 +177,20 @@ function ReceiptContent() {
           <span>{tr("Print receipt")}</span>
         </button>
         </div>
+        <span role="status" aria-live="polite" className="sr-only">
+          {shareState === "copied"
+            ? tr("Receipt link copied")
+            : shareState === "error"
+              ? tr("Could not copy receipt link")
+              : ""}
+        </span>
       </div>
 
       {/* Contract-only explanation banner when API data is unavailable */}
       {!apiAvailable && (
         <div className="print:hidden">
           <Notice tone="info">
-            <span className="font-medium text-slate-200">{tr("Contract-only mode:")}</span>{" "}{tr("Detailed historical charge logs require the indexer API (")}<code className="text-xs">NEXT_PUBLIC_API_URL</code>{tr("). Because the API is unreachable, this receipt is constructed from on-chain mandate state. You can verify the transaction directly on the Stellar explorer below.")}</Notice>
+            <span className="font-medium text-soft">{tr("Contract-only mode:")}</span>{" "}{tr("Detailed historical charge logs require the indexer API (")}<code className="text-xs">NEXT_PUBLIC_API_URL</code>{tr("). Because the API is unreachable, this receipt is constructed from on-chain mandate state. You can verify the transaction directly on the Stellar explorer below.")}</Notice>
         </div>
       )}
 
@@ -230,14 +257,14 @@ function ReceiptContent() {
 
           <div className="space-y-0.5">
             <span className="label print:text-slate-500 print:mb-0.5">{tr("Billing frequency")}</span>
-            <div className="font-medium text-slate-200 print:text-black">
+            <div className="font-medium text-soft print:text-black">
               {formatPeriod(receipt.period)}
             </div>
           </div>
 
           <div className="space-y-0.5">
             <span className="label print:text-slate-500 print:mb-0.5">{tr("Charge sequence")}</span>
-            <div className="font-medium text-slate-200 print:text-black">
+            <div className="font-medium text-soft print:text-black">
               {receipt.chargeNumber !== null
                 ? receipt.totalCharges
                   ?tr("Charge {0} of {1}", { "0": receipt.chargeNumber, "1": receipt.totalCharges })
@@ -253,36 +280,37 @@ function ReceiptContent() {
           <h2 className="sr-only">{tr("Payment breakdown")}</h2>
           <table className="w-full text-sm print:text-xs">
             <thead>
-              <tr className="border-b border-edge text-left text-xs uppercase tracking-wider text-muted print:border-slate-300 print:text-slate-500">
+              <tr className="border-b border-edge text-start text-xs uppercase tracking-wider text-muted print:border-slate-300 print:text-slate-500">
                 <th className="pb-2 font-medium">{tr("Description")}</th>
-                <th className="pb-2 text-right font-medium">{tr("Amount")}</th>
+                <th className="pb-2 text-end font-medium">{tr("Amount")}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-edge print:divide-slate-200">
               <tr>
                 <td className="py-2.5 text-muted print:text-slate-700">{tr("Subscription charge (Mandate #")}{receipt.mandateId})
                 </td>
-                <td className="py-2.5 text-right font-mono text-slate-200 print:text-black tabular-nums">
+                <td className="py-2.5 text-end font-mono text-slate-200 print:text-black tabular-nums">
+                <td className="py-2.5 text-right font-mono text-soft print:text-black tabular-nums">
                   {grossFormatted}
                 </td>
               </tr>
               <tr>
                 <td className="py-2 text-muted print:text-slate-700">{tr("Protocol fee")}</td>
-                <td className="py-2 text-right font-mono text-muted print:text-slate-600 tabular-nums">
+                <td className="py-2 text-end font-mono text-muted print:text-slate-600 tabular-nums">
                   -{feeFormatted}
                 </td>
               </tr>
               <tr>
                 <td className="py-2 text-muted print:text-slate-700">{tr("Net payout to merchant")}</td>
-                <td className="py-2 text-right font-mono text-muted print:text-slate-600 tabular-nums">
+                <td className="py-2 text-end font-mono text-muted print:text-slate-600 tabular-nums">
                   {netFormatted}
                 </td>
               </tr>
             </tbody>
             <tfoot>
               <tr className="border-t-2 border-edge text-base font-semibold print:border-slate-400 print:text-sm">
-                <th scope="row" className="pt-3 text-left print:text-black">{tr("Total Paid")}</th>
-                <td className="pt-3 text-right font-mono text-accent print:text-black tabular-nums">
+                <th scope="row" className="pt-3 text-start print:text-black">{tr("Total Paid")}</th>
+                <td className="pt-3 text-end font-mono text-accent print:text-black tabular-nums">
                   {grossFormatted}
                 </td>
               </tr>
@@ -294,16 +322,16 @@ function ReceiptContent() {
         <footer className="border-t border-edge pt-4 text-xs text-muted print:border-slate-300 print:pt-3 print:text-slate-600">
           <div className="space-y-1.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="font-medium text-slate-300 print:text-slate-700">{tr("Transaction proof:")}</span>
+              <span className="font-medium text-soft print:text-slate-700">{tr("Transaction proof:")}</span>
               <div className="print:hidden">
                 <TxLink hash={receipt.txHash} />
               </div>
             </div>
             <div className="hidden font-mono text-[11px] break-all print:block print:text-black">{tr("Hash:")}{" "}{receipt.txHash}
             </div>
-            <div className="hidden text-[10px] text-slate-500 break-all print:block">{tr("Verify: https://stellar.expert/explorer/testnet/tx/")}{receipt.txHash}
+            <div className="hidden text-[10px] text-muted break-all print:block">{tr("Verify: https://stellar.expert/explorer/testnet/tx/")}{receipt.txHash}
             </div>
-            <p className="text-[11px] text-muted/80 print:text-slate-500">{tr("Settled permissionlessly on Stellar via Payflow recurring mandate. Funds debited directly from subscriber vault.")}</p>
+            <p className="text-[11px] text-muted print:text-slate-500">{tr("Settled permissionlessly on Stellar via Payflow recurring mandate. Funds debited directly from subscriber vault.")}</p>
           </div>
         </footer>
       </article>

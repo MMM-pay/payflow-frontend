@@ -11,7 +11,7 @@
 export type VitalName = "CLS" | "FCP" | "INP" | "LCP" | "TTFB";
 export type VitalRating = "good" | "needs-improvement" | "poor";
 
-export interface VitalSample {
+interface VitalSample {
   name: VitalName;
   value: number;
   rating: VitalRating;
