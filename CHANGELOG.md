@@ -22,6 +22,22 @@ All notable changes to payflow-frontend. The format follows
   content reflows without loss. The mandate charge table gained a labelled,
   focusable scroll region like the other wide tables.
 
+### Fixed
+
+- **The German catalog was missing 35 keys, failing `typecheck` and `test`.**
+  The keys added by the wallet-signing confirmation, pagination, merchant
+  action and error-boundary work existed in `en.json` and `fr.json` but not
+  `de.json`, so `keyof typeof en` indexing and the catalog-completeness test
+  both failed on `main`. The missing German strings are added; the catalogs are
+  back to a 1:1 key and interpolation-token match.
+- **The `next/link` test doubles rendered `href=""`.** The `anchor-is-valid`
+  rule now flags that as a non-navigable link, so the mocks fall back to `/`
+  when a test passes a non-string `href`. No behaviour changed: every wrapped
+  link in the suite passes a string.
+- **The header controls kept their max-content width at 320 px.** The group now
+  carries `min-w-0` as well as `flex-wrap`, so it wraps inside the viewport
+  instead of widening the document. Found by the new reflow check.
+
 ### Changed
 
 - **Accessibility lint rules are now errors (#389).** `eslint.config.mjs`

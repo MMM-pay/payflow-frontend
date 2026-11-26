@@ -15,7 +15,8 @@ const config = [
   {
     name: "payflow/jsx-a11y",
     files: ["**/*.{js,jsx,mjs,cjs,ts,tsx}"],
-    plugins: { "jsx-a11y": jsxA11y },
+    // `eslint-config-next` already registers the `jsx-a11y` plugin; this block
+    // only tightens its rules, so the plugin is not redefined here.
     rules: {
       // eslint-plugin-jsx-a11y 6.10 exposes the recommended set as a flat
       // config. Its rules run as errors so an inaccessible pattern fails CI

@@ -146,7 +146,7 @@ describe("format helpers (#356)", () => {
     it.each([
       { address: "GABC", size: 4, expected: "GABC" },
       { address: G, size: 4, expected: "GAEW…CBY5" },
-      { address: G, size: 6, expected: "GAEWDX…5ZOCBY5" },
+      { address: G, size: 6, expected: "GAEWDX…ZOCBY5" },
       // 4 + 4 + the ellipsis is still shorter than the input: leave it alone.
       { address: "GABCDEFGHIJ", size: 4, expected: "GABCDEFGHIJ" },
     ])("shortens $address at $size characters", ({ address, size, expected }) => {
