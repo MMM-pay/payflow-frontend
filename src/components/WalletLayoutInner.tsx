@@ -25,6 +25,7 @@ import {
 } from "@/lib/build-info";
 import type { NetworkConfig } from "@/lib/config";
 import { useNetwork } from "@/lib/network";
+import { useReducedData } from "@/lib/useReducedData";
 import { useWallet } from "@/lib/wallet";
 import { copyToClipboard } from "@/lib/clipboard";
 
@@ -56,11 +57,12 @@ function NetworkSwitcher({
   networks: NetworkConfig[];
   select: (id: string) => void;
 }) {
+  const { t: tr } = useI18n();
   if (networks.length <= 1) {
     return (
       <span
         className="inline-flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-2 text-xs text-muted"
-        title={`Stellar ${network.label.toLowerCase()}`}
+        title={tr("Stellar {0}", { "0": network.label.toLowerCase() })}
       >
         <span className="h-2 w-2 rounded-full bg-accent" aria-hidden="true" />
         {network.label}
@@ -75,14 +77,14 @@ function NetworkSwitcher({
         aria-hidden="true"
       />
       <label className="sr-only" htmlFor="network-switcher">
-        Stellar network
+        {tr("Stellar network")}
       </label>
       <select
         id="network-switcher"
         className="h-9 appearance-none rounded-lg border border-edge bg-transparent pl-7 pr-7 text-xs text-muted transition hover:border-muted hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         value={network.id}
         onChange={(event) => select(event.target.value)}
-        title={`Network: ${network.label} — switch and reload`}
+        title={tr("Network: {0} — switch and reload", { "0": network.label })}
       >
         {networks.map((option) => (
           <option key={option.id} value={option.id}>
@@ -118,6 +120,7 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
   const { t: tr } = useI18n();
   const { networkMismatch, walletNetwork, address, locked } = useWallet();
   const { network, networks, select } = useNetwork();
+  const reducedData = useReducedData();
   const pathname = usePathname();
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -242,13 +245,18 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
         <header className="border-b border-edge py-4 sm:py-5 print:hidden">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-6">
-              <Link href="/" className="shrink-0 text-lg font-semibold tracking-tight">{tr("Pay")}<span className="text-accent">{tr("flow")}</span>
+              <Link
+                href="/"
+                {...(reducedData ? { prefetch: false as const } : {})}
+                className="shrink-0 text-lg font-semibold tracking-tight"
+              >{tr("Pay")}<span className="text-accent">{tr("flow")}</span>
               </Link>
               <nav className="hidden gap-4 text-sm text-muted md:flex" aria-label={tr("Main navigation")}>
                 {NAV.map((item) => (
                   <Link
                     key={item.href}
                     href={item.href}
+                    {...(reducedData ? { prefetch: false as const } : {})}
                     aria-current={isCurrent(pathname, item.href) ? "page" : undefined}
                     className={`hover:text-fg ${
                       isCurrent(pathname, item.href) ? "text-fg" : ""
@@ -327,6 +335,7 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
                 <li key={item.href}>
                   <Link
                     href={item.href}
+                    {...(reducedData ? { prefetch: false as const } : {})}
                     aria-current={isCurrent(pathname, item.href) ? "page" : undefined}
                     className={`block rounded-lg px-2 py-2.5 text-sm text-muted hover:bg-fg/5 hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
                       isCurrent(pathname, item.href) ? "bg-fg/5 text-fg" : ""
@@ -342,7 +351,9 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
 
         {/* One landmark only: the skip link targets this id. */}
         <main id="main-content" className="flex-1 space-y-8 py-8 print:py-0">
-          <Activity />
+          <div className="print:hidden">
+            <Activity />
+          </div>
           {children}
         </main>
 

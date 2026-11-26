@@ -6,6 +6,7 @@ import type { ApiPlan } from "@/lib/api";
 
 const apiMock = vi.hoisted(() => ({
   plans: vi.fn(),
+  planStats: vi.fn(),
 }));
 
 const walletMock = vi.hoisted(() => ({

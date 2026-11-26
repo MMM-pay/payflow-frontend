@@ -5,6 +5,7 @@ import { useI18n } from "@/i18n/provider";
 import React, {
   useCallback,
   useEffect,
+  memo,
   useRef,
   useState,
   type ReactNode,
@@ -26,6 +27,36 @@ export interface VirtualListProps<T> {
   className?: string;
   listAriaLabel?: string;
 }
+
+interface VirtualListRowProps<T> {
+  item: T;
+  index: number;
+  totalCount: number;
+  renderItem: (item: T, index: number) => ReactNode;
+  virtualized: boolean;
+}
+
+function VirtualListRow<T>({
+  item,
+  index,
+  totalCount,
+  renderItem,
+  virtualized,
+}: VirtualListRowProps<T>) {
+  return (
+    <div
+      {...(virtualized ? { "data-virtual-index": index } : {})}
+      role="article"
+      aria-posinset={index + 1}
+      aria-setsize={totalCount}
+      className={virtualized ? "w-full" : undefined}
+    >
+      {renderItem(item, index)}
+    </div>
+  );
+}
+
+const MemoizedVirtualListRow = memo(VirtualListRow) as typeof VirtualListRow;
 
 /**
  * VirtualList renders lists smoothly even with thousands of rows by mounting
@@ -110,16 +141,19 @@ export function VirtualList<T>({
         role="region"
         aria-label={tr(listAriaLabel)}
       >
-        {items.map((item, index) => (
-          <div
-            key={keyExtractor(item, index)}
-            role="article"
-            aria-posinset={index + 1}
-            aria-setsize={items.length}
-          >
-            {renderItem(item, index)}
-          </div>
-        ))}
+        {items.map((item, index) => {
+          const itemKey = keyExtractor(item, index);
+          return (
+            <MemoizedVirtualListRow
+              key={itemKey}
+              item={item}
+              index={index}
+              totalCount={items.length}
+              renderItem={renderItem}
+              virtualized={false}
+            />
+          );
+        })}
       </div>
     );
   }
@@ -164,17 +198,16 @@ export function VirtualList<T>({
 
       {visibleItems.map((item, offset) => {
         const index = startIndex + offset;
+        const itemKey = keyExtractor(item, index);
         return (
-          <div
-            key={keyExtractor(item, index)}
-            data-virtual-index={index}
-            role="article"
-            aria-posinset={index + 1}
-            aria-setsize={totalCount}
-            className="w-full"
-          >
-            {renderItem(item, index)}
-          </div>
+          <MemoizedVirtualListRow
+            key={itemKey}
+            item={item}
+            index={index}
+            totalCount={totalCount}
+            renderItem={renderItem}
+            virtualized
+          />
         );
       })}
 

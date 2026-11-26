@@ -224,18 +224,17 @@ function ProfilePanel({
 
   const nameCheck = checkProfileName(name);
   const urlCheck = checkProfileUrl(url);
+  const { t: tr } = useI18n();
   const usable = nameCheck.ok && urlCheck.ok;
 
   if (!supported) {
     return (
       <Panel
-        title="Merchant profile"
-        subtitle="A display name and URL shown to subscribers on plan cards."
+        title={tr("Merchant profile")}
+        subtitle={tr("A display name and URL shown to subscribers on plan cards.")}
       >
         <Notice tone="info">
-          The deployed contract does not support merchant profiles yet, so this
-          control is hidden. It will appear once the contract exposes
-          set_profile and get_profile.
+          {tr("The deployed contract does not support merchant profiles yet, so this control is hidden. It will appear once the contract exposes set_profile and get_profile.")}
         </Notice>
       </Panel>
     );
@@ -262,20 +261,18 @@ function ProfilePanel({
 
   return (
     <Panel
-      title="Merchant profile"
-      subtitle="A display name and URL shown to subscribers on plan cards. Stored on-chain."
+      title={tr("Merchant profile")}
+      subtitle={tr("A display name and URL shown to subscribers on plan cards. Stored on-chain.")}
     >
       {error && <Notice tone="error">{error}</Notice>}
       {done && (
         <Notice tone="ok">
-          Profile saved. Transaction <TxLink hash={done} />
+          {tr("Profile saved. Transaction")} <TxLink hash={done} />
         </Notice>
       )}
       <div className="flex flex-wrap items-end gap-3">
         <div className="min-w-[12rem] flex-1">
-          <label className="label" htmlFor="profile-name">
-            Display name
-          </label>
+          <label className="label" htmlFor="profile-name">{tr("Display name")}</label>
           <input
             id="profile-name"
             className="input"
@@ -294,9 +291,7 @@ function ProfilePanel({
           )}
         </div>
         <div className="min-w-[16rem] flex-1">
-          <label className="label" htmlFor="profile-url">
-            URL
-          </label>
+          <label className="label" htmlFor="profile-url">{tr("URL")}</label>
           <input
             id="profile-url"
             className="input"
@@ -320,15 +315,15 @@ function ProfilePanel({
           disabled={busy || !usable}
           onClick={() => void save()}
         >
-          {busy ? "Saving…" : "Save profile"}
+          {busy ? tr("Saving…") : tr("Save profile")}
         </button>
       </div>
 
       <div className="mt-4 rounded-lg border border-edge p-3">
-        <p className="text-xs font-medium text-muted">Preview on plan cards</p>
+        <p className="text-xs font-medium text-muted">{tr("Preview on plan cards")}</p>
         <div className="mt-2">
           <div className="font-medium">
-            {nameCheck.ok && nameCheck.name ? nameCheck.name : "Your business name"}
+            {nameCheck.ok && nameCheck.name ? nameCheck.name : tr("Your business name")}
           </div>
           {urlCheck.ok && urlCheck.url ? (
             <div className="text-xs text-muted mono truncate" title={urlCheck.url}>

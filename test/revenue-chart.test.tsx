@@ -72,7 +72,7 @@ describe("RevenueChart", () => {
     const table = screen.getByRole("table");
     expect(within(table).getByText("1 Oct")).toBeTruthy();
     expect(within(table).getByText("4 Oct")).toBeTruthy();
-    expect(within(table).getByText("4 XLM")).toBeTruthy();
-    expect(within(table).getByText("10 XLM")).toBeTruthy();
+    expect(within(table).getByLabelText("4 XLM")).toBeTruthy();
+    expect(within(table).getByLabelText("10 XLM")).toBeTruthy();
   });
 });

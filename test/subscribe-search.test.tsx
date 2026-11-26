@@ -7,7 +7,7 @@ import type { ApiPlan } from "@/lib/api";
 const XLM = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
 const USDC = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA";
 
-const apiMock = vi.hoisted(() => ({ plans: vi.fn() }));
+const apiMock = vi.hoisted(() => ({ plans: vi.fn(), planStats: vi.fn() }));
 
 vi.mock("@/lib/api", () => ({ api: apiMock }));
 vi.mock("@/lib/wallet", () => ({

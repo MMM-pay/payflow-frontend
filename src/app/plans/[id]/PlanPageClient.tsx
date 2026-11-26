@@ -234,11 +234,11 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
                   <tr key={c.txHash} className="border-t border-edge">
                     <td className="py-2">{c.mandateId}</td>
                     <td className="py-2">
-                      <AddressLink value={c.subscriber} />
+                      <AddressDisplay value={c.subscriber} />
                     </td>
-                    <td className="py-2 text-right">{c.amount}{" "}{tr("XLM")}</td>
-                    <td className="py-2 text-right">{c.fee}{" "}{tr("XLM")}</td>
-                    <td className="py-2 text-right">{c.net}{" "}{tr("XLM")}</td>
+                    <td className="py-2 text-right font-mono tabular-nums">{c.amount}{" "}{tr("XLM")}</td>
+                    <td className="py-2 text-right font-mono tabular-nums">{c.fee}{" "}{tr("XLM")}</td>
+                    <td className="py-2 text-right font-mono tabular-nums">{c.net}{" "}{tr("XLM")}</td>
                     <td className="py-2 text-right">
                       <TxLink hash={c.txHash} />
                     </td>

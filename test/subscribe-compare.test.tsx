@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SubscribePage from "@/app/subscribe/page";
 import type { ApiPlan } from "@/lib/api";
 
-const apiMock = vi.hoisted(() => ({ plans: vi.fn() }));
+const apiMock = vi.hoisted(() => ({ plans: vi.fn(), planStats: vi.fn() }));
 const chainMock = vi.hoisted(() => ({ chainPlans: vi.fn() }));
 
 const walletMock = vi.hoisted(() => ({
@@ -73,7 +73,7 @@ describe("Subscribe plan comparison (#175)", () => {
     const headers = within(table).getAllByRole("columnheader").map((cell) => cell.textContent);
     expect(headers).toEqual(["Feature", "Daily Coffee", "Weekly Gym"]);
     // 0.5 XLM/day over a 30-day month, kept as a bigint through formatting.
-    expect(within(table).getByText("15 XLM")).toBeTruthy();
+    expect(within(table).getByLabelText("15 XLM")).toBeTruthy();
     expect(within(table).getByText(/Monthly equivalent/)).toBeTruthy();
   });
 
@@ -94,7 +94,7 @@ describe("Subscribe plan comparison (#175)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Compare plans" }));
 
     expect(await screen.findByRole("table")).toBeTruthy();
-    expect(screen.getByText("15 XLM")).toBeTruthy();
+    expect(screen.getByLabelText("15 XLM")).toBeTruthy();
   });
 
   it("caps the selection at three plans", async () => {

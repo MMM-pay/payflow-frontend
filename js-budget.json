@@ -1,15 +1,15 @@
 {
-  "//": "First-load JS budgets in kB (gzip), enforced over the static export. Re-measured after action-specific wallet confirmation and shared cursor pagination: / 247.6, /account 265.4, /m 247.1, /mandates 249.4, /merchant 278.8, /plans/* 247.3, /receipt 250.7, /status 243.0, /subscribe 256.5, not-found 240.1. Limits retain at least 0.6 kB of headroom; growth is accepted deliberately with the features that cause it.",
-  "default": 241,
+  "//": "First-load JS budgets in kB (gzip), enforced by scripts/check-js-budget.mjs over out/**/index.html. Re-measured after wallet reconnect, reduced-data deferral, full French catalogue, German catalogue, wallet action safeguards, and pagination: / 288.2, /account 306.7, /m 288.0, /mandates 290.0, /merchant 313.2, /plans/* 288.3, /receipt 291.2, /status 283.4, /subscribe 298.8, not-found 280.5. Budgets keep roughly 5-10% headroom.",
+  "default": 290,
   "routes": {
-    "/": 250,
-    "/account": 266,
-    "/m": 250,
-    "/mandates": 251,
-    "/merchant": 281,
-    "/subscribe": 258,
-    "/plans": 250,
-    "/receipt": 253,
-    "/status": 245
+    "/": 300,
+    "/account": 320,
+    "/m": 300,
+    "/mandates": 305,
+    "/merchant": 330,
+    "/plans": 300,
+    "/receipt": 305,
+    "/status": 295,
+    "/subscribe": 315
   }
 }

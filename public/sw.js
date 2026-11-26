@@ -78,6 +78,11 @@ self.addEventListener("fetch", (event) => {
 
   event.respondWith(
     caches.match(request).then((cachedResponse) => {
+      // Respect Save-Data: return cached assets without background revalidation.
+      if (cachedResponse && request.headers.get("save-data") === "on") {
+        return cachedResponse;
+      }
+
       // Fetch in background to update cache (stale-while-revalidate for static assets)
       const fetchPromise = fetch(request)
         .then((networkResponse) => {
