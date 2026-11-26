@@ -1,13 +1,15 @@
 {
-  "//": "First-load JS budgets in kB (gzip), enforced by scripts/check-js-budget.mjs over out/**/index.html. Re-measured after wallet persistence/account controls, network status and the shared unaudited-software warning: / 247.5, /account 265.1, /m 247.0, /mandates 249.1, /merchant 278.7, /plans/* 246.9, /receipt 250.6, /status 242.9, /subscribe 256.4. The increases cover the shared features introduced by this PR.",
-  "default": 255,
+  "//": "First-load JS budgets in kB (gzip), enforced by scripts/check-js-budget.mjs over out/**/index.html. Re-measured after wallet reconnect, reduced-data deferral, full French catalogue, German catalogue, wallet action safeguards, and pagination: / 288.2, /account 306.7, /m 288.0, /mandates 290.0, /merchant 313.2, /plans/* 288.3, /receipt 291.2, /status 283.4, /subscribe 298.8, not-found 280.5. Budgets keep roughly 5-10% headroom.",
+  "default": 290,
   "routes": {
-    "/": 250,
-    "/account": 275,
-    "/m": 250,
-    "/merchant": 285,
-    "/subscribe": 265,
-    "/plans": 250,
-    "/receipt": 260
+    "/": 300,
+    "/account": 320,
+    "/m": 300,
+    "/mandates": 305,
+    "/merchant": 330,
+    "/plans": 300,
+    "/receipt": 305,
+    "/status": 295,
+    "/subscribe": 315
   }
 }

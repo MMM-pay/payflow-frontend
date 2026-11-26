@@ -88,6 +88,31 @@ export function ogImageUrl(
   return absoluteUrl(`/og/${page.image}.png`, origin, basePath);
 }
 
+export const PLAN_OG_COUNT = 24;
+
+export function planOgImageName(id: number | bigint | string): string {
+  const raw = String(id).trim();
+  const value = Number(raw);
+  const safe = /^\d+$/.test(raw) && Number.isSafeInteger(value) && value > 0
+    ? value
+    : 1;
+  return `plan-${safe}`;
+}
+
+export function planPageMetadata(id: number | bigint | string): Metadata {
+  const image = planOgImageName(id);
+  const label = image.slice("plan-".length);
+  return pageMetadata(
+    {
+      ...PAGES.plan,
+      title: `Plan #${label}`,
+      description: `View plan #${label} on Payflow, including its price, billing period and availability.`,
+      image,
+    },
+    { path: `/plans/${label}/` },
+  );
+}
+
 /**
  * The metadata for one page: title, description, canonical link and the
  * Open Graph and Twitter cards that make a shared link show a preview.

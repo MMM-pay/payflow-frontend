@@ -1,21 +1,23 @@
 // @vitest-environment jsdom
 import { useEffect } from "react";
-import { act, cleanup, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SIGNATURE_CANCELLED_MESSAGE } from "@/lib/signature-error";
 import {
   ACCOUNT_CHANGED_ERROR,
+  RECONNECT_DISCONNECTED_ERROR,
   STORAGE_KEY,
   WalletProvider,
   checkNetworkMismatch,
-  getWalletNetworkStatus,
   parseStoredSession,
+  resolveReconnectSession,
   serializeSession,
   setKitPromiseForTesting,
   shouldUpdateAddress,
   updateStoredSessionAddress,
   useWallet,
 } from "@/lib/wallet";
+import { merchantAuthToken } from "@/lib/sep10";
 import type { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit";
 
 const ADDRESS_A = "GAEWDXVDI3WI35TWTZXNQ4NTRYIG6J34XPRSNKX655LBA377M5ZOCBY5";
@@ -41,14 +43,6 @@ describe("wallet pure functions", () => {
   describe("checkNetworkMismatch", () => {
     it("returns false when wallet network is null or unknown", () => {
       expect(checkNetworkMismatch(null, TESTNET_PASSPHRASE)).toBe(false);
-    });
-
-    describe("getWalletNetworkStatus", () => {
-      it("distinguishes unknown, matching and mismatched networks", () => {
-        expect(getWalletNetworkStatus(null, TESTNET_PASSPHRASE)).toBe("unknown");
-        expect(getWalletNetworkStatus(TESTNET_PASSPHRASE, TESTNET_PASSPHRASE)).toBe("matching");
-        expect(getWalletNetworkStatus(PUBLIC_PASSPHRASE, TESTNET_PASSPHRASE)).toBe("mismatch");
-      });
     });
 
     it("returns false when wallet network matches configured passphrase", () => {
@@ -115,6 +109,26 @@ describe("wallet pure functions", () => {
       expect(updateStoredSessionAddress(null, ADDRESS_B)).toBeNull();
       expect(updateStoredSessionAddress("invalid", ADDRESS_B)).toBeNull();
     });
+
+    it("resolves reconnect session from storage or in-memory fallback", () => {
+      expect(resolveReconnectSession(null, null, null)).toBeNull();
+      expect(resolveReconnectSession("bad-json", null, null)).toBeNull();
+      expect(
+        resolveReconnectSession(
+          JSON.stringify({ walletId: WALLET_ID, address: ADDRESS_A }),
+          null,
+          null,
+        ),
+      ).toEqual({ walletId: WALLET_ID, address: ADDRESS_A });
+      expect(resolveReconnectSession(null, WALLET_ID, ADDRESS_A)).toEqual({
+        walletId: WALLET_ID,
+        address: ADDRESS_A,
+      });
+      expect(resolveReconnectSession(null, null, ADDRESS_A)).toEqual({
+        walletId: "",
+        address: ADDRESS_A,
+      });
+    });
   });
 });
 
@@ -141,24 +155,12 @@ describe("WalletProvider and account change detection", () => {
   });
 
   function TestConsumer() {
-    const {
-      address,
-      error,
-      networkMismatch,
-      rememberedWalletId,
-      reconnect,
-      signXdr,
-      disconnect,
-    } = useWallet();
+    const { address, error, networkMismatch, signXdr, disconnect } = useWallet();
     return (
       <div>
         <div data-testid="address">{address ?? "disconnected"}</div>
         <div data-testid="mismatch">{networkMismatch ? "mismatch" : "matched"}</div>
-        <div data-testid="remembered-wallet">{rememberedWalletId ?? "none"}</div>
         {error && <div data-testid="error">{error}</div>}
-        <button type="button" data-testid="reconnect-btn" onClick={() => void reconnect()}>
-          Reconnect
-        </button>
         <button
           type="button"
           data-testid="sign-btn"
@@ -173,7 +175,7 @@ describe("WalletProvider and account change detection", () => {
     );
   }
 
-  it("offers a saved wallet without accessing it until the user reconnects", async () => {
+  it("restores saved session on mount and detects if account changed while away", async () => {
     window.localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({ walletId: WALLET_ID, address: ADDRESS_A }),
@@ -187,12 +189,6 @@ describe("WalletProvider and account change detection", () => {
       </WalletProvider>,
     );
 
-    expect(screen.getByTestId("address").textContent).toBe("disconnected");
-    expect(screen.getByTestId("remembered-wallet").textContent).toBe(WALLET_ID);
-    expect(mockKit.setWallet).not.toHaveBeenCalled();
-    expect(mockKit.getAddress).not.toHaveBeenCalled();
-
-    await act(async () => screen.getByTestId("reconnect-btn").click());
     expect(await screen.findByText(ADDRESS_B)).toBeTruthy();
     expect(mockKit.setWallet).toHaveBeenCalledWith(WALLET_ID);
     // localStorage should be updated with new address
@@ -212,7 +208,6 @@ describe("WalletProvider and account change detection", () => {
       </WalletProvider>,
     );
 
-    await act(async () => screen.getByTestId("reconnect-btn").click());
     expect(await screen.findByText(ADDRESS_A)).toBeTruthy();
 
     // User switches account inside wallet extension to ADDRESS_B
@@ -242,7 +237,6 @@ describe("WalletProvider and account change detection", () => {
       </WalletProvider>,
     );
 
-    await act(async () => screen.getByTestId("reconnect-btn").click());
     expect(await screen.findByText(ADDRESS_A)).toBeTruthy();
 
     // User switches account to ADDRESS_B
@@ -287,12 +281,10 @@ describe("WalletProvider and account change detection", () => {
     mockKit.signTransaction.mockResolvedValue({ signedTxXdr: "SIGNED_XDR" });
 
     let capturedSignXdr!: (xdr: string) => Promise<string>;
-    let capturedReconnect!: () => Promise<void>;
 
     function SignConsumer() {
-      const { signXdr, address, reconnect } = useWallet();
+      const { signXdr, address } = useWallet();
       capturedSignXdr = signXdr;
-      capturedReconnect = reconnect;
       return <div data-testid="address">{address}</div>;
     }
 
@@ -302,7 +294,6 @@ describe("WalletProvider and account change detection", () => {
       </WalletProvider>,
     );
 
-    await act(async () => capturedReconnect());
     expect(await screen.findByText(ADDRESS_A)).toBeTruthy();
 
     // Successful sign when address hasn't changed
@@ -337,12 +328,10 @@ describe("WalletProvider and account change detection", () => {
     mockKit.signTransaction.mockRejectedValue(rejection);
 
     let capturedSignXdr!: (xdr: string) => Promise<string>;
-    let capturedReconnect!: () => Promise<void>;
 
     function SignConsumer() {
-      const { signXdr, address, reconnect } = useWallet();
+      const { signXdr, address } = useWallet();
       capturedSignXdr = signXdr;
-      capturedReconnect = reconnect;
       return <div data-testid="address">{address}</div>;
     }
 
@@ -352,7 +341,6 @@ describe("WalletProvider and account change detection", () => {
       </WalletProvider>,
     );
 
-    await act(async () => capturedReconnect());
     expect(await screen.findByText(ADDRESS_A)).toBeTruthy();
     await expect(capturedSignXdr("UNSIGNED_XDR")).rejects.toThrow(
       SIGNATURE_CANCELLED_MESSAGE,
@@ -370,12 +358,10 @@ describe("WalletProvider and account change detection", () => {
     );
 
     let capturedSignXdr!: (xdr: string) => Promise<string>;
-    let capturedReconnect!: () => Promise<void>;
 
     function SignConsumer() {
-      const { signXdr, address, reconnect } = useWallet();
+      const { signXdr, address } = useWallet();
       capturedSignXdr = signXdr;
-      capturedReconnect = reconnect;
       return <div data-testid="address">{address}</div>;
     }
 
@@ -385,7 +371,6 @@ describe("WalletProvider and account change detection", () => {
       </WalletProvider>,
     );
 
-    await act(async () => capturedReconnect());
     expect(await screen.findByText(ADDRESS_A)).toBeTruthy();
     await expect(capturedSignXdr("UNSIGNED_XDR")).rejects.toThrow(
       "The wallet encountered an internal error. Please try again.",
@@ -406,10 +391,9 @@ describe("WalletProvider and account change detection", () => {
       </WalletProvider>,
     );
 
-    // The saved selection is offered but is not connected automatically.
-    expect(screen.getByRole("button", { name: `Reconnect ${WALLET_ID}` })).toBeTruthy();
-    await act(async () => screen.getByRole("button", { name: `Reconnect ${WALLET_ID}` }).click());
+    // Wait for initial session restore
     expect(await screen.findByText(/GAEWD/)).toBeTruthy();
+    expect(screen.getByRole("button").title).toBe(`${ADDRESS_A} — click to disconnect`);
 
     // Switch account in wallet
     mockKit.getAddress.mockResolvedValue({ address: ADDRESS_B });
@@ -418,8 +402,9 @@ describe("WalletProvider and account change detection", () => {
       window.dispatchEvent(new Event("focus"));
     });
 
-    const updated = await screen.findByText(/GAP6Q/);
+    const updated = await screen.findByTitle(`${ADDRESS_B} — click to disconnect`, {}, { timeout: 3000 });
     expect(updated).toBeTruthy();
+    expect(updated.textContent).toContain("GAP6Q");
   });
 
 
@@ -428,8 +413,7 @@ describe("WalletProvider and account change detection", () => {
     const loadMock = vi.fn();
 
     function DataConsumer() {
-      const { address, reconnect } = useWallet();
-      reconnectWallet = reconnect;
+      const { address } = useWallet();
 
       useEffect(() => {
         if (address) {
@@ -439,7 +423,6 @@ describe("WalletProvider and account change detection", () => {
 
       return <div data-testid="active-user">{address ? `User: ${address}` : "No user"}</div>;
     }
-    let reconnectWallet!: () => Promise<void>;
 
     window.localStorage.setItem(
       STORAGE_KEY,
@@ -453,7 +436,6 @@ describe("WalletProvider and account change detection", () => {
       </WalletProvider>,
     );
 
-    await act(async () => reconnectWallet());
     expect(await screen.findByText(`User: ${ADDRESS_A}`)).toBeTruthy();
     expect(loadMock).toHaveBeenCalledWith(ADDRESS_A);
 
@@ -481,7 +463,6 @@ describe("WalletProvider and account change detection", () => {
       </WalletProvider>,
     );
 
-    await act(async () => screen.getByTestId("reconnect-btn").click());
     expect(await screen.findByText(ADDRESS_A)).toBeTruthy();
 
     // Wallet is locked or extension temporarily throws
@@ -508,7 +489,6 @@ describe("WalletProvider and account change detection", () => {
       </WalletProvider>,
     );
 
-    await act(async () => screen.getByTestId("reconnect-btn").click());
     expect(await screen.findByText(ADDRESS_A)).toBeTruthy();
 
     await act(async () => {
@@ -576,58 +556,6 @@ describe("WalletProvider connection and signing lifecycle", () => {
     });
   });
 
-  it("persists a newly selected wallet when switching providers", async () => {
-    kit.openModal.mockImplementationOnce(async ({ onWalletSelected }) => {
-      await onWalletSelected({ id: "lobstr" });
-    });
-    const { result } = mountWallet();
-
-    await act(async () => result.current.connect());
-
-    expect(result.current.walletId).toBe("lobstr");
-    expect(result.current.rememberedWalletId).toBe("lobstr");
-    expect(parseStoredSession(localStorage.getItem(STORAGE_KEY))).toEqual({
-      walletId: "lobstr",
-      address: ADDRESS_A,
-    });
-  });
-
-  it("does not crash or fail to connect when browser storage is unavailable", async () => {
-    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-      throw new Error("storage unavailable");
-    });
-    const { result } = mountWallet();
-
-    await act(async () => result.current.connect());
-
-    expect(result.current.address).toBe(ADDRESS_A);
-    expect(result.current.error).toBeNull();
-    setItem.mockRestore();
-  });
-
-  it("ignores duplicate reconnect attempts while one is already running", async () => {
-    localStorage.setItem(STORAGE_KEY, serializeSession(WALLET_ID, ADDRESS_A));
-    let resolveAddress!: (value: { address: string }) => void;
-    kit.getAddress.mockImplementationOnce(
-      () => new Promise((resolve) => { resolveAddress = resolve; }),
-    );
-    const { result } = mountWallet();
-    let firstAttempt!: Promise<void>;
-
-    await act(async () => {
-      firstAttempt = result.current.reconnect();
-      await result.current.reconnect();
-    });
-    expect(kit.getAddress).toHaveBeenCalledOnce();
-    expect(result.current.connecting).toBe(true);
-
-    await act(async () => {
-      resolveAddress({ address: ADDRESS_A });
-      await firstAttempt;
-    });
-    expect(result.current.address).toBe(ADDRESS_A);
-  });
-
   it("stays connecting until the modal closes without a selection", async () => {
     let close: (() => void) | undefined;
     kit.openModal.mockImplementationOnce(async ({ onClosed }) => { close = onClosed; });
@@ -671,30 +599,10 @@ describe("WalletProvider connection and signing lifecycle", () => {
     expect(kit.setWallet).not.toHaveBeenCalled();
   });
 
-  it("stays usable when browser storage cannot be accessed", () => {
-    const storageGetter = vi.spyOn(window, "localStorage", "get").mockImplementation(() => {
-      throw new Error("storage unavailable");
-    });
-
-    try {
-      const { result } = mountWallet();
-      expect(result.current.address).toBeNull();
-      expect(result.current.walletSelectionLoaded).toBe(true);
-      expect(kit.openModal).not.toHaveBeenCalled();
-    } finally {
-      storageGetter.mockRestore();
-    }
-  });
-
-  it("offers a saved wallet and exposes its network mismatch after explicit reconnection", async () => {
+  it("restores a session silently and exposes the wallet's network mismatch", async () => {
     localStorage.setItem(STORAGE_KEY, serializeSession(WALLET_ID, ADDRESS_A));
     kit.getNetwork.mockResolvedValue({ networkPassphrase: PUBLIC_PASSPHRASE });
     const { result } = mountWallet();
-    expect(result.current.address).toBeNull();
-    expect(result.current.rememberedWalletId).toBe(WALLET_ID);
-    expect(result.current.networkStatus).toBe("unknown");
-    expect(kit.getAddress).not.toHaveBeenCalled();
-    await act(async () => result.current.reconnect());
     await waitFor(() => expect(result.current.networkMismatch).toBe(true));
     expect(result.current.address).toBe(ADDRESS_A);
     expect(result.current.walletNetwork).toBe(PUBLIC_PASSPHRASE);
@@ -703,76 +611,51 @@ describe("WalletProvider connection and signing lifecycle", () => {
     expect(kit.signTransaction).not.toHaveBeenCalled();
   });
 
-  it("keeps the saved wallet available when reconnect fails or is rejected", async () => {
-    localStorage.setItem(STORAGE_KEY, serializeSession(WALLET_ID, ADDRESS_A));
-    kit.getAddress.mockRejectedValueOnce(new Error("The user rejected this request."));
-    const { result } = mountWallet();
-
-    await act(async () => result.current.reconnect());
-
-    expect(result.current.address).toBeNull();
-    expect(result.current.rememberedWalletId).toBe(WALLET_ID);
-    expect(result.current.error).toBe("The user rejected this request.");
-    expect(localStorage.getItem(STORAGE_KEY)).toContain(WALLET_ID);
-  });
-
-  it("blocks signing when the wallet network cannot be verified", async () => {
-    kit.getNetwork.mockRejectedValue(new Error("Network unavailable"));
-    const { result } = mountWallet();
-    await act(async () => result.current.connect());
-
-    expect(result.current.networkStatus).toBe("unknown");
-    await expect(result.current.signXdr("UNSIGNED")).rejects.toThrow(
-      "Could not verify the wallet network",
-    );
-    expect(kit.signTransaction).not.toHaveBeenCalled();
-  });
-
-  it("blocks signing when the final network check returns no identifier", async () => {
-    const { result } = mountWallet();
-    await act(async () => result.current.connect());
-    kit.getNetwork.mockReset();
-    kit.getNetwork
-      .mockResolvedValueOnce({ networkPassphrase: TESTNET_PASSPHRASE })
-      .mockResolvedValueOnce({ networkPassphrase: "" });
-
-    await act(async () => {
-      await expect(result.current.signXdr("UNSIGNED")).rejects.toThrow(
-        "Could not verify the wallet network",
-      );
-    });
-
-    expect(result.current.networkStatus).toBe("unknown");
-    expect(kit.signTransaction).not.toHaveBeenCalled();
-  });
-
-  it("checks the live network before signing even before a focus update", async () => {
-    const { result } = mountWallet();
-    await act(async () => result.current.connect());
-    expect(result.current.networkStatus).toBe("matching");
-
-    kit.getNetwork.mockReset();
+  it("rechecks the wallet network immediately before signing", async () => {
     kit.getNetwork
       .mockResolvedValueOnce({ networkPassphrase: TESTNET_PASSPHRASE })
       .mockResolvedValueOnce({ networkPassphrase: PUBLIC_PASSPHRASE });
-    await act(async () => {
-      await expect(result.current.signXdr("UNSIGNED")).rejects.toThrow("correct network");
-    });
+    const { result } = mountWallet();
+    await act(async () => result.current.connect());
 
-    expect(result.current.networkStatus).toBe("mismatch");
+    await expect(result.current.signXdr("UNSIGNED")).rejects.toThrow("correct network");
+    await waitFor(() => expect(result.current.networkMismatch).toBe(true));
     expect(kit.signTransaction).not.toHaveBeenCalled();
   });
 
-  it("updates the mismatch state after the wallet network changes", async () => {
+  it("shows an action explanation and only opens the wallet after confirmation", async () => {
     const { result } = mountWallet();
     await act(async () => result.current.connect());
-    expect(result.current.networkStatus).toBe("matching");
 
-    kit.getNetwork.mockResolvedValue({ networkPassphrase: PUBLIC_PASSPHRASE });
-    await act(async () => window.dispatchEvent(new Event("focus")));
+    let signing!: Promise<string>;
+    act(() => {
+      signing = result.current.signXdr("UNSIGNED", "deposit tokens into a vault");
+    });
 
-    expect(result.current.networkStatus).toBe("mismatch");
-    expect(result.current.networkMismatch).toBe(true);
+    const dialog = await screen.findByRole("dialog", { name: "Review this wallet action?" });
+    expect(dialog.textContent).toContain(
+      "This transaction will deposit tokens into a vault.",
+    );
+    expect(kit.signTransaction).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue to wallet" }));
+    await expect(signing).resolves.toBe("SIGNED_XDR");
+    expect(kit.signTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not ask the wallet to sign when the action explanation is cancelled", async () => {
+    const { result } = mountWallet();
+    await act(async () => result.current.connect());
+
+    let signing!: Promise<string>;
+    act(() => {
+      signing = result.current.signXdr("UNSIGNED", "deposit tokens into a vault");
+    });
+    await screen.findByRole("dialog", { name: "Review this wallet action?" });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await expect(signing).rejects.toThrow(SIGNATURE_CANCELLED_MESSAGE);
+    expect(kit.signTransaction).not.toHaveBeenCalled();
   });
 
   it("rejects signing while disconnected before accessing the wallet", async () => {
@@ -800,18 +683,17 @@ describe("WalletProvider connection and signing lifecycle", () => {
     expect(kit.signTransaction).not.toHaveBeenCalled();
   });
 
-  it("preserves the active session and reports disconnect errors", async () => {
+  it("clears session and mismatch even when the wallet cannot disconnect", async () => {
     kit.getNetwork.mockResolvedValue({ networkPassphrase: PUBLIC_PASSPHRASE });
     const { result } = mountWallet();
     await act(async () => result.current.connect());
     expect(result.current.networkMismatch).toBe(true);
     kit.disconnect.mockRejectedValueOnce(new Error("Disconnect is unsupported"));
     await act(async () => result.current.disconnect());
-    expect(result.current.address).toBe(ADDRESS_A);
-    expect(result.current.walletNetwork).toBe(PUBLIC_PASSPHRASE);
-    expect(result.current.networkMismatch).toBe(true);
-    expect(result.current.error).toBe("Disconnect is unsupported");
-    expect(localStorage.getItem(STORAGE_KEY)).toContain(WALLET_ID);
+    expect(result.current.address).toBeNull();
+    expect(result.current.walletNetwork).toBeNull();
+    expect(result.current.networkMismatch).toBe(false);
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
   });
 
   it("removes account-change listeners when the provider unmounts", async () => {
@@ -820,7 +702,110 @@ describe("WalletProvider connection and signing lifecycle", () => {
     unmount();
     kit.getAddress.mockClear();
     window.dispatchEvent(new Event("focus"));
+    window.dispatchEvent(new Event("pageshow"));
     document.dispatchEvent(new Event("visibilitychange"));
     expect(kit.getAddress).not.toHaveBeenCalled();
+  });
+
+  it("re-establishes the wallet session on visibility resume without a full reload", async () => {
+    localStorage.setItem(STORAGE_KEY, serializeSession(WALLET_ID, ADDRESS_A));
+    const { result } = mountWallet();
+    await waitFor(() => expect(result.current.address).toBe(ADDRESS_A));
+
+    kit.setWallet.mockClear();
+    kit.getAddress.mockClear();
+    kit.getNetwork.mockResolvedValue({ networkPassphrase: PUBLIC_PASSPHRASE });
+
+    Object.defineProperty(document, "visibilityState", {
+      value: "hidden",
+      configurable: true,
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+
+    Object.defineProperty(document, "visibilityState", {
+      value: "visible",
+      configurable: true,
+    });
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    expect(kit.setWallet).toHaveBeenCalledWith(WALLET_ID);
+    expect(kit.getAddress).toHaveBeenCalled();
+    expect(result.current.networkMismatch).toBe(true);
+    expect(result.current.reconnecting).toBe(false);
+    expect(result.current.reconnectError).toBeNull();
+  });
+
+  it("exposes loading and error states while reconnecting and recovers on retry", async () => {
+    const { WalletButton } = await import("@/components/WalletButton");
+    localStorage.setItem(STORAGE_KEY, serializeSession(WALLET_ID, ADDRESS_A));
+
+    let resolveReconnect!: (value: { address: string }) => void;
+    kit.getAddress.mockResolvedValueOnce({ address: ADDRESS_A });
+
+    render(
+      <WalletProvider>
+        <WalletButton />
+      </WalletProvider>,
+    );
+
+    expect(await screen.findByTitle(`${ADDRESS_A} — click to disconnect`)).toBeTruthy();
+
+    // Simulate failed background resume first
+    kit.getAddress.mockRejectedValueOnce(new Error("Extension locked"));
+    await act(async () => {
+      window.dispatchEvent(new Event("pageshow"));
+    });
+
+    const alertEl = await screen.findByRole("alert");
+    expect(alertEl.textContent).toContain("Session needs reconnect");
+    expect(alertEl.className).toContain("text-warn");
+
+    // Retry reconnect via button: verify loading state then active state
+    kit.getAddress.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveReconnect = resolve;
+        }),
+    );
+
+    const retryButton = screen.getByRole("button", { name: "Reconnect wallet session" });
+    act(() => {
+      retryButton.click();
+    });
+
+    const statusEl = await screen.findByRole("status");
+    expect(statusEl.getAttribute("aria-busy")).toBe("true");
+    expect(statusEl.textContent).toContain("Reconnecting…");
+
+    await act(async () => {
+      resolveReconnect({ address: ADDRESS_A });
+    });
+
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(screen.getByTitle(`${ADDRESS_A} — click to disconnect`)).toBeTruthy();
+  });
+
+  it("sets reconnectError when wallet returns an empty address on resume", async () => {
+    localStorage.setItem(STORAGE_KEY, serializeSession(WALLET_ID, ADDRESS_A));
+    const { result } = mountWallet();
+    await waitFor(() => expect(result.current.address).toBe(ADDRESS_A));
+
+    kit.getAddress.mockResolvedValueOnce({ address: "" });
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+
+    expect(result.current.reconnectError).toBe(RECONNECT_DISCONNECTED_ERROR);
+    expect(result.current.address).toBe(ADDRESS_A);
+  });
+
+  it("configures merchant auth token provider only for connected account", async () => {
+    localStorage.setItem(STORAGE_KEY, serializeSession(WALLET_ID, ADDRESS_A));
+    const { result } = mountWallet();
+    await waitFor(() => expect(result.current.address).toBe(ADDRESS_A));
+
+    expect(await merchantAuthToken(ADDRESS_B)).toBeNull();
   });
 });

@@ -10,9 +10,8 @@ import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { WalletButton } from "@/components/WalletButton";
-import { PersistentWarningBanner } from "@/components/PersistentWarningBanner";
 import { Activity } from "@/components/Activity";
-import { NetworkMismatchBanner } from "@/components/ui";
+import { NetworkMismatchBanner, Notice } from "@/components/ui";
 import { HeaderSearch } from "@/components/HeaderSearch";
 import {
   APP_VERSION,
@@ -26,6 +25,7 @@ import {
 } from "@/lib/build-info";
 import type { NetworkConfig } from "@/lib/config";
 import { useNetwork } from "@/lib/network";
+import { useReducedData } from "@/lib/useReducedData";
 import { useWallet } from "@/lib/wallet";
 import { copyToClipboard } from "@/lib/clipboard";
 
@@ -57,11 +57,12 @@ function NetworkSwitcher({
   networks: NetworkConfig[];
   select: (id: string) => void;
 }) {
+  const { t: tr } = useI18n();
   if (networks.length <= 1) {
     return (
       <span
         className="inline-flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-2 text-xs text-muted"
-        title={`Stellar ${network.label.toLowerCase()}`}
+        title={tr("Stellar {0}", { "0": network.label.toLowerCase() })}
       >
         <span className="h-2 w-2 rounded-full bg-accent" aria-hidden="true" />
         {network.label}
@@ -76,14 +77,14 @@ function NetworkSwitcher({
         aria-hidden="true"
       />
       <label className="sr-only" htmlFor="network-switcher">
-        Stellar network
+        {tr("Stellar network")}
       </label>
       <select
         id="network-switcher"
         className="h-9 appearance-none rounded-lg border border-edge bg-transparent pl-7 pr-7 text-xs text-muted transition hover:border-muted hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         value={network.id}
         onChange={(event) => select(event.target.value)}
-        title={`Network: ${network.label} — switch and reload`}
+        title={tr("Network: {0} — switch and reload", { "0": network.label })}
       >
         {networks.map((option) => (
           <option key={option.id} value={option.id}>
@@ -117,8 +118,9 @@ function NetworkSwitcher({
  */
 export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
   const { t: tr } = useI18n();
-  const { networkMismatch, networkStatus, walletNetwork, walletId, address } = useWallet();
+  const { networkMismatch, walletNetwork, address, locked } = useWallet();
   const { network, networks, select } = useNetwork();
+  const reducedData = useReducedData();
   const pathname = usePathname();
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -126,7 +128,17 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
   const toggleRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLElement>(null);
 
-  const walletDisplayName = walletId ?? "Unknown";
+  let walletName: string | null = null;
+  try { walletName = typeof window !== "undefined" ? window.localStorage.getItem("payflow.wallet") : null; } catch { /* Storage is optional. */ }
+  let walletDisplayName = "Unknown";
+  if (walletName) {
+    try {
+      const parsed = JSON.parse(walletName);
+      walletDisplayName = parsed.walletId || "Unknown";
+    } catch {
+      walletDisplayName = walletName;
+    }
+  }
 
   // "/" focuses the search field from anywhere on the page, unless the user
   // is already typing into an input, textarea, or contenteditable element.
@@ -202,15 +214,20 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
 
   return (
     <>
-      <PersistentWarningBanner networkId={network.id} />
-      {address && networkStatus !== "matching" && (
+      {networkMismatch && (
         <div className="mx-auto max-w-5xl px-5 pt-4 print:hidden">
           <NetworkMismatchBanner
             walletNetwork={walletNetwork}
             expectedNetwork={network.networkPassphrase}
-            expectedNetworkLabel={network.label}
-            status={networkMismatch ? "mismatch" : "unknown"}
           />
+        </div>
+      )}
+      {/* A wallet that stopped answering needs a way out, not a silent failure. */}
+      {locked && address && (
+        <div className="mx-auto max-w-5xl px-5 pt-4 print:hidden">
+          <Notice tone="info">
+            {tr("Your wallet is locked or not responding. Unlock it in your wallet and try again.")}
+          </Notice>
         </div>
       )}
       <div className="mx-auto flex min-h-screen max-w-5xl flex-col px-5 print:block print:max-w-none print:px-0">
@@ -228,13 +245,18 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
         <header className="border-b border-edge py-4 sm:py-5 print:hidden">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-6">
-              <Link href="/" className="shrink-0 text-lg font-semibold tracking-tight">{tr("Pay")}<span className="text-accent">{tr("flow")}</span>
+              <Link
+                href="/"
+                {...(reducedData ? { prefetch: false as const } : {})}
+                className="shrink-0 text-lg font-semibold tracking-tight"
+              >{tr("Pay")}<span className="text-accent">{tr("flow")}</span>
               </Link>
               <nav className="hidden gap-4 text-sm text-muted md:flex" aria-label={tr("Main navigation")}>
                 {NAV.map((item) => (
                   <Link
                     key={item.href}
                     href={item.href}
+                    {...(reducedData ? { prefetch: false as const } : {})}
                     aria-current={isCurrent(pathname, item.href) ? "page" : undefined}
                     className={`hover:text-fg ${
                       isCurrent(pathname, item.href) ? "text-fg" : ""
@@ -250,7 +272,7 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
               <HeaderSearch onNavigate={(href) => router.push(href)} />
             </div>
 
-            <div className="flex w-full min-w-0 flex-wrap items-center justify-end gap-2 md:w-auto md:shrink-0">
+            <div className="flex shrink-0 items-center gap-2">
               <NetworkSwitcher network={network} networks={networks} select={select} />
               <ThemeToggle />
               <WalletButton />
@@ -313,6 +335,7 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
                 <li key={item.href}>
                   <Link
                     href={item.href}
+                    {...(reducedData ? { prefetch: false as const } : {})}
                     aria-current={isCurrent(pathname, item.href) ? "page" : undefined}
                     className={`block rounded-lg px-2 py-2.5 text-sm text-muted hover:bg-fg/5 hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
                       isCurrent(pathname, item.href) ? "bg-fg/5 text-fg" : ""

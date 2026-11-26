@@ -1,178 +1,153 @@
 "use client";
 
-import { useState } from "react";
 import { useI18n } from "@/i18n/provider";
 
 import { useWallet } from "@/lib/wallet";
 import { config } from "@/lib/config";
 import { fromStroops, shortAddress, spendableBalance } from "@/lib/format";
-import { copyToClipboard } from "@/lib/clipboard";
 
 /**
  * The header's wallet control: the connected address, what it can spend, and a
  * way out of the dead end a brand new testnet account is in.
  */
 export function WalletButton() {
-  const { t: tr } = useI18n();
+  const { t: tr, translateMessage } = useI18n();
   const {
     address,
     connecting,
-    reconnecting,
-    disconnecting,
-    rememberedWalletId,
-    walletSelectionLoaded = true,
-    connect,
-    reconnect,
-    disconnect,
+    reconnecting = false,
     error,
+    reconnectError = null,
+    connect,
+    disconnect,
+    reconnect,
     account,
     funding,
     fund,
   } = useWallet();
-  const [copying, setCopying] = useState(false);
-  const [copyResult, setCopyResult] = useState<{
-    address: string;
-    state: "copied" | "error";
-  } | null>(null);
-
-  if (!walletSelectionLoaded) {
-    return (
-      <span role="status" aria-live="polite" className="text-xs text-muted">
-        {tr("Checking saved wallet…")}
-      </span>
-    );
-  }
 
   if (!address) {
+    if (!reconnecting && !reconnectError && !error) {
+      return (
+        <button
+          type="button"
+          onClick={() => void connect()}
+          disabled={connecting}
+          className="btn-primary"
+        >
+          {connecting ? tr("Connecting…") : tr("Connect wallet")}
+        </button>
+      );
+    }
     return (
-      <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
-        {rememberedWalletId && (
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {reconnecting && (
+          <span
+            role="status"
+            aria-live="polite"
+            aria-busy="true"
+            className="inline-flex items-center gap-1.5 text-xs text-muted"
+          >
+            <span
+              className="h-2 w-2 rounded-full bg-warn motion-safe:animate-pulse"
+              aria-hidden="true"
+            />
+            {tr("Reconnecting…")}
+          </span>
+        )}
+        {!reconnecting && (reconnectError || error) && (
+          <span role="alert" className="text-xs text-danger" title={reconnectError ?? error ?? undefined}>
+            {translateMessage(reconnectError ?? error ?? "")}
+          </span>
+        )}
+        {!reconnecting && reconnectError && reconnect && (
           <button
             type="button"
             onClick={() => void reconnect()}
-            disabled={connecting}
-            className="btn-primary"
+            className="btn-ghost text-xs"
+            aria-label={tr("Reconnect wallet session")}
           >
-            {reconnecting
-              ? tr("Reconnecting…")
-              : tr("Reconnect {0}", { "0": rememberedWalletId })}
+            {tr("Reconnect")}
           </button>
         )}
         <button
           type="button"
           onClick={() => void connect()}
-          disabled={connecting}
-          className={rememberedWalletId ? "btn-ghost" : "btn-primary"}
+          disabled={connecting || reconnecting}
+          aria-busy={connecting || reconnecting || undefined}
+          className="btn-primary"
         >
-          {connecting && !reconnecting
-            ? tr("Connecting…")
-            : rememberedWalletId
-              ? tr("Choose another wallet")
-              : tr("Connect wallet")}
+          {connecting ? tr("Connecting…") : reconnecting ? tr("Reconnecting…") : tr("Connect wallet")}
         </button>
-        {error && (
-          <span role="alert" className="basis-full text-right text-xs text-danger">
-            {error}
-          </span>
-        )}
       </div>
     );
   }
 
-  const connectedAddress = address;
-  const copyFeedback = copyResult?.address === connectedAddress ? copyResult.state : "idle";
-
-  async function copyAddress() {
-    if (copying) return;
-    setCopying(true);
-    try {
-      setCopyResult({
-        address: connectedAddress,
-        state: await copyToClipboard(connectedAddress) ? "copied" : "error",
-      });
-    } catch {
-      setCopyResult({ address: connectedAddress, state: "error" });
-    } finally {
-      setCopying(false);
-    }
-  }
-
   return (
-    <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
-      <BalanceLabel account={account} />
-      <span
-        className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-edge px-2.5 py-2 text-muted"
-        title={connectedAddress}
-      >
-        <span className="h-2 w-2 shrink-0 rounded-full bg-accent" aria-hidden="true" />
-        <span className="mono truncate">{shortAddress(connectedAddress, 5)}</span>
-      </span>
-      <button
-        type="button"
-        onClick={() => void copyAddress()}
-        disabled={copying}
-        className="btn-ghost"
-        aria-label={tr("Copy connected wallet address")}
-      >
-        {copying ? tr("Copying…") : copyFeedback === "copied" ? tr("Copied!") : tr("Copy address")}
-      </button>
-      <button
-        type="button"
-        onClick={() => void connect()}
-        disabled={connecting || disconnecting}
-        className="btn-ghost"
-      >
-        {connecting ? tr("Connecting…") : tr("Change wallet")}
-      </button>
+    // Wraps rather than overflows: at 375px the header has room for the
+    // address and one short control, and an overflowing cluster would push
+    // the logo off the screen.
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      {reconnecting ? (
+        <span
+          role="status"
+          aria-live="polite"
+          aria-busy="true"
+          className="inline-flex items-center gap-1.5 text-xs text-muted"
+        >
+          <span
+            className="h-2 w-2 rounded-full bg-warn motion-safe:animate-pulse"
+            aria-hidden="true"
+          />
+          {tr("Reconnecting…")}
+        </span>
+      ) : reconnectError ? (
+        <>
+          <span role="alert" className="text-xs text-warn" title={reconnectError}>
+            {tr("Session needs reconnect")}
+          </span>
+          {reconnect && (
+            <button
+              type="button"
+              onClick={() => void reconnect()}
+              className="btn-ghost text-xs"
+              aria-label={tr("Reconnect wallet session")}
+            >
+              {tr("Reconnect")}
+            </button>
+          )}
+        </>
+      ) : (
+        account && <BalanceLabel account={account} />
+      )}
       <button
         type="button"
         onClick={() => void disconnect()}
-        disabled={disconnecting || connecting}
-        className="btn-ghost"
+        className="btn-ghost mono"
+        title={tr("{0} — click to disconnect", { "0": address })}
       >
-        {disconnecting ? tr("Disconnecting…") : tr("Disconnect")}
+        <span className="h-2 w-2 rounded-full bg-accent" aria-hidden="true" />
+        {shortAddress(address, 5)}
       </button>
-      <span role="status" aria-live="polite" className="sr-only">
-        {copyFeedback === "copied"
-          ? tr("Wallet address copied to clipboard")
-          : copyFeedback === "error"
-            ? tr("Could not copy the wallet address")
-            : ""}
-      </span>
-      {copyFeedback === "copied" && (
-        <span className="text-xs text-accent" aria-hidden="true">
-          {tr("Copied!")}
-        </span>
-      )}
-      {copyFeedback === "error" && (
-        <span className="text-xs text-danger" role="status">
-          {tr("Could not copy the wallet address")}
-        </span>
-      )}
-      {error && (
-        <span role="alert" className="basis-full text-right text-xs text-danger">
-          {error}
-        </span>
-      )}
       {/* Friendbot is a testnet faucet; off testnet there is nothing to offer. */}
-      {account.state === "missing" && config.friendbotUrl && (
+      {account?.state === "missing" && config.friendbotUrl && (
         <button
           type="button"
           onClick={() => void fund()}
           disabled={funding}
           className="btn-primary"
-          aria-label="Fund with Friendbot"
-          title="This account does not exist on testnet yet. Friendbot will create it and give it 10,000 test XLM."
+          aria-label={tr("Fund with Friendbot")}
+          title={tr("This account does not exist on testnet yet. Friendbot will create it and give it 10,000 test XLM.")}
         >
           {funding ? (
-            "Funding…"
+            tr("Funding…")
           ) : (
             <>
               <span aria-hidden="true" className="sm:hidden">
-                Fund
+                {tr("Fund")}
               </span>
               <span aria-hidden="true" className="hidden sm:inline">
-                Fund with Friendbot
+                {tr("Fund with Friendbot")}
               </span>
             </>
           )}
@@ -193,17 +168,18 @@ function BalanceLabel({
 }: {
   account: ReturnType<typeof useWallet>["account"];
 }) {
+  const { t: tr } = useI18n();
   if (account.state === "loading") {
     return (
       <span className="text-xs text-muted tabular-nums" aria-live="polite">
-        Reading balance…
+        {tr("Reading balance…")}
       </span>
     );
   }
   if (account.state === "error") {
     return (
-      <span className="text-xs text-amber-300" title={account.message}>
-        Balance unavailable
+      <span className="text-xs text-warn" title={account.message}>
+        {tr("Balance unavailable")}
       </span>
     );
   }
@@ -211,23 +187,35 @@ function BalanceLabel({
     // The Fund button next to this says the same thing, so the label is only
     // worth the width where there is room for both.
     return (
-      <span className="hidden text-xs text-amber-300 sm:inline" aria-hidden="true">
-        Account not funded
+      <span className="hidden text-xs text-warn sm:inline" aria-hidden="true">
+        {tr("Account not funded")}
       </span>
     );
   }
 
   const { balance, subentryCount } = account.account;
   const spendable = spendableBalance(balance, subentryCount);
+  const balanceTitle =
+    subentryCount === 1
+      ? tr("{0} XLM held, {1} XLM spendable after the {2} ledger entry this account keeps", {
+          "0": fromStroops(balance),
+          "1": fromStroops(spendable),
+          "2": subentryCount,
+        })
+      : tr("{0} XLM held, {1} XLM spendable after the {2} ledger entries this account keeps", {
+          "0": fromStroops(balance),
+          "1": fromStroops(spendable),
+          "2": subentryCount,
+        });
   return (
     <span
       className="whitespace-nowrap text-xs text-muted tabular-nums"
       // Announced so a screen-reader user hears the balance change after a
       // transaction without having to go looking for it.
       aria-live="polite"
-      title={`${fromStroops(balance)} XLM held, ${fromStroops(spendable)} XLM spendable after the ${subentryCount} ledger ${subentryCount === 1 ? "entry" : "entries"} this account keeps`}
+      title={balanceTitle}
     >
-      {fromStroops(spendable)} XLM
+      {fromStroops(spendable)} {tr("XLM")}
     </span>
   );
 }
