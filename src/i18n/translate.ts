@@ -1,8 +1,9 @@
+import de from "./de.json";
 import en from "./en.json";
 import fr from "./fr.json";
 import { formatNumber, type Locale } from "./format";
 export type Translation = (key: string, values?: Record<string, unknown>) => string;
-const catalogs: Record<Locale, Record<string, string>> = { en, fr };
+const catalogs: Record<Locale, Record<string, string>> = { en, fr, de };
 export function createTranslation(locale: Locale): Translation {
   return (key, values = {}) => (catalogs[locale][key] ?? key).replace(/\{(\w+)\}/g, (match, name: string) => {
     if (!(name in values)) return match;

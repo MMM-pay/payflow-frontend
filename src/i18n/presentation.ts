@@ -2,17 +2,21 @@ import type { ApiMandate } from "@/lib/api";
 import { trialEndsAt, trialSeconds, trialBadge as englishTrialBadge, type HasTrial } from "@/lib/trial";
 import { discountBps, discountCharges, type HasDiscount } from "@/lib/discount";
 import { bestPoint, totalNet, describeSeries as englishDescribeSeries, type BucketSize, type RevenuePoint } from "@/lib/revenue";
+import type { MrrPoint } from "@/lib/mrr";
 import { createTranslation } from "./translate";
 import * as f from "./format";
 
 /** Display adapters only: contract values and financial calculations remain canonical. */
 export function presentation(locale: f.Locale) {
   const t = createTranslation(locale);
+  const monthLabel = (start: number) =>
+    new Intl.DateTimeFormat(f.localeTag(locale), { month: "short", year: "numeric", timeZone: "UTC" })
+      .format(new Date(start * 1000));
   function formatTrialLength(seconds: number): string {
     const units = [[86_400, "day"], [3_600, "hour"], [60, "minute"], [1, "second"]] as const;
     const [size, unit] = units.find(([size]) => seconds >= size && seconds % size === 0) ?? units[3];
     const count = seconds / size;
-    return new Intl.NumberFormat(f.localeTag(locale), { style: "unit", unit, unitDisplay: "long" }).format(count);
+    return f.formatUnit(count, unit, locale);
   }
   function discountLabel(bps: number, charges: number) {
     const percent = f.formatFeeBps(bps, locale);
@@ -29,6 +33,16 @@ export function presentation(locale: f.Locale) {
     discountLabel,
     unitLabel: (unit: { name: string }) => t(unit.name === "week" ? "Weeks" : unit.name === "month" ? "Months" : "Days"),
     formatBucketLabel: (start: number) => new Intl.DateTimeFormat(f.localeTag(locale), { day: "numeric", month: "short", timeZone: "UTC" }).format(new Date(start * 1000)),
+    formatMonthLabel: monthLabel,
+    describeMrrTrend: (points: MrrPoint[], render: (value: bigint) => string) => {
+      const latest = points[points.length - 1];
+      if (!latest || points.every((point) => point.mrr === 0n)) return t("No committed MRR was recorded in this period.");
+      return t("Committed MRR by month, from {0} to {1}, latest {2}.", {
+        0: monthLabel(points[0]!.start),
+        1: monthLabel(latest.start),
+        2: render(latest.mrr),
+      });
+    },
     bucketTitle: (start: number, size: BucketSize) => size === "week" ? t("Week of {0}", { 0: f.formatDate(start, locale) }) : f.formatDate(start, locale),
     describeSeries: (points: RevenuePoint[], size: BucketSize, render: (value: bigint) => string) => {
       if (locale === "en") return englishDescribeSeries(points, size, render);

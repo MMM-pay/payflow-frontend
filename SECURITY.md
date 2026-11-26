@@ -1,6 +1,6 @@
 # Security Policy
 
-## Audit status
+## Audit status 
 
 Unaudited. Testnet only. Do not connect a wallet holding real value.
 

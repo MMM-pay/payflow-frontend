@@ -54,7 +54,9 @@ const payflowMock = vi.hoisted(() => ({
 const endMandatesMock = vi.hoisted(() => vi.fn());
 
 const chainMock = vi.hoisted(() => ({
+  MERCHANT_MANDATE_PAGE_SIZE: 50,
   chainMandatesFor: vi.fn(),
+  chainMerchantMandatesPage: vi.fn(async () => ({ rows: [], total: 0 })),
   chainMerchantSummary: vi.fn(),
   chainPlansOf: vi.fn(),
   chainPlanSubscriberCount: vi.fn(),
@@ -129,6 +131,27 @@ afterEach(() => {
 const PLAN_TOKEN_XLM = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
 const PLAN_TOKEN_USDC = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA";
 
+describe("MerchantPage amount rendering", () => {
+  it("preserves a zero collected total", async () => {
+    chainMock.chainMerchantSummary.mockReturnValue({
+      merchant: MERCHANT,
+      activeMandates: 0,
+      totalCollected: 0n,
+      chargeCount: 0,
+      mrr: "0",
+    });
+
+    render(<MerchantPage />);
+
+    const collected = screen.getByText("Collected").closest(".panel");
+    await waitFor(() => {
+      expect(
+        collected?.querySelector('[data-testid="money-amount"]')?.getAttribute("aria-label"),
+      ).toBe("0 XLM");
+    });
+  });
+});
+
 describe("MerchantPage plan search and filters (#300)", () => {
   beforeEach(() => {
     apiMock.plans.mockResolvedValue({
@@ -153,13 +176,13 @@ describe("MerchantPage plan search and filters (#300)", () => {
     expect(screen.queryByText("Legacy")).toBeNull();
   });
 
-  it("filters by active status and token", async () => {
+  it("filters the archive tab by token", async () => {
     render(<MerchantPage />);
     await screen.findByText("Starter");
 
-    fireEvent.change(screen.getByLabelText("Status:"), {
-      target: { value: "inactive" },
-    });
+    // Deactivated plans are kept out of the active listing entirely.
+    expect(screen.queryByText("Legacy")).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: /Archive/ }));
     expect(screen.getByText("Legacy")).toBeTruthy();
     expect(screen.queryByText("Starter")).toBeNull();
 
@@ -184,7 +207,59 @@ describe("MerchantPage plan search and filters (#300)", () => {
     expect(
       (screen.getByLabelText("Search plans by name") as HTMLInputElement).value,
     ).toBe("");
-    expect((screen.getByLabelText("Status:") as HTMLSelectElement).value).toBe("all");
+  });
+});
+
+describe("MerchantPage plan archive (#373)", () => {
+  beforeEach(() => {
+    apiMock.plans.mockResolvedValue({
+      plans: [
+        { id: 1, merchant: MERCHANT, name: "Starter", token: PLAN_TOKEN_XLM, amount: "10000000", period: 2_592_000, active: 1, ledger: 0 },
+        { id: 2, merchant: MERCHANT, name: "Growth", token: PLAN_TOKEN_USDC, amount: "20000000", period: 2_592_000, active: 1, ledger: 0 },
+        { id: 3, merchant: MERCHANT, name: "Legacy", token: PLAN_TOKEN_USDC, amount: "30000000", period: 2_592_000, active: 0, ledger: 0 },
+      ],
+    });
+  });
+
+  it("separates deactivated plans into an archive tab with counts", async () => {
+    render(<MerchantPage />);
+    await screen.findByText("Starter");
+
+    expect(screen.getByRole("tab", { name: /Active/ }).textContent).toContain("2");
+    expect(screen.getByRole("tab", { name: /Archive/ }).textContent).toContain("1");
+    expect(screen.getByRole("tab", { name: /Active/ }).getAttribute("aria-selected")).toBe("true");
+
+    fireEvent.click(screen.getByRole("tab", { name: /Archive/ }));
+    expect(screen.getByRole("tab", { name: /Archive/ }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByText("Legacy")).toBeTruthy();
+    expect(screen.queryByText("Starter")).toBeNull();
+    expect(screen.queryByText("Growth")).toBeNull();
+  });
+
+  it("keeps the search filter while switching tabs", async () => {
+    render(<MerchantPage />);
+    await screen.findByText("Starter");
+
+    fireEvent.change(screen.getByLabelText("Search plans by name"), {
+      target: { value: "legacy" },
+    });
+    expect(await screen.findByText("No plans match these filters")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("tab", { name: /Archive/ }));
+    expect(screen.getByText("Legacy")).toBeTruthy();
+  });
+
+  it("says the archive is empty instead of claiming there are no plans", async () => {
+    apiMock.plans.mockResolvedValue({
+      plans: [
+        { id: 1, merchant: MERCHANT, name: "Starter", token: PLAN_TOKEN_XLM, amount: "10000000", period: 2_592_000, active: 1, ledger: 0 },
+      ],
+    });
+    render(<MerchantPage />);
+    await screen.findByText("Starter");
+
+    fireEvent.click(screen.getByRole("tab", { name: /Archive/ }));
+    expect(screen.getByText("No archived plans")).toBeTruthy();
   });
 });
 
@@ -205,6 +280,73 @@ async function chooseCustom(count: string, unit = "day"): Promise<void> {
     fireEvent.change(screen.getByLabelText(/^unit$/i), { target: { value: unit } });
   }
 }
+
+describe("MerchantPage bulk subscriber export (#374)", () => {
+  const SUB_A = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+  const SUB_B = "GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBWHF";
+
+  beforeEach(() => {
+    apiMock.plans.mockResolvedValue({
+      plans: [
+        { id: 1, merchant: MERCHANT, name: "Starter", token: PLAN_TOKEN_XLM, amount: "10000000", period: 2_592_000, active: 1, ledger: 0 },
+        { id: 2, merchant: MERCHANT, name: "Growth", token: PLAN_TOKEN_USDC, amount: "20000000", period: 2_592_000, active: 1, ledger: 0 },
+      ],
+    });
+    apiMock.mandatesFor.mockResolvedValue({
+      mandates: [
+        { id: 10, subscriber: SUB_A, merchant: MERCHANT, plan_id: 1, amount: "10000000", period: 2_592_000, next_charge: Math.floor(Date.now() / 1000) + 86_400, last_charge: 0, charges_made: 2, max_charges: 12, fee_bps: 100, status: "Active", token: PLAN_TOKEN_XLM },
+        { id: 11, subscriber: SUB_B, merchant: MERCHANT, plan_id: 2, amount: "20000000", period: 2_592_000, next_charge: Math.floor(Date.now() / 1000) + 86_400, last_charge: 0, charges_made: 0, max_charges: 0, fee_bps: 100, status: "Active", token: PLAN_TOKEN_USDC },
+      ],
+    });
+  });
+
+  it("selects multiple subscribers and downloads one CSV together", async () => {
+    let downloaded: Blob | null = null;
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: vi.fn((blob: Blob) => {
+        downloaded = blob;
+        return "blob:subscribers";
+      }),
+    });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+
+    render(<MerchantPage />);
+    const exportButton = await screen.findByRole("button", { name: "Export selected (0)" });
+    expect((exportButton as HTMLButtonElement).disabled).toBe(true);
+
+    const first = screen.getByLabelText("Select subscription #10 for export");
+    const second = screen.getByLabelText("Select subscription #11 for export");
+    fireEvent.click(first);
+    fireEvent.click(second);
+
+    expect(screen.getByText("2 selected for export")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Export selected (2)" }));
+
+    await waitFor(() => expect(downloaded).not.toBeNull());
+    const text = await downloaded!.text();
+    const lines = text.split("\n");
+    expect(lines[0]).toBe(
+      "mandate id,subscriber,plan id,plan name,status,amount,token,period seconds,charges made,max charges,next charge",
+    );
+    expect(lines).toHaveLength(3);
+    expect(text).toContain(`${SUB_A},1,Starter,Active,1,XLM,2592000,2,12`);
+    expect(text).toContain(`${SUB_B},2,Growth,Active,2,XLM,2592000,0,0`);
+    // The selection is cleared once the file is built.
+    expect(await screen.findByText("0 selected for export")).toBeTruthy();
+  });
+
+  it("select all includes every subscriber and can clear the selection", async () => {
+    render(<MerchantPage />);
+    await screen.findByRole("button", { name: "Export selected (0)" });
+
+    fireEvent.click(screen.getByLabelText("Select all subscribers for export"));
+    expect(screen.getByText("2 selected for export")).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText("Select all subscribers for export"));
+    expect(screen.getByText("0 selected for export")).toBeTruthy();
+  });
+});
 
 describe("MerchantPage publish form", () => {
   it("keeps Publish disabled and explains why while the price is unusable", async () => {
@@ -526,7 +668,11 @@ describe("MerchantPage deactivate all plans", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "Deactivate all active plans?" });
     expect(dialog.textContent).toContain("This will deactivate 2 active plans");
-    expect(dialog.textContent).toContain("Affected open subscriptions: 2 mandates");
+    // The impact count arrives with the mandate page, one read after the
+    // plans; wait for it rather than racing the dialog's first paint.
+    await waitFor(() =>
+      expect(dialog.textContent).toContain("Affected open subscriptions: 2 mandates"),
+    );
   });
 
   it("calls deactivate_page for each page and shows progress", async () => {
@@ -607,7 +753,9 @@ describe("MerchantPage deactivate all plans", () => {
     second.resolve("tx-hash");
     await waitFor(() => expect(screen.getByText("All active plans deactivated.")).toBeTruthy());
     expect(payflowMock.deactivatePage).toHaveBeenCalledTimes(2);
-  });
+    // Sixty plan cards plus the mandate page is a heavy render; under the full
+    // suite it can exceed the default 5s budget even though it is deterministic.
+  }, 20_000);
 
   it("hides the button when there are no active plans", async () => {
     apiMock.plans.mockResolvedValue({
@@ -629,7 +777,11 @@ describe("MerchantPage deactivate all plans", () => {
 
     render(<MerchantPage />);
 
-    await screen.findByText("Plan 1");
+    // With no active plans the listing opens on an explanatory empty state;
+    // the deactivated plans are still available in the archive tab.
+    expect(await screen.findByText("No active plans")).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: /Archive/ }));
+    expect(await screen.findByText("Plan 1")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Deactivate all plans" })).toBeNull();
   });
 
@@ -689,7 +841,7 @@ describe("MerchantPage deactivate all plans", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "Deactivate" })[0]!);
 
     const dialog = await screen.findByRole("dialog", { name: "Deactivate plan Plan 1?" });
-    expect(dialog.textContent).toContain("1 open subscription");
+    await waitFor(() => expect(dialog.textContent).toContain("1 open subscription"));
   });
 
   it("deactivates a single plan from its own dialog", async () => {
@@ -731,4 +883,41 @@ describe("MerchantPage deactivate all plans", () => {
     await waitFor(() => expect(payflowMock.setPlanActive).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
+
+describe("MerchantPage plan stats", () => {
+  it("shows the subscriber count on each plan card when stats are readable", async () => {
+    setupActivePlans();
+    apiMock.planStats
+      .mockResolvedValueOnce({ subscriber_count: 7, total_collected: "10000000", cancellations: 0 })
+      .mockResolvedValueOnce({ subscriber_count: 0, total_collected: "0", cancellations: 0 })
+      .mockResolvedValueOnce(null);
+
+    render(<MerchantPage />);
+
+    await waitForPlans();
+    // Plan 1 has 7 subscribers, plan 2 has zero, plan 3 has no stats source.
+    await waitFor(() => {
+      const contents = screen
+        .getAllByText("Subscribers")
+        .map((label) => label.parentElement?.textContent ?? "");
+      expect(contents.some((c) => c.includes("7"))).toBe(true);
+      expect(contents.some((c) => c.includes("0"))).toBe(true);
+    });
+    const contents = screen
+      .getAllByText("Subscribers")
+      .map((label) => label.parentElement?.textContent ?? "");
+    expect(contents).toEqual(expect.arrayContaining(["Subscribers7", "Subscribers0"]));
+  });
+
+  it("shows a loading placeholder rather than a zero while plan stats are in flight", async () => {
+    setupActivePlans();
+    // planStats never settles, so the cards stay in the loading state.
+    apiMock.planStats.mockImplementation(() => new Promise(() => {}));
+
+    render(<MerchantPage />);
+
+    await waitForPlans();
+    expect(screen.getAllByText(/Loading plan stats/i).length).toBeGreaterThan(0);
+  });
+});
 });
