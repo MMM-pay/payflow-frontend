@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useI18n } from "@/i18n/provider";
 import { api } from "@/lib/api";
 import {
   formatRetentionPercent,
@@ -8,8 +9,8 @@ import {
   retentionColorClass,
   type CohortRetentionData,
 } from "@/lib/cohort-retention";
+import { useReducedData } from "@/lib/useReducedData";
 import { Empty, Notice, Panel, SkeletonRows } from "./ui";
-import { useI18n } from "@/i18n/provider";
 
 type CohortRetentionState =
   | { status: "loading" }
@@ -22,14 +23,19 @@ interface CohortRetentionTableProps {
   apiConfigured: boolean;
 }
 
-export function CohortRetentionTable({
-  merchant, apiConfigured }: CohortRetentionTableProps) {
+export function CohortRetentionTable({ merchant, apiConfigured }: CohortRetentionTableProps) {
   const { t: tr, formatNumber } = useI18n();
+  const reducedData = useReducedData();
+  const [forceLoad, setForceLoad] = useState(false);
   const [state, setState] = useState<CohortRetentionState>({ status: "loading" });
+  const pausedForReducedData = apiConfigured && reducedData && !forceLoad;
 
   useEffect(() => {
     if (!apiConfigured) {
       setState({ status: "unavailable" });
+      return;
+    }
+    if (pausedForReducedData) {
       return;
     }
 
@@ -53,7 +59,7 @@ export function CohortRetentionTable({
     return () => {
       live = false;
     };
-  }, [apiConfigured, merchant]);
+  }, [apiConfigured, merchant, pausedForReducedData]);
 
   return (
     <Panel
@@ -64,6 +70,21 @@ export function CohortRetentionTable({
         <Notice tone="info">
           {tr("Cohort retention analysis requires the payflow backend. Configure NEXT_PUBLIC_API_URL to enable this report; contract-only mode does not retain historical signup and churn data needed for cohort tracking.")}
         </Notice>
+      ) : pausedForReducedData ? (
+        <Empty
+          title={tr("Cohort retention paused to save data")}
+          action={
+            <button
+              type="button"
+              className="btn-ghost text-xs"
+              onClick={() => setForceLoad(true)}
+            >
+              {tr("Load cohort retention")}
+            </button>
+          }
+        >
+          {tr("Automatic analytics requests are paused when reduced-data mode is active.")}
+        </Empty>
       ) : state.status === "loading" ? (
         <SkeletonRows rows={3} label={tr("Loading cohort retention data")} />
       ) : state.status === "unavailable" ? (
@@ -92,10 +113,10 @@ export function CohortRetentionTable({
             <thead>
               <tr className="border-b border-edge text-muted">
                 <th scope="col" className="sticky left-0 bg-panel py-2 pr-3 font-medium z-10">
-                  Signup month
+                  {tr("Signup month")}
                 </th>
                 <th scope="col" className="py-2 pr-3 text-right font-medium">
-                  Cohort size
+                  {tr("Cohort size")}
                 </th>
                 {Array.from({ length: state.data.maxAge + 1 }, (_, i) => (
                   <th key={i} scope="col" className="py-2 px-2 text-center font-medium min-w-[4rem]">

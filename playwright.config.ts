@@ -9,7 +9,9 @@ import { defineConfig } from "@playwright/test";
  * `npm run build:visual` so the version and commit stamped into the footer
  * are fixed. Soroban RPC is mocked (see e2e/mock-rpc.ts) and every other
  * external request is blocked, so pages render deterministic contract-only
- * states with no wallet, no backend and no network. See
+ * states with no backend and no network. The mocked-chain subscribe spec
+ * injects a deterministic wallet through the same build's opt-in module;
+ * every other test has no wallet. See
  * docs/visual-regression.md for the update procedure.
  */
 export default defineConfig({

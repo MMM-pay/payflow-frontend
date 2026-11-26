@@ -1,6 +1,8 @@
 ﻿"use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useI18n } from "@/i18n/provider";
+import type { Translation } from "@/i18n/translate";
 import {
   api,
   type ApiActivityType,
@@ -8,10 +10,9 @@ import {
   type ApiTimelineEvent,
 } from "@/lib/api";
 import { config } from "@/lib/config";
-import { formatAmount, type TokenMeta } from "@/lib/format";
+import type { TokenMeta } from "@/lib/format";
 import { subscribeToStreamEvents } from "@/lib/stream";
 import { useWallet } from "@/lib/wallet";
-import { useI18n } from "@/i18n/provider";
 import { Empty, Notice, Panel, SkeletonRows } from "@/components/ui";
 
 const SEEN_PREFIX = "payflow.activity.seen.";
@@ -98,25 +99,29 @@ function tokenMetaFor(event: ActivityItem): TokenMeta | null {
   return { symbol: event.token_symbol, decimals: event.token_decimals };
 }
 
-function eventDescription(event: ActivityItem): string {
+function eventDescription(
+  event: ActivityItem,
+  tr: Translation,
+  formatAmount: (raw: string | bigint, meta?: TokenMeta, digits?: number) => string,
+): string {
   if (event.type === "charged") {
-    if (!event.amount) return "Payment charged";
+    if (!event.amount) return tr("Payment charged");
     const meta = tokenMetaFor(event);
     return meta
-      ? `Charged ${formatAmount(event.amount, meta)}`
-      : `Charged ${event.amount} (smallest units; token metadata unavailable)`;
+      ? tr("Charged {0}", { "0": formatAmount(event.amount, meta) })
+      : tr("Charged {0} (smallest units; token metadata unavailable)", { "0": event.amount });
   }
   switch (event.type) {
     case "pause_changed":
-      return "Pause status changed";
+      return tr("Pause status changed");
     case "mandate_completed":
-      return "Mandate completed";
+      return tr("Mandate completed");
     case "mandate_ended":
-      return "Mandate ended";
+      return tr("Mandate ended");
     case "cancelled":
-      return "Mandate cancelled";
+      return tr("Mandate cancelled");
     case "subscribed":
-      return "Mandate subscribed";
+      return tr("Mandate subscribed");
   }
 }
 
@@ -166,7 +171,7 @@ async function loadActivity(address: string): Promise<ActivityLoad | null> {
 }
 
 export function Activity() {
-  const { t: tr } = useI18n();
+  const { t: tr, formatAmount } = useI18n();
   const { address } = useWallet();
   const [items, setItems] = useState<ActivityItem[]>([]);
   const [itemsAddress, setItemsAddress] = useState<string | null>(null);
@@ -260,7 +265,7 @@ export function Activity() {
             className="btn-ghost"
             onClick={() => void refresh(address)}
           >
-            Refresh
+            {tr("Refresh")}
           </button>
           <button
             type="button"
@@ -268,7 +273,7 @@ export function Activity() {
             onClick={markSeen}
             disabled={!unread.length}
           >
-            Mark all read
+            {tr("Mark all read")}
           </button>
         </div>
       }
@@ -283,7 +288,7 @@ export function Activity() {
         <div className="space-y-3">
           <Notice tone="error">{tr("Activity is unavailable right now. Try again later.")}</Notice>
           <button type="button" className="btn-ghost" onClick={() => void refresh(address)}>
-            Try again
+            {tr("Try again")}
           </button>
         </div>
       ) : null}
@@ -298,14 +303,17 @@ export function Activity() {
               className="flex min-w-0 items-start justify-between gap-3 rounded-lg border border-edge p-3"
             >
               <div className="min-w-0">
-                <p className="break-words text-sm font-medium">{eventDescription(item)}</p>
+                <p className="break-words text-sm font-medium">
+                  {eventDescription(item, tr, formatAmount)}
+                </p>
                 <p className="mt-1 break-words text-xs text-muted">
-                  {labelFor(item.type)} | mandate #{item.mandate_id} | ledger {item.ledger}
+                  {tr(labelFor(item.type))} | {tr("mandate #{0}", { "0": String(item.mandate_id) })} |{" "}
+                  {tr("ledger {0}", { "0": String(item.ledger) })}
                 </p>
               </div>
               {!visibleSeen.has(item.identity) ? (
                 <span className="shrink-0 rounded-full bg-accent/15 px-2 py-0.5 text-xs text-accent">
-                  New
+                  {tr("New")}
                 </span>
               ) : null}
             </li>

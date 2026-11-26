@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { checkAmount, parseAmount } from "@/lib/format";
 import { formatAmount, formatDate, formatExactTime, formatPeriod, formatUsdString, formatWhen } from "@/i18n/format";
@@ -95,5 +97,27 @@ describe("catalog completeness and application errors", () => {
     expect(translateMessage("fr", "At most 6 decimal places.")).toBe("Au maximum 6 décimales.");
     expect(translateMessage("fr", "Enter a whole number of weeks.")).toBe("Saisissez un nombre entier de semaines.");
     expect(translateMessage("fr", "Wallet account changed. Please retry the transaction with the new account.")).toContain("Le compte du portefeuille a changé");
+  });
+
+  it("covers every literal translation key referenced across src/", () => {
+    function walk(dir: string): string[] {
+      const out: string[] = [];
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) out.push(...walk(full));
+        else if (/\.(ts|tsx)$/.test(entry.name)) out.push(full);
+      }
+      return out;
+    }
+    const missing: string[] = [];
+    const re = /\b(?:tr|t)\(\s*"((?:[^"\\]|\\.)*)"/g;
+    for (const file of walk(path.join(process.cwd(), "src"))) {
+      const source = fs.readFileSync(file, "utf8");
+      for (let match = re.exec(source); match; match = re.exec(source)) {
+        const key = JSON.parse(`"${match[1]}"`) as string;
+        if (!(key in en) || !(key in fr)) missing.push(`${file}: ${key}`);
+      }
+    }
+    expect(missing).toEqual([]);
   });
 });

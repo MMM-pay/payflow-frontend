@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useI18n } from "@/i18n/provider";
 import { api } from "@/lib/api";
 import { config } from "@/lib/config";
-import { useI18n } from "@/i18n/provider";
 import {
   checkIndexer,
   checkKeeper,
@@ -22,10 +22,9 @@ import { Notice, Panel } from "@/components/ui";
  * stacking at phone widths.
  */
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
-  const { t: tr } = useI18n();
   return (
     <div className="flex flex-wrap items-baseline justify-between gap-2 py-1.5 text-sm">
-      <dt className="text-muted">{tr(label)}</dt>
+      <dt className="text-muted">{label}</dt>
       <dd className="tabular-nums">{children}</dd>
     </div>
   );
@@ -33,9 +32,9 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 
 const STATE_STYLES: Record<CheckState, string> = {
   ok: "border-accent/40 bg-accent/10 text-accent",
-  degraded: "border-amber-500/40 bg-amber-500/10 text-amber-300",
-  down: "border-rose-500/40 bg-rose-500/10 text-rose-300",
-  skipped: "border-edge bg-white/5 text-muted",
+  degraded: "border-warn/40 bg-warn/10 text-warn",
+  down: "border-danger/40 bg-danger/10 text-danger",
+  skipped: "border-edge bg-fg/5 text-muted",
 };
 
 /** A text-labelled badge; the state is never carried by colour alone. */
@@ -51,7 +50,7 @@ function StateBadge({ state }: { state: CheckState }) {
 }
 
 export default function StatusPage() {
-  const { t: tr, formatExactTime } = useI18n();
+  const { t: tr, translateMessage, formatExactTime } = useI18n();
   const [rpc, setRpc] = useState<RpcCheck | null>(null);
   const [indexer, setIndexer] = useState<IndexerCheck | null>(null);
   const [keeper, setKeeper] = useState<KeeperCheck | null>(null);
@@ -121,8 +120,8 @@ export default function StatusPage() {
                 <StateBadge state={rpc.state} />
                 {rpc.state === "ok" ? (
                   <dl className="divide-y divide-edge/50">
-                    <Row label="Latest ledger">{rpc.latestLedger}</Row>
-                    <Row label="Endpoint">
+                    <Row label={tr("Latest ledger")}>{rpc.latestLedger}</Row>
+                    <Row label={tr("Endpoint")}>
                       <span className="mono text-xs break-all">{config.rpcUrl}</span>
                     </Row>
                   </dl>
@@ -154,19 +153,20 @@ export default function StatusPage() {
                   </p>
                 ) : indexer.state === "down" ? (
                   <Notice tone="error">
-                    {indexer.error} {tr("Lists fall back to reading contract state, which is slower but always correct.")}
+                    {indexer.error ? translateMessage(indexer.error) : ""}{" "}
+                    {tr("Lists fall back to reading contract state, which is slower but always correct.")}
                   </Notice>
                 ) : (
                   <dl className="divide-y divide-edge/50">
-                    <Row label="Status">{indexer.status}</Row>
-                    <Row label="Ledger lag">
-                      {indexer.lag === null ? "—" : tr("{0} ledgers", { "0": indexer.lag })}
+                    <Row label={tr("Status")}>{indexer.status}</Row>
+                    <Row label={tr("Ledger lag")}>
+                      {indexer.lag === null ? "—" : tr("{0} ledgers", { "0": String(indexer.lag) })}
                     </Row>
-                    <Row label="Indexed through ledger">{indexer.cursor ?? "—"}</Row>
-                    {indexer.network && <Row label="Network">{indexer.network}</Row>}
+                    <Row label={tr("Indexed through ledger")}>{indexer.cursor ?? "—"}</Row>
+                    {indexer.network && <Row label={tr("Network")}>{indexer.network}</Row>}
                     {indexer.paused && (
-                      <Row label="Paused">
-                        <span className="text-amber-300">{tr("indexing paused by an operator")}</span>
+                      <Row label={tr("Paused")}>
+                        <span className="text-warn">{tr("indexing paused by an operator")}</span>
                       </Row>
                     )}
                   </dl>
@@ -190,11 +190,11 @@ export default function StatusPage() {
                       : tr("No backend in this build, so keeper history is unavailable. Charging is permissionless — anyone can settle a due mandate.")}
                   </p>
                 ) : keeper.state === "degraded" && keeper.lastRunAt === null ? (
-                  <p className="text-sm text-muted">{keeper.error}</p>
+                  <p className="text-sm text-muted">{keeper.error ? translateMessage(keeper.error) : ""}</p>
                 ) : (
                   <>
                     <dl className="divide-y divide-edge/50">
-                      <Row label="Last pass">
+                      <Row label={tr("Last pass")}>
                         {keeper.lastRunAt === null ? (
                           "—"
                         ) : (
@@ -206,10 +206,10 @@ export default function StatusPage() {
                           </time>
                         )}
                       </Row>
-                      <Row label="Tried / settled">
+                      <Row label={tr("Tried / settled")}>
                         {keeper.attempted ?? "—"} / {keeper.settled ?? "—"}
                       </Row>
-                      <Row label="Failures in last pass">
+                      <Row label={tr("Failures in last pass")}>
                         {keeper.failureCount === null ? "—" : keeper.failureCount}
                       </Row>
                     </dl>

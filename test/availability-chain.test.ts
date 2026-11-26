@@ -12,7 +12,9 @@ it("preserves cutoff and reads the cap's open count", async () => {
 });
 it.each([undefined, 0])("does not call an unsupported/unlimited counter (%s)", async (cap) => {
   vi.spyOn(payflow, "nextPlanId").mockResolvedValue(2n);
-  vi.spyOn(payflow, "getPlan").mockResolvedValue({ ...plan, max_subscribers: cap });
+  vi.spyOn(payflow, "getPlan").mockResolvedValue(
+    cap === undefined ? { ...plan } : { ...plan, max_subscribers: cap },
+  );
   const read = vi.spyOn(payflow, "planSubscriberCount");
   const [result] = await chainPlans("source");
   expect(result?.subscriber_count).toBeUndefined();
