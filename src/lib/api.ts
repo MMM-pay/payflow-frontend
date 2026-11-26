@@ -354,20 +354,50 @@ export type StreamEvent =
   | StreamMandateDiscountEvent
   | StreamMandateEndEvent;
 
+interface CacheEntry<T> {
+  data: T;
+  timestamp: number;
+}
+
+const memoryCache = new Map<string, CacheEntry<unknown>>();
+const DEFAULT_TTL_MS = 30_000;
+
+export function clearApiCache(): void {
+  memoryCache.clear();
+}
+
 /**
  * The indexer is a convenience, not a source of truth. Every call here is
  * allowed to fail: the UI falls back to reading contract state directly so the
  * app still works when the backend is down.
  */
-async function get<T>(path: string, options?: { headers?: Record<string, string> }): Promise<T | null> {
+async function get<T>(
+  path: string,
+  options?: { headers?: Record<string, string>; ttlMs?: number },
+): Promise<T | null> {
   if (!apiConfigured()) return null;
+  const now = Date.now();
+  const ttl = options?.ttlMs ?? DEFAULT_TTL_MS;
+  const cacheKey = `${path}::${options?.headers?.Authorization ?? ""}`;
+
+  if (ttl > 0) {
+    const entry = memoryCache.get(cacheKey) as CacheEntry<T> | undefined;
+    if (entry && now - entry.timestamp < ttl) {
+      return entry.data;
+    }
+  }
+
   try {
     const res = await fetch(`${config.apiUrl}${path}`, {
       cache: "no-store",
-      headers: options?.headers,
+      ...(options?.headers !== undefined ? { headers: options.headers } : {}),
     });
     if (!res.ok) return null;
-    return (await res.json()) as T;
+    const data = (await res.json()) as T;
+    if (ttl > 0) {
+      memoryCache.set(cacheKey, { data, timestamp: now });
+    }
+    return data;
   } catch {
     return null;
   }
@@ -473,7 +503,7 @@ async function del(path: string, options?: { headers?: Record<string, string> })
     const res = await fetch(`${config.apiUrl}${path}`, {
       method: "DELETE",
       cache: "no-store",
-      headers: options?.headers,
+      ...(options?.headers !== undefined ? { headers: options.headers } : {}),
     });
     return res.ok;
   } catch {
@@ -508,8 +538,20 @@ export const api = {
     get<{ plans: ApiPlan[] }>(`/api/plans${merchant ? `?merchant=${merchant}` : ""}`),
   mandatesOf: (subscriber: string) =>
     get<{ mandates: ApiMandate[] }>(`/api/mandates?subscriber=${subscriber}`),
-  mandatesFor: (merchant: string) =>
-    get<{ mandates: ApiMandate[] }>(`/api/mandates?merchant=${merchant}`),
+  /**
+   * A merchant's mandates. `offset`/`limit` ask the indexer to page the list;
+   * a backend that ignores them returns everything, which the caller still
+   * handles (it dedupes by id and stops once a page is short).
+   */
+  mandatesFor: (
+    merchant: string,
+    page: { offset?: number; limit?: number } = {},
+  ) => {
+    const query = new URLSearchParams({ merchant });
+    if (page.offset !== undefined) query.set("offset", String(page.offset));
+    if (page.limit !== undefined) query.set("limit", String(page.limit));
+    return get<{ mandates: ApiMandate[] }>(`/api/mandates?${query.toString()}`);
+  },
   charges: (mandateId: number) =>
     get<{ charges: ApiCharge[] }>(`/api/mandates/${mandateId}/charges`),
   timeline,
@@ -567,7 +609,7 @@ export const api = {
    */
   health: () => {
     if (!api.isConfigured()) return Promise.resolve(null);
-    return get<ApiHealth>("/health");
+    return get<ApiHealth>("/health", { ttlMs: 0 });
   },
   /**
    * Keeper pass history, served only when the backend runs with the keeper
@@ -604,7 +646,7 @@ export const api = {
       const response = await fetch(`${config.apiUrl}/api/webhooks/${encodeURIComponent(id)}/deliveries`, {
         cache: "no-store",
         redirect: "error",
-        signal,
+        ...(signal !== undefined ? { signal } : {}),
         headers: {
           "X-Payflow-Merchant": proof.merchant,
           "X-Payflow-Timestamp": String(proof.timestamp),

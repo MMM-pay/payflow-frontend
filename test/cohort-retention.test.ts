@@ -167,32 +167,20 @@ describe("formatRetentionPercent", () => {
 });
 
 describe("retentionColorClass", () => {
-  it("returns green for high retention (90%+)", () => {
-    expect(retentionColorClass(100)).toBe("bg-green-100 dark:bg-green-950");
-    expect(retentionColorClass(90)).toBe("bg-green-100 dark:bg-green-950");
+  it("paints through the theme-aware chart palette, not fixed dark: variants", () => {
+    for (const percent of [100, 89, 69, 49, 29, 1, 0]) {
+      const className = retentionColorClass(percent);
+      expect(className).toMatch(/^bg-chart-[1-5]\/15 text-chart-[1-5]$/);
+      expect(className).not.toContain("dark:");
+    }
   });
 
-  it("returns lighter green for good retention (70-89%)", () => {
-    expect(retentionColorClass(89)).toBe("bg-green-50 dark:bg-green-900/50");
-    expect(retentionColorClass(70)).toBe("bg-green-50 dark:bg-green-900/50");
-  });
-
-  it("returns yellow for moderate retention (50-69%)", () => {
-    expect(retentionColorClass(69)).toBe("bg-yellow-50 dark:bg-yellow-900/50");
-    expect(retentionColorClass(50)).toBe("bg-yellow-50 dark:bg-yellow-900/50");
-  });
-
-  it("returns orange for low retention (30-49%)", () => {
-    expect(retentionColorClass(49)).toBe("bg-orange-50 dark:bg-orange-900/50");
-    expect(retentionColorClass(30)).toBe("bg-orange-50 dark:bg-orange-900/50");
-  });
-
-  it("returns red for very low retention (1-29%)", () => {
-    expect(retentionColorClass(29)).toBe("bg-red-50 dark:bg-red-900/50");
-    expect(retentionColorClass(1)).toBe("bg-red-50 dark:bg-red-900/50");
-  });
-
-  it("returns gray for zero retention", () => {
-    expect(retentionColorClass(0)).toBe("bg-gray-50 dark:bg-gray-900/50");
+  it("gives higher retention a stronger palette slot", () => {
+    expect(retentionColorClass(100)).toBe("bg-chart-1/15 text-chart-1");
+    expect(retentionColorClass(70)).toBe("bg-chart-2/15 text-chart-2");
+    expect(retentionColorClass(50)).toBe("bg-chart-3/15 text-chart-3");
+    expect(retentionColorClass(30)).toBe("bg-chart-4/15 text-chart-4");
+    expect(retentionColorClass(1)).toBe("bg-chart-4/15 text-chart-4");
+    expect(retentionColorClass(0)).toBe("bg-chart-5/15 text-chart-5");
   });
 });

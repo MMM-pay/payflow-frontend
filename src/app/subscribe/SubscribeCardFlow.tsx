@@ -12,7 +12,9 @@ import { useWallet } from "@/lib/wallet";
 import { metaFor } from "@/lib/token";
 import type { TokenMeta } from "@/lib/format";
 import { planAvailability } from "@/lib/availability";
+import { checkChargeLimit } from "@/lib/subscribe-confirmation";
 import { TxLink } from "@/components/ui";
+import { Money } from "@/components/Money";
 
 export function SubscribeCardFlow({
   plan,
@@ -23,7 +25,7 @@ export function SubscribeCardFlow({
   metas: Map<string, TokenMeta>;
   now: number;
 }) {
-  const { t: tr, formatAmount } = useI18n();
+  const { t: tr, formatAmount, translateMessage } = useI18n();
   const { address, networkMismatch, signXdr } = useWallet();
 
   const [vaultBalance, setVaultBalance] = useState<bigint | null>(null);
@@ -95,11 +97,12 @@ export function SubscribeCardFlow({
       setError(tr("Switch your wallet to the correct network first."));
       return;
     }
-    const limit = Number(maxChargesInput.trim()) || 0;
-    if (!Number.isInteger(limit) || limit < 0) {
-      setError(tr("Charge limit must be a whole number, or 0 for open-ended."));
+    const cap = checkChargeLimit(maxChargesInput);
+    if (!cap.ok) {
+      document.getElementById(`max-charges-${plan.id}`)?.focus();
       return;
     }
+    const limit = cap.limit;
     setBusyStep("subscribe");
     setError(null);
     setSubscribeHash(null);
@@ -124,6 +127,7 @@ export function SubscribeCardFlow({
     }
   }
 
+  const cap = checkChargeLimit(maxChargesInput);
   const unavailable = plan.active !== 1
     ? "This plan is closed to new subscriptions."
     : planAvailability(plan, now).reason;
@@ -142,13 +146,13 @@ export function SubscribeCardFlow({
         <span>{tr("Subscription Flow")}</span>
         {address && !loadingBalance && (
           <span>
-            {tr("Vault Balance:")} <strong className="tabular-nums text-fg">{formatAmount(vaultBalance ?? 0n, meta)}</strong>
+            {tr("Vault Balance:")} <strong className="tabular-nums text-fg"><Money amount={vaultBalance ?? 0n} meta={meta} /></strong>
           </span>
         )}
       </div>
 
       {error && (
-        <div className="rounded bg-danger/10 p-2 text-xs text-danger">
+        <div role="alert" className="rounded bg-danger/10 p-2 text-xs text-danger">
           {error}
         </div>
       )}
@@ -203,7 +207,14 @@ export function SubscribeCardFlow({
             onChange={(e) => setMaxChargesInput(e.target.value)}
             placeholder="0"
             disabled={busyStep !== null}
+            aria-invalid={!cap.ok || undefined}
+            aria-describedby={!cap.ok ? `max-charges-error-${plan.id}` : undefined}
           />
+          {!cap.ok && (
+            <p id={`max-charges-error-${plan.id}`} role="alert" className="mt-1 text-xs text-danger">
+              {translateMessage(cap.message)}
+            </p>
+          )}
         </div>
         {subscribeHash ? (
           <div className="text-xs text-accent">

@@ -26,6 +26,12 @@ export default {
         /** Solid destructive button: dark enough for white text in both themes. */
         "danger-solid": "rgb(var(--danger-solid) / <alpha-value>)",
         "danger-solid-hover": "rgb(var(--danger-solid-hover) / <alpha-value>)",
+        /** Categorical chart palette; swaps with the active theme. */
+        "chart-1": "rgb(var(--chart-1) / <alpha-value>)",
+        "chart-2": "rgb(var(--chart-2) / <alpha-value>)",
+        "chart-3": "rgb(var(--chart-3) / <alpha-value>)",
+        "chart-4": "rgb(var(--chart-4) / <alpha-value>)",
+        "chart-5": "rgb(var(--chart-5) / <alpha-value>)",
       },
     },
   },

@@ -148,7 +148,7 @@ export interface MerchantSessionDeps {
   /** The merchant account the token is minted for. */
   address: string;
   /** Signs the challenge transaction XDR; the wallet context's `signXdr`. */
-  signXdr: (xdr: string) => Promise<string>;
+  signXdr: (xdr: string, description?: string) => Promise<string>;
   /** Backend base URL; `config.apiUrl` in production. */
   apiUrl: string;
   /** Passphrase the challenge must be built for; `config.networkPassphrase`. */
@@ -168,7 +168,7 @@ export async function fetchChallenge(
   try {
     const res = await doFetch(
       `${deps.apiUrl}/api/auth?account=${encodeURIComponent(deps.address)}`,
-      { cache: "no-store", signal },
+      { cache: "no-store", ...(signal !== undefined ? { signal } : {}) },
     );
     // 404 (and 405) mean the backend does not serve SEP-10 at all: remember
     // that so the page does not re-probe on every merchant-only call.
@@ -196,7 +196,7 @@ export async function submitChallenge(
       cache: "no-store",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ transaction: signedXdr }),
-      signal,
+      ...(signal !== undefined ? { signal } : {}),
     });
     if (res.status === 404 || res.status === 405) return { status: "unsupported" };
     // 401/403 means the signature did not verify; treat as a transient failure
@@ -269,7 +269,10 @@ export async function getMerchantToken(
 
   let signedXdr: string;
   try {
-    signedXdr = await deps.signXdr(challenge.transaction);
+    signedXdr = await deps.signXdr(
+      challenge.transaction,
+      "authenticate this merchant session with your wallet",
+    );
   } catch {
     // User cancelled, account changed, or the wallet is on the wrong network.
     // Do not cache: a retry may succeed once the wallet is in the right state.

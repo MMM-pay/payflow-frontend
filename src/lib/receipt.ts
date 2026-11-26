@@ -62,6 +62,18 @@ export function parseReceiptParams(params: {
   };
 }
 
+export function receiptShareUrl(
+  currentUrl: string,
+  receipt: Pick<ReceiptData, "txHash" | "mandateId">,
+): string {
+  const url = new URL(currentUrl);
+  url.search = "";
+  url.hash = "";
+  url.searchParams.set("tx", receipt.txHash);
+  url.searchParams.set("mandate", String(receipt.mandateId));
+  return url.toString();
+}
+
 const MONTHS = [
   "Jan",
   "Feb",
@@ -247,4 +259,33 @@ export async function loadReceipt(
     apiAvailable,
     error: null,
   };
+}
+
+/** The filename a downloaded receipt is saved under. */
+export function receiptFilename(
+  receipt: Pick<ReceiptData, "mandateId" | "txHash">,
+): string {
+  return `payflow-receipt-${receipt.mandateId}-${receipt.txHash.slice(0, 8)}.html`;
+}
+
+/**
+ * Download one receipt as a standalone HTML file in the browser.
+ *
+ * The HTML template is imported on demand: the receipt route only pays for it
+ * when the user actually downloads, not on first paint.
+ */
+export async function downloadReceipt(receipt: ReceiptData): Promise<void> {
+  const { buildReceiptHtml } = await import("./receipt-html");
+  const blob = new Blob([buildReceiptHtml(receipt)], {
+    type: "text/html;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = receiptFilename(receipt);
+  link.hidden = true;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }

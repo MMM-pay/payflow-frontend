@@ -102,6 +102,24 @@ describe("indexerCheckFrom", () => {
     paused.indexer!.paused = true;
     expect(indexerCheckFrom(paused, true).paused).toBe(true);
   });
+
+  it("carries freshness and the last indexing error for the sync card", () => {
+    const body = health();
+    body.indexer!.freshnessSeconds = 90;
+    body.indexer!.lastError = "Horizon timed out";
+    const check = indexerCheckFrom(body, true);
+    expect(check.freshnessSeconds).toBe(90);
+    expect(check.lastError).toBe("Horizon timed out");
+  });
+
+  it("drops malformed freshness and blank errors instead of rendering them", () => {
+    const body = health();
+    body.indexer!.freshnessSeconds = Number.NaN;
+    body.indexer!.lastError = "   ";
+    const check = indexerCheckFrom(body, true);
+    expect(check.freshnessSeconds).toBeNull();
+    expect(check.lastError).toBeNull();
+  });
 });
 
 describe("keeperCheckFrom", () => {

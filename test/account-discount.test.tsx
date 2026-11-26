@@ -132,8 +132,9 @@ describe("AccountPage discount", () => {
 
     render(<AccountPage />);
 
-    // 1 XLM at 20% off is 0.8 XLM.
-    expect(await screen.findByText("0.8 XLM")).toBeTruthy();
+    // 1 XLM at 20% off is 0.8 XLM. It also appears in the vault commitment
+    // summary, so match every occurrence rather than assuming only the card.
+    expect((await screen.findAllByLabelText("0.8 XLM")).length).toBeGreaterThan(0);
     expect(screen.getByText("20% off for 3 charges")).toBeTruthy();
     expect(screen.getByText(/2 discounted charges left/)).toBeTruthy();
   });
@@ -147,7 +148,11 @@ describe("AccountPage discount", () => {
 
     render(<AccountPage />);
 
-    expect(await screen.findByText(/1 XLM per month/)).toBeTruthy();
+    expect(
+      (await screen.findAllByLabelText("1 XLM")).some((amount) =>
+        amount.closest("div")?.textContent?.includes("1 XLM per month"),
+      ),
+    ).toBe(true);
     expect(screen.getByText(/the discount has run out/i)).toBeTruthy();
   });
 
@@ -156,7 +161,11 @@ describe("AccountPage discount", () => {
 
     render(<AccountPage />);
 
-    expect(await screen.findByText(/1 XLM per month/)).toBeTruthy();
+    expect(
+      (await screen.findAllByLabelText("1 XLM")).some((amount) =>
+        amount.closest("div")?.textContent?.includes("1 XLM per month"),
+      ),
+    ).toBe(true);
     expect(screen.queryByText(/off for/i)).toBeNull();
     expect(screen.queryByText(/discount/i)).toBeNull();
   });
@@ -172,6 +181,6 @@ describe("AccountPage discount", () => {
 
     expect(await screen.findByText("20% off for 3 charges")).toBeTruthy();
     expect(screen.getByText(/the merchant set a discount/i)).toBeTruthy();
-    expect(screen.queryByText(/0.8 XLM/)).toBeNull();
+    expect(screen.queryByLabelText(/0.8 XLM/)).toBeNull();
   });
 });

@@ -4,6 +4,7 @@ import { useId, useState } from "react";
 import { useI18n } from "@/i18n/provider";
 import { AmountInput } from "@/components/AmountInput";
 import { LoadingButton } from "@/components/LoadingButton";
+import { FieldHint, InlineError } from "@/components/ui";
 import {
   DEFAULT_DEPOSIT_PERIODS,
   PERIODS_ERROR,
@@ -118,15 +119,16 @@ export function DepositCoverageInput({
           decimals={decimals}
           disabled={disabled || busy}
           hideError
+          invalid={Boolean(error)}
           describedBy={error ? errorId : summaryId}
         />
       </div>
       {error ? (
-        <p id={errorId} role="alert" className="text-sm text-danger">
-          {tr(error)}
-        </p>
+        <InlineError id={errorId} className="">
+          {error}
+        </InlineError>
       ) : (
-        <p id={summaryId} className="text-xs text-muted" aria-live="polite">
+        <FieldHint id={summaryId} className="" live>
           {coverage.periods === null || coverage.amount === null
             ? tr("Enter a coverage amount to see how many periods it funds.")
             : tr("{0} {1} covers {2}.", {
@@ -137,7 +139,7 @@ export function DepositCoverageInput({
                     ? tr("1 period")
                     : tr("{0} periods", { "0": coverage.periods }),
               })}
-        </p>
+        </FieldHint>
       )}
       <LoadingButton
         variant="primary"
