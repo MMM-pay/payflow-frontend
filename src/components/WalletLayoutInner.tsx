@@ -13,7 +13,6 @@ import { WalletButton } from "@/components/WalletButton";
 import { PersistentWarningBanner } from "@/components/PersistentWarningBanner";
 import { Activity } from "@/components/Activity";
 import { NetworkMismatchBanner, Notice } from "@/components/ui";
-import { PersistentWarningBanner } from "@/components/PersistentWarningBanner";
 import { HeaderSearch } from "@/components/HeaderSearch";
 import {
   APP_VERSION,
@@ -265,7 +264,11 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
               <HeaderSearch onNavigate={(href) => router.push(href)} />
             </div>
 
-            <div className="flex w-full min-w-0 flex-wrap items-center justify-end gap-2 md:w-auto md:shrink-0">
+            {/* The controls keep their order when they wrap: at 320 CSS px the
+                header cannot hold them all in one row. `min-w-0` lets the group
+                take the width the header has left instead of its max-content
+                width, so the wrap actually happens inside the viewport. */}
+            <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
               <NetworkSwitcher network={network} networks={networks} select={select} />
               <ThemeToggle />
               <WalletButton />

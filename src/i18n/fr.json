@@ -133,6 +133,8 @@
   "Charge attempt history is not available. The backend does not serve this endpoint yet, or the feature has not been deployed to this network.": "L’historique des tentatives est indisponible. Le serveur ne fournit pas encore ce service ou la fonctionnalité n’est pas déployée sur ce réseau.",
   "Charge failed for an unknown reason.": "Le prélèvement a échoué pour une raison inconnue.",
   "Charge history": "Historique des prélèvements",
+  "Charge history table": "Tableau de l'historique des paiements",
+  "Charges settled under this mandate, newest first.": "Paiements réglés sous ce mandat, les plus récents en premier.",
   "Charge history requires the indexer. When running in contract-only mode, individual transaction records are not available; the on-chain counters (charges made:": "L’historique des prélèvements nécessite l’indexeur. En mode contrat seul, les transactions individuelles sont indisponibles ; les compteurs du contrat (prélèvements effectués :",
   "Charge limit": "Limite de prélèvements",
   "Charge limit (0 = open-ended)": "Limite de prélèvements (0 = sans limite)",

@@ -52,7 +52,7 @@ vi.mock("next/link", () => ({
     children,
     ...rest
   }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { href: unknown }) => (
-    <a href={typeof href === "string" ? href : ""} {...rest}>
+    <a href={typeof href === "string" ? href : "/"} {...rest}>
       {children}
     </a>
   ),
