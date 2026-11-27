@@ -50,7 +50,9 @@ const fixtures = vi.hoisted(() => {
       walletNetwork: null as string | null,
       account: { state: "loading" as const },
       connect: vi.fn(),
+      reconnect: vi.fn(),
       disconnect: vi.fn(),
+      fund: vi.fn(),
       signXdr: vi.fn(),
     },
   };

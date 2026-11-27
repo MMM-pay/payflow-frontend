@@ -29,9 +29,5 @@ export function ContractVersionNotice({ drift }: { drift?: ContractDrift }) {
   );
   const value = drift ?? observed;
   if (!value.newer) return null;
-  return (
-    <div role="status">
-      <Notice tone="info">{tr(contractDriftMessage(value))}</Notice>
-    </div>
-  );
+  return <Notice tone="info">{tr(contractDriftMessage(value))}</Notice>;
 }

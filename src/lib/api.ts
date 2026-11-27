@@ -469,7 +469,7 @@ function isTimelineEvent(value: unknown, mandateId: number): value is ApiTimelin
 }
 
 async function timeline(mandateId: number): Promise<ApiTimelinePage | null> {
-  const response = await get<unknown>(`/api/mandates/${mandateId}/timeline`);
+  const response = await get<unknown>(`/api/mandates/${mandateId}/timeline`, { ttlMs: 0 });
   if (!response || typeof response !== "object") return null;
   const events = (response as { events?: unknown }).events;
   if (!Array.isArray(events)) return null;

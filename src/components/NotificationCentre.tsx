@@ -53,6 +53,22 @@ export function NotificationCentre({
     });
   }, [address, activeStorage]);
 
+  // Escape closes the panel from anywhere on the page while it is open, and
+  // returns focus to the trigger. The listener lives on the document rather
+  // than on the section: a landmark that is not a widget must not swallow
+  // keyboard events, and a keyboard user may have moved focus outside it.
+  useEffect(() => {
+    if (!isOpen) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setIsOpen(false);
+      triggerRef.current?.focus();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [isOpen]);
+
   // Active (undismissed) items
   const activeItems = filterDismissedNotifications(notifications, dismissed);
   const unreadCount = activeItems.length;
@@ -79,13 +95,6 @@ export function NotificationCentre({
     <section
       aria-label={tr("Notification centre")}
       className={`rounded-xl border border-edge bg-card p-3 shadow-xs ${className}`}
-      onKeyDown={(e) => {
-        if (e.key === "Escape" && isOpen) {
-          e.preventDefault();
-          setIsOpen(false);
-          triggerRef.current?.focus();
-        }
-      }}
     >
       {/* Summary Trigger Bar */}
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -180,7 +189,7 @@ export function NotificationCentre({
 
           {/* Error State */}
           {!loading && error && (
-            <div role="alert" className="my-2">
+            <div className="my-2">
               <Notice tone="error">{error}</Notice>
             </div>
           )}

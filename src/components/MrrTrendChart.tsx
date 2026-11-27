@@ -146,7 +146,7 @@ export function MrrTrendChart({
         ))}
       </svg>
 
-      <div className="flex justify-between text-xs text-muted" aria-hidden="true">
+      <div className="flex flex-wrap justify-between gap-x-3 gap-y-1 text-xs text-muted" aria-hidden="true">
         {points.map((point) => (
           <span key={point.start}>{formatMonthLabel(point.start)}</span>
         ))}

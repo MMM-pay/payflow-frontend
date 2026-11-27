@@ -163,6 +163,9 @@ export default function StatusPage() {
                       {indexer.lag === null ? "—" : tr("{0} ledgers", { "0": String(indexer.lag) })}
                     </Row>
                     <Row label={tr("Indexed through ledger")}>{indexer.cursor ?? "—"}</Row>
+                    <Row label={tr("Indexer freshness")}>
+                      {indexer.freshnessSeconds === null ? "—" : tr("{0}s ago", { "0": indexer.freshnessSeconds })}
+                    </Row>
                     {indexer.network && <Row label={tr("Network")}>{indexer.network}</Row>}
                     {indexer.paused && (
                       <Row label={tr("Paused")}>
@@ -170,6 +173,11 @@ export default function StatusPage() {
                       </Row>
                     )}
                   </dl>
+                )}
+                {indexer.state === "ok" && indexer.lastError && (
+                  <p className="text-sm text-warn">
+                    {tr("Last indexing error: {0}", { "0": translateMessage(indexer.lastError) })}
+                  </p>
                 )}
               </>
             )}

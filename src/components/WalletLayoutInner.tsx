@@ -10,6 +10,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { WalletButton } from "@/components/WalletButton";
+import { PersistentWarningBanner } from "@/components/PersistentWarningBanner";
 import { Activity } from "@/components/Activity";
 import { NetworkMismatchBanner, Notice } from "@/components/ui";
 import { HeaderSearch } from "@/components/HeaderSearch";
@@ -128,18 +129,6 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
   const toggleRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLElement>(null);
 
-  let walletName: string | null = null;
-  try { walletName = typeof window !== "undefined" ? window.localStorage.getItem("payflow.wallet") : null; } catch { /* Storage is optional. */ }
-  let walletDisplayName = "Unknown";
-  if (walletName) {
-    try {
-      const parsed = JSON.parse(walletName);
-      walletDisplayName = parsed.walletId || "Unknown";
-    } catch {
-      walletDisplayName = walletName;
-    }
-  }
-
   // "/" focuses the search field from anywhere on the page, unless the user
   // is already typing into an input, textarea, or contenteditable element.
   useEffect(() => {
@@ -162,7 +151,7 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
 
   const handleCopyDebugInfo = async () => {
     const debugInfo = buildDebugInfo(
-      address ? { name: walletDisplayName, address } : null,
+      address ? { name: walletId ?? "Unknown", address } : null,
     );
     const text = formatDebugInfo(debugInfo);
     const ok = await copyToClipboard(text);
@@ -214,11 +203,14 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
 
   return (
     <>
-      {networkMismatch && (
+      <PersistentWarningBanner networkId={network.id} />
+      {address && (networkMismatch || !walletNetwork) && (
         <div className="mx-auto max-w-5xl px-5 pt-4 print:hidden">
           <NetworkMismatchBanner
             walletNetwork={walletNetwork}
             expectedNetwork={network.networkPassphrase}
+            expectedNetworkLabel={network.label}
+            status={walletNetwork ? "mismatch" : "unknown"}
           />
         </div>
       )}
@@ -272,7 +264,11 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
               <HeaderSearch onNavigate={(href) => router.push(href)} />
             </div>
 
-            <div className="flex shrink-0 items-center gap-2">
+            {/* The controls keep their order when they wrap: at 320 CSS px the
+                header cannot hold them all in one row. `min-w-0` lets the group
+                take the width the header has left instead of its max-content
+                width, so the wrap actually happens inside the viewport. */}
+            <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
               <NetworkSwitcher network={network} networks={networks} select={select} />
               <ThemeToggle />
               <WalletButton />
@@ -320,9 +316,6 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
 
           <div className="mt-3 flex justify-end"><LanguagePicker /></div>
 
-          <div className="mt-3 md:hidden">
-            <HeaderSearch onNavigate={(href) => router.push(href)} />
-          </div>
           <nav
             id="mobile-nav"
             ref={menuRef}
@@ -351,9 +344,7 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
 
         {/* One landmark only: the skip link targets this id. */}
         <main id="main-content" className="flex-1 space-y-8 py-8 print:py-0">
-          <div className="print:hidden">
-            <Activity />
-          </div>
+          <Activity />
           {children}
         </main>
 

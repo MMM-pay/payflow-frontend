@@ -1227,26 +1227,30 @@ function AccountInner() {
 
   if (!viewAddress) {
     return (
-      <Panel title={tr("My account")}>
-        <Empty
-          title={tr("No wallet connected")}
-          action={
-            <button
-              type="button"
-              className="btn-primary"
-              disabled={connecting}
-              onClick={() => void connect()}
-            >
-              {connecting ?tr("Connecting…") :tr("Connect wallet")}
-            </button>
-          }
-        >{tr("Connect a wallet to see your vault balance, fund it, and manage your subscriptions. Nothing is sent to the network until you approve a transaction in your wallet.")}</Empty>
-      </Panel>
+      <div className="space-y-6">
+        <h1 className="text-2xl font-semibold tracking-tight">{tr("My account")}</h1>
+        <Panel>
+          <Empty
+            title={tr("No wallet connected")}
+            action={
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={connecting}
+                onClick={() => void connect()}
+              >
+                {connecting ?tr("Connecting…") :tr("Connect wallet")}
+              </button>
+            }
+          >{tr("Connect a wallet to see your vault balance, fund it, and manage your subscriptions. Nothing is sent to the network until you approve a transaction in your wallet.")}</Empty>
+        </Panel>
+      </div>
     );
   }
 
   return (
     <div className="space-y-6">
+      <h1 className="text-2xl font-semibold tracking-tight">{tr("My account")}</h1>
       {isReadOnly && (
         <div
           role="status"
@@ -1399,7 +1403,7 @@ function AccountInner() {
           )}
         >
           <div className="flex flex-wrap items-end gap-3">
-            <div className="min-w-[12rem] flex-1">
+            <div className="max-[359px]:w-full max-[359px]:min-w-0 min-w-[12rem] flex-1">
               <AmountInput
                 id="amount"
                 label={tr("Amount ({0})", { "0": vaultMeta.symbol })}
@@ -1525,7 +1529,7 @@ function AccountInner() {
             </div>
           ) : (
             <div className="flex flex-wrap items-end gap-3">
-              <div className="min-w-[14rem] flex-1">
+              <div className="max-[359px]:w-full max-[359px]:min-w-0 min-w-[14rem] flex-1">
                 <label className="label" htmlFor="fund-recipient">{tr("Recipient address")}</label>
                 <input
                   id="fund-recipient"
@@ -1543,7 +1547,7 @@ function AccountInner() {
                   </p>
                 )}
               </div>
-              <div className="min-w-[12rem] flex-1">
+              <div className="max-[359px]:w-full max-[359px]:min-w-0 min-w-[12rem] flex-1">
                 <AmountInput
                   id="fund-amount"
                   label={tr("Amount ({0})", { "0": vaultMeta.symbol })}
@@ -1964,24 +1968,25 @@ function AccountInner() {
                               Transfer…
                             </button>
                           ))}
-                        {nextAmount !== undefined && !isPastDue && (
-                          <button
-                            type="button"
-                            className="btn-ghost"
-                            disabled={busy !== null || networkMismatch || shortfall !== null}
+                        {shortfall !== null && !isPastDue && (
+                          <LoadingButton
+                            variant="ghost"
+                            loading={busy === `deposit-quick-${m.id}`}
+                            loadingText={tr("Depositing…")}
+                            disabled={busy !== null || networkMismatch}
                             onClick={() =>
                               void run(`deposit-quick-${m.id}`, () =>
                                 payflow.deposit(
                                   address!,
                                   signXdr,
                                   config.contracts.token,
-                                  nextAmount!,
+                                  shortfall,
                                 ),
                               )
                             }
                           >
-                            {tr("Top up")}
-                          </button>
+                            {tr("Top up")} <Money amount={shortfall} meta={meta} />
+                          </LoadingButton>
                         )}
                         {/* Offered only against a contract that carries
                             pause_until; see `pauseSupported`. */}
@@ -2122,7 +2127,7 @@ function AccountInner() {
                           once the transfer completes.
                         </p>
                         <div className="mt-2 flex flex-wrap items-end gap-3">
-                          <div className="min-w-[14rem] flex-1">
+                          <div className="max-[359px]:w-full max-[359px]:min-w-0 min-w-[14rem] flex-1">
                             <label className="label" htmlFor={`transfer-to-${m.id}`}>
                               New wallet address
                             </label>

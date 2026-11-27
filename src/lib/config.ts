@@ -297,11 +297,23 @@ export function readStoredNetwork(storage: NetworkStorage | null | undefined): s
   }
 }
 
-export function saveStoredNetwork(storage: NetworkStorage, id: string): void {
+export function saveStoredNetwork(
+  storage: NetworkStorage | null | undefined,
+  id: string,
+): void {
+  if (!storage) return;
   try {
     storage.setItem(NETWORK_STORAGE_KEY, id);
   } catch {
     // A blocked storage only means the choice is not remembered.
+  }
+}
+
+function getBrowserNetworkStorage(): NetworkStorage | null {
+  try {
+    return typeof window === "undefined" ? null : window.localStorage;
+  } catch {
+    return null;
   }
 }
 
@@ -324,7 +336,7 @@ export function resolveNetwork(
  * are built from these values — on the right network from the start.
  */
 const currentNetwork: NetworkConfig = resolveNetwork(
-  readStoredNetwork(typeof window === "undefined" ? null : window.localStorage),
+  readStoredNetwork(getBrowserNetworkStorage()),
 );
 
 export function activeNetwork(): NetworkConfig {
@@ -351,7 +363,7 @@ export function selectNetwork(id: string): void {
   if (typeof window === "undefined") return;
   const target = availableNetworks().find((network) => network.id === id);
   if (!target || target.id === currentNetwork.id) return;
-  saveStoredNetwork(window.localStorage, target.id);
+  saveStoredNetwork(getBrowserNetworkStorage(), target.id);
   window.location.reload();
 }
 

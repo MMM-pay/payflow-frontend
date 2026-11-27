@@ -86,7 +86,7 @@ vi.mock("next/link", () => ({
     children,
     ...rest
   }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { href: unknown }) => (
-    <a href={typeof href === "string" ? href : ""} {...rest}>
+    <a href={typeof href === "string" ? href : "/"} {...rest}>
       {children}
     </a>
   ),
@@ -353,7 +353,7 @@ describe("Form controls accessibility (#316)", () => {
     render(<AccountPage />);
 
     const amountInput = await screen.findByLabelText("Amount (XLM)");
-    await screen.findByText("5 XLM");
+    await screen.findByLabelText("5 XLM");
     fireEvent.change(amountInput, { target: { value: "10" } });
     assertLinkedError(amountInput, /Amount is more than your vault balance/);
 

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { NetworkConfig } from "@/lib/config";
 
@@ -39,9 +40,31 @@ function storageStub(values: Record<string, string | null> = {}) {
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.resetModules();
+  window.localStorage.clear();
 });
 
 describe("network registry", () => {
+  it("falls back safely when browser storage access is blocked", async () => {
+    const storageDescriptor = Object.getOwnPropertyDescriptor(window, "localStorage");
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      get() {
+        throw new Error("storage unavailable");
+      },
+    });
+
+    try {
+      const { activeNetwork } = await loadConfig();
+      expect(activeNetwork().id).toBe("testnet");
+    } finally {
+      if (storageDescriptor) {
+        Object.defineProperty(window, "localStorage", storageDescriptor);
+      } else {
+        Reflect.deleteProperty(window, "localStorage");
+      }
+    }
+  });
+
   it("serves testnet only when no mainnet env is set — behaviour unchanged by default", async () => {
     const { NETWORKS, activeNetwork, explorerBase } = await loadConfig();
 
@@ -174,6 +197,7 @@ describe("stored network choice", () => {
 
     expect(readStoredNetwork(blocked)).toBeNull();
     expect(() => saveStoredNetwork(blocked, "mainnet")).not.toThrow();
+    expect(() => saveStoredNetwork(null, "mainnet")).not.toThrow();
   });
 });
 

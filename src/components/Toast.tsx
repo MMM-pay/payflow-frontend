@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
+import { useI18n } from "@/i18n/provider";
 
 type ToastAction = {
   label: string;
@@ -16,53 +17,84 @@ type Toast = {
   duration?: number;
 };
 
+type ToastInput = Omit<Toast, "id">;
+type ToastContextValue = {
+  toast: (input: ToastInput) => string;
+  dismiss: (id: string) => void;
+};
+
+const ToastContext = createContext<ToastContextValue | null>(null);
 const MAX_TOASTS = 3;
+const DEFAULT_DURATION = 5_000;
 
-function useToast() {
-  const [toasts, setToasts] = useState<Toast[]>([]);
-
-  const toast = (toast: Omit<Toast, "id">) => {
-    const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    setToasts((prev) => {
-      const next = [...prev, { id, ...toast }];
-      if (next.length > MAX_TOASTS) {
-        next.shift();
-      }
-      return next;
-    });
-    return id;
-  };
-
-  const dismiss = (id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-  };
+function ToastItem({
+  value,
+  dismiss,
+}: {
+  value: Toast;
+  dismiss: (id: string) => void;
+}) {
+  const { t: tr } = useI18n();
 
   useEffect(() => {
-    const escapeHandler = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        const visible = toasts.find((t) => t.id !== undefined);
-        if (visible) {
-          dismiss(visible.id);
-        }
-      }
-    };
-    document.addEventListener("keydown", escapeHandler);
-    return () => {
-      document.removeEventListener("keydown", escapeHandler);
-    };
-  }, [toasts]);
+    if (value.duration === 0) return;
+    const timer = window.setTimeout(
+      () => dismiss(value.id),
+      value.duration ?? DEFAULT_DURATION,
+    );
+    return () => window.clearTimeout(timer);
+  }, [dismiss, value.duration, value.id]);
 
-  return { toast, toasts, dismiss };
+  return (
+    <div
+      role="group"
+      aria-label={value.title}
+      className="relative pointer-events-auto max-w-md rounded-lg border bg-fg/90 p-4 pe-10 text-fg shadow-sm transition-all ease-out duration-300"
+    >
+      <div className="font-medium">{value.title}</div>
+      {value.description && (
+        <p className="mt-1 text-sm text-muted">{value.description}</p>
+      )}
+      {value.action && (
+        <button
+          type="button"
+          className="mt-2 rounded text-sm text-soft hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          onClick={() => {
+            value.action?.onClick?.();
+            dismiss(value.id);
+          }}
+        >
+          {value.action.label}
+        </button>
+      )}
+      <button
+        type="button"
+        className="absolute end-2 top-2 rounded-lg bg-fg/10 p-1 hover:bg-fg/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        onClick={() => dismiss(value.id)}
+        aria-label={tr("Dismiss notification")}
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          className="h-4 w-4"
+          aria-hidden="true"
+        >
+          <path d="M18 6L6 18M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+  );
 }
 
 export function useToastHook() {
-  return useToast();
-}
-
-function getToastClasses(t: Toast): string {
-  const base = "rounded-lg border p-4 shadow-sm max-w-md animate-in fade-in-0 sm:animate-in transition-all ease-out duration-300 bg-fg/90 text-fg pointer-events-auto";
-  const actionClass = t.action ? "cursor-pointer" : "";
-  return `${base} ${actionClass}`.trim();
+  const context = useContext(ToastContext);
+  if (!context) {
+    throw new Error("useToastHook must be used within a ToastProvider.");
+  }
+  return context;
 }
 
 export function ToastProvider({
@@ -72,77 +104,54 @@ export function ToastProvider({
   children: ReactNode;
   className?: string;
 }) {
-  const { toast, toasts, dismiss } = useToast();
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  const toast = useCallback((input: ToastInput) => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    setToasts((previous) => [...previous, { id, ...input }].slice(-MAX_TOASTS));
+    return id;
+  }, []);
+
+  const dismiss = useCallback((id: string) => {
+    setToasts((previous) => previous.filter((item) => item.id !== id));
+  }, []);
+
+  useEffect(() => {
+    const escapeHandler = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || toasts.length === 0) return;
+      if (
+        event.target instanceof Element &&
+        event.target.closest('[role="dialog"]')
+      ) {
+        return;
+      }
+      event.preventDefault();
+      dismiss(toasts[toasts.length - 1]!.id);
+    };
+    document.addEventListener("keydown", escapeHandler);
+    return () => document.removeEventListener("keydown", escapeHandler);
+  }, [dismiss, toasts]);
+
+  const latest = toasts[toasts.length - 1];
 
   return (
-    <>
+    <ToastContext.Provider value={{ toast, dismiss }}>
       {children}
       <div
-        role="status"
-        aria-live="polite"
-        className={`fixed top-4 right-4 z-50 space-y-2 ${className || ""} pointer-events-none`}
+        className={`pointer-events-none fixed end-4 top-4 z-50 space-y-2 ${className ?? ""}`}
       >
-        {toasts.map((t) => (
-          <div
-            key={t.id}
-            className={getToastClasses(t)}
-            onClick={() => {}}
-          >
-            <div className="flex items-start gap-3">
-              <div className="flex-shrink-0">
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  className="h-5 w-5 text-fg"
-                >
-                  <path d="M18 6L6 18M6 6l12 12" />
-                </svg>
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="font-medium">{t.title}</p>
-                {t.description && (
-                  <p className="text-sm text-muted mt-1">{t.description}</p>
-                )}
-              </div>
-              {t.action && (
-                <button
-                  type="button"
-                  className="ml-2 text-soft hover-underline"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                  }}
-                  aria-label={t.action.label}
-                >
-                  {t.action.label}
-                </button>
-              )}
-            </div>
-            <button
-              type="button"
-              className="absolute right-2 top-2 rounded-lg bg-fg/10 p-0.5 hover:bg-fg/20"
-              onClick={(e) => {
-                e.stopPropagation();
-                dismiss(t.id);
-              }}
-              aria-label="Dismiss notification"
-            >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                className="h-4 w-4"
-              >
-                <path d="M18 6L6 18M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
+        <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+          {latest && (
+            <>
+              {latest.title}
+              {latest.description ? `. ${latest.description}` : ""}
+            </>
+          )}
+        </div>
+        {toasts.map((value) => (
+          <ToastItem key={value.id} value={value} dismiss={dismiss} />
         ))}
       </div>
-    </>
+    </ToastContext.Provider>
   );
 }

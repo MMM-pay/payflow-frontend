@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "@/lib/api";
+import { api, clearApiCache } from "@/lib/api";
 
 /**
  * `api.ts` is the only seam between the UI and the indexer backend. The whole
@@ -41,6 +41,10 @@ afterEach(() => {
   // leaks into the next test and every isConfigured() call reads "".
   vi.unstubAllEnvs();
   vi.resetModules();
+});
+
+beforeEach(() => {
+  clearApiCache();
 });
 
 describe("api fail-soft behaviour", () => {
@@ -144,6 +148,7 @@ describe("api fail-soft behaviour", () => {
     expect(mandate?.id).toBe(5);
     expect(mandate?.subscriber).toBe("GSUB");
 
+    clearApiCache();
     mockFetch(() => Promise.reject(new Error("offline")));
     expect(await api.mandate(5)).toBeNull();
   });
@@ -365,10 +370,12 @@ describe("api.health and api.keeper", () => {
   });
 
   it("returns null for both when the backend is unreachable", async () => {
+    clearApiCache();
     mockFetch(() => Promise.reject(new Error("ENETUNREACH")));
     expect(await api.health()).toBeNull();
     expect(await api.keeper()).toBeNull();
 
+    clearApiCache();
     mockFetch(async () => jsonResponse({ error: "down" }, 503, false));
     expect(await api.health()).toBeNull();
     expect(await api.keeper()).toBeNull();

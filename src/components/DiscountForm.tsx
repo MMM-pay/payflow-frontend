@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { ConfirmDialog, confirmTitle } from "@/components/ConfirmDialog";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { confirmTitle } from "@/lib/confirm-title";
 import { InfoTip } from "@/components/Tooltip";
 import { useI18n } from "@/i18n/provider";
 import {

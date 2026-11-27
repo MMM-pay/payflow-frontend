@@ -1,6 +1,34 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+@theme {
+  --color-ink: rgb(var(--ink) / <alpha-value>);
+  --color-panel: rgb(var(--panel) / <alpha-value>);
+  --color-edge: rgb(var(--edge) / <alpha-value>);
+  --color-muted: rgb(var(--muted) / <alpha-value>);
+  --color-accent: rgb(var(--accent) / <alpha-value>);
+  --color-fg: rgb(var(--fg) / <alpha-value>);
+  --color-soft: rgb(var(--soft) / <alpha-value>);
+  --color-danger: rgb(var(--danger) / <alpha-value>);
+  --color-warn: rgb(var(--warn) / <alpha-value>);
+  --color-info: rgb(var(--info) / <alpha-value>);
+  --color-danger-solid: rgb(var(--danger-solid) / <alpha-value>);
+  --color-danger-solid-hover: rgb(var(--danger-solid-hover) / <alpha-value>);
+  --color-chart-1: rgb(var(--chart-1) / <alpha-value>);
+  --color-chart-2: rgb(var(--chart-2) / <alpha-value>);
+  --color-chart-3: rgb(var(--chart-3) / <alpha-value>);
+  --color-chart-4: rgb(var(--chart-4) / <alpha-value>);
+  --color-chart-5: rgb(var(--chart-5) / <alpha-value>);
+
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+/* Logical spacing utilities for RTL/LTR support */
+@utility ps-*;
+@utility pe-*;
+@utility ms-*;
+@utility me-*;
+@utility start-*;
+@utility end-*;
 
 /*
  * Two palettes behind one set of CSS variables.
