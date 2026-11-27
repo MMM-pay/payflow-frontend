@@ -36,6 +36,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ContractVersionNotice } from "@/components/ContractVersionNotice";
 import { DepositCoverageInput } from "@/components/DepositCoverageInput";
 import { LoadingButton } from "@/components/LoadingButton";
+import { Money } from "@/components/Money";
 
 /** Remaining seats in words, without inventing a count the source cannot provide. */
 function seatsLabel(plan: ApiPlan, now: number, tr: Translation): string {
@@ -64,7 +65,7 @@ function ComparisonTable({
   metas: Map<string, TokenMeta>;
   now: number;
 }) {
-  const { t: tr, formatPeriod, formatAmount, formatTokenValue, formatTrialLength, formatNumber } = useI18n();
+  const { t: tr, formatPeriod, formatTrialLength, formatNumber } = useI18n();
   return (
     <div
       className="mt-3 overflow-x-auto rounded-lg border border-edge"
@@ -91,8 +92,7 @@ function ComparisonTable({
               const meta = metaFor(metas, plan.token);
               return (
                 <td key={plan.id} className="px-3 py-2 tabular-nums">
-                  {formatTokenValue(plan.amount, 4, meta.decimals)}{" "}
-                  <span className="text-xs text-muted">{meta.symbol}</span>
+                  <Money amount={plan.amount} meta={meta} digits={4} />
                 </td>
               );
             })}
@@ -113,7 +113,7 @@ function ComparisonTable({
               const monthly = planMonthlyEquivalent(plan);
               return (
                 <td key={plan.id} className="px-3 py-2 tabular-nums">
-                  {monthly === null ? "—" : formatAmount(monthly, meta)}
+                  {monthly === null ? "—" : <Money amount={monthly} meta={meta} />}
                 </td>
               );
             })}
@@ -156,7 +156,7 @@ function ComparisonTable({
 }
 
 function SubscribeInner() {
-  const { t: tr, formatPeriod, formatDate, formatWhen, translateMessage, formatTrialLength, trialBadge, formatTokenValue, formatUsdString, formatNumber, formatAmount, formatFeeBps } = useI18n();
+  const { t: tr, formatPeriod, formatDate, formatWhen, translateMessage, formatTrialLength, trialBadge, formatUsdString, formatNumber, formatFeeBps } = useI18n();
   const searchParams = useSearchParams();
   const sortParam = (searchParams?.get("sort") as PlanSortOption) || "newest";
   // A shared link (?plan=12) shows that one plan instead of the catalogue.
@@ -410,7 +410,7 @@ function SubscribeInner() {
     }
     const cap = checkChargeLimit(maxCharges[plan.id]);
     if (!cap.ok) {
-      document.getElementById(`limit-${plan.id}`)?.focus();
+      setError(cap.message);
       return;
     }
     setError(null);
@@ -446,11 +446,11 @@ function SubscribeInner() {
     try {
       const hash = await payflow.deposit(
         address,
-        async (xdr, description) => {
+        async (xdr) => {
           if (walletState.current.address !== address || walletState.current.networkMismatch) {
             throw new Error(tr("Wallet changed. Check your wallet and try again."));
           }
-          return signXdr(xdr, description);
+          return signXdr(xdr);
         },
         plan.token,
         amount,
@@ -494,13 +494,13 @@ function SubscribeInner() {
       if (reason) throw new Error(reason);
       const hash = await payflow.subscribe(
         address,
-        async (xdr, description) => {
+        async (xdr) => {
           if (walletState.current.address !== address || walletState.current.networkMismatch) {
             throw new Error(tr("Wallet changed. Check your wallet and try again."));
           }
           const closed = planAvailability(latest).reason;
           if (closed) throw new Error(closed);
-          return signXdr(xdr, description);
+          return signXdr(xdr);
         },
         plan.id,
         limit,
@@ -800,9 +800,8 @@ function SubscribeInner() {
                     key={plan.id}
                     title={plan.name ||tr("Plan #{0}", { "0": plan.id })}
                     actions={
-                      <label htmlFor={`compare-plan-${plan.id}`} className="inline-flex cursor-pointer items-center gap-2 rounded-lg px-1 py-1 text-sm text-muted">
+                      <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg px-1 py-1 text-sm text-muted">
                         <input
-                          id={`compare-plan-${plan.id}`}
                           type="checkbox"
                           className="h-4 w-4 accent-accent"
                           checked={selectedForCompare}
@@ -816,8 +815,7 @@ function SubscribeInner() {
                       <div>
                         <div className="flex flex-wrap items-baseline gap-2">
                           <div className="text-2xl font-semibold tabular-nums">
-                            {formatTokenValue(plan.amount, 4, meta.decimals)}{" "}
-                            <span className="text-sm font-normal text-muted">{meta.symbol}</span>
+                            <Money amount={plan.amount} meta={meta} digits={4} />
                           </div>
                           {usdEstimate && (
                             <span
@@ -899,17 +897,17 @@ function SubscribeInner() {
                           onChange={(e) =>
                             setMaxCharges((m) => ({ ...m, [plan.id]: e.target.value }))
                           }
-                          aria-invalid={!cap.ok || undefined}
-                          aria-describedby={!cap.ok ? `limit-error-${plan.id}` : undefined}
                         />
-                        {!cap.ok && (
-                          <p id={`limit-error-${plan.id}`} role="alert" className="mt-1 text-sm text-danger">
-                            {translateMessage(cap.message)}
-                          </p>
-                        )}
                       </div>
 
-                      <div className="space-y-2">
+                      {(() => {
+                        const currentBal = vaultBalances[plan.token] ?? 0n;
+                        const cap = checkChargeLimit(maxCharges[plan.id]);
+                        const periods = cap.ok && cap.limit > 0 ? cap.limit : 3;
+                        const required = BigInt(plan.amount) * BigInt(periods);
+                        const funded = currentBal >= required;
+                        return (
+                          <div className="space-y-2">
                             <div className="rounded-lg border border-edge bg-surface/40 p-2 text-xs space-y-1">
                               <div className="flex items-center justify-between font-medium">
                                 <span className="text-muted">{tr("Guided Flow")}</span>
@@ -919,7 +917,7 @@ function SubscribeInner() {
                               </div>
                               <div className="flex items-center justify-between text-muted">
                                 <span>{tr("Vault balance")}</span>
-                                <span className="tabular-nums font-medium text-fg">{formatTokenValue(currentBal, 4, meta.decimals)} {meta.symbol}</span>
+                                <span className="tabular-nums font-medium text-fg"><Money amount={currentBal} meta={meta} digits={4} /></span>
                               </div>
                             </div>
 
@@ -955,6 +953,8 @@ function SubscribeInner() {
                                 :tr("Connect wallet")}
                             </LoadingButton>
                           </div>
+                        );
+                      })()}
                     </div>
                   </Panel>
                 );
@@ -990,7 +990,7 @@ function SubscribeInner() {
               <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
                 <dt className="text-muted">{tr("Amount")}</dt>
                 <dd className="font-medium tabular-nums">
-                  {formatAmount(confirmation.gross, pendingMeta)}
+                  <Money amount={confirmation.gross} meta={pendingMeta} />
                 </dd>
               </div>
               <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
@@ -1004,7 +1004,7 @@ function SubscribeInner() {
                     ? feeLoading
                       ? tr("Checking…")
                       : tr("Unavailable")
-                    : `${formatAmount(confirmation.fee, pendingMeta)} (${formatFeeBps(confirmation.feeBps)})`}
+                    : <><Money amount={confirmation.fee} meta={pendingMeta} /> ({formatFeeBps(confirmation.feeBps)})</>}
                 </dd>
               </div>
               <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">

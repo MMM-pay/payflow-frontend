@@ -8,10 +8,10 @@ import {
   type ApiTimelineEvent,
 } from "@/lib/api";
 import { config } from "@/lib/config";
-import { formatAmount, type TokenMeta } from "@/lib/format";
-import { subscribeToStreamEvents } from "@/lib/stream";
+import type { TokenMeta } from "@/lib/format";
 import { useWallet } from "@/lib/wallet";
 import { Empty, Notice, Panel, SkeletonRows } from "@/components/ui";
+import { Money } from "@/components/Money";
 
 const SEEN_PREFIX = "payflow.activity.seen.";
 
@@ -97,12 +97,12 @@ function tokenMetaFor(event: ActivityItem): TokenMeta | null {
   return { symbol: event.token_symbol, decimals: event.token_decimals };
 }
 
-function eventDescription(event: ActivityItem): string {
+function eventDescription(event: ActivityItem) {
   if (event.type === "charged") {
     if (!event.amount) return "Payment charged";
     const meta = tokenMetaFor(event);
     return meta
-      ? `Charged ${formatAmount(event.amount, meta)}`
+      ? <>Charged <Money amount={event.amount} meta={meta} /></>
       : `Charged ${event.amount} (smallest units; token metadata unavailable)`;
   }
   switch (event.type) {
@@ -214,13 +214,6 @@ export function Activity() {
       mounted.current = false;
       generation.current += 1;
     };
-  }, [address, refresh]);
-
-  useEffect(() => {
-    if (!address) return;
-    return subscribeToStreamEvents((update) => {
-      if (update.address === address) void refresh(address);
-    });
   }, [address, refresh]);
 
   const visibleItems = useMemo(

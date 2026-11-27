@@ -1,7 +1,8 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Dialog, Notice } from "@/components/ui";
+import { Dialog } from "@/components/Dialog";
+import { Notice } from "@/components/ui";
 import { LoadingButton } from "@/components/LoadingButton";
 import { useI18n } from "@/i18n/provider";
 
@@ -89,21 +90,11 @@ export function ConfirmDialog({
       }
     >
       {error && (
-        <div role="alert" className="mb-3">
+        <div className="mb-3">
           <Notice tone="error">{error}</Notice>
         </div>
       )}
       {children}
     </Dialog>
   );
-}
-
-/**
- * The title convention: a question ending in "?", unless the caller already
- * wrote one. Exported so a page can test its copy without a render.
- */
-export function confirmTitle(subject: string): string {
-  const trimmed = subject.trim();
-  if (!trimmed) return "";
-  return trimmed.endsWith("?") ? trimmed : `${trimmed}?`;
 }

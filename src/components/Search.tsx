@@ -43,7 +43,7 @@ export function Search({
         strokeWidth="2"
         strokeLinecap="round"
         strokeLinejoin="round"
-        className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted"
+        className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted"
         aria-hidden="true"
       >
         <circle cx="11" cy="11" r="7" />
@@ -52,7 +52,7 @@ export function Search({
       <input
         id={inputId}
         type="search"
-        className="input pl-9 pr-9"
+        className="input ps-9 pe-9"
         value={value}
         placeholder={tr(placeholder)}
         autoComplete="off"
@@ -63,7 +63,7 @@ export function Search({
           type="button"
           aria-label={tr("Clear search")}
           onClick={() => onChange("")}
-          className="absolute right-1.5 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-muted transition hover:bg-fg/10 hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          className="absolute end-1.5 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-muted transition hover:bg-fg/10 hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         >
           <svg
             viewBox="0 0 24 24"

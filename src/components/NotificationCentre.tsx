@@ -35,7 +35,7 @@ export function NotificationCentre({
   onClearAll,
   className = "",
 }: NotificationCentreProps) {
-  const { t: tr } = useI18n();
+  const { t: tr, translateMessage } = useI18n();
   const panelId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [isOpen, setIsOpen] = useState(defaultOpen);
@@ -52,6 +52,22 @@ export function NotificationCentre({
       setDismissed(loaded);
     });
   }, [address, activeStorage]);
+
+  // Escape closes the panel from anywhere on the page while it is open, and
+  // returns focus to the trigger. The listener lives on the document rather
+  // than on the section: a landmark that is not a widget must not swallow
+  // keyboard events, and a keyboard user may have moved focus outside it.
+  useEffect(() => {
+    if (!isOpen) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setIsOpen(false);
+      triggerRef.current?.focus();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [isOpen]);
 
   // Active (undismissed) items
   const activeItems = filterDismissedNotifications(notifications, dismissed);
@@ -79,13 +95,6 @@ export function NotificationCentre({
     <section
       aria-label={tr("Notification centre")}
       className={`rounded-xl border border-edge bg-card p-3 shadow-xs ${className}`}
-      onKeyDown={(e) => {
-        if (e.key === "Escape" && isOpen) {
-          e.preventDefault();
-          setIsOpen(false);
-          triggerRef.current?.focus();
-        }
-      }}
     >
       {/* Summary Trigger Bar */}
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -180,7 +189,7 @@ export function NotificationCentre({
 
           {/* Error State */}
           {!loading && error && (
-            <div role="alert" className="my-2">
+            <div className="my-2">
               <Notice tone="error">{error}</Notice>
             </div>
           )}
@@ -230,7 +239,7 @@ export function NotificationCentre({
                   >
                     <div className="flex-1">
                       <div className="flex items-center gap-2">
-                        <strong className="text-sm font-semibold">{item.title}</strong>
+                        <strong className="text-sm font-semibold">{translateMessage(item.title)}</strong>
                         {item.category === "low_balance" && (
                           <span className="rounded-full bg-danger/15 px-2 py-0.5 text-xs font-medium text-danger">
                             {tr("Balance")}
@@ -248,7 +257,7 @@ export function NotificationCentre({
                         )}
                       </div>
                       <p className="mt-1 text-xs leading-relaxed opacity-90">
-                        {item.message}
+                        {translateMessage(item.message)}
                       </p>
                     </div>
 
@@ -259,7 +268,7 @@ export function NotificationCentre({
                             href={item.actionHref}
                             className="rounded-md border border-current/30 px-2.5 py-1 text-xs font-medium hover:bg-fg/10 focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-hidden"
                           >
-                            {item.actionLabel}
+                            {tr(item.actionLabel)}
                           </a>
                         ) : (
                           <button
@@ -267,7 +276,7 @@ export function NotificationCentre({
                             onClick={item.onAction}
                             className="rounded-md border border-current/30 px-2.5 py-1 text-xs font-medium hover:bg-fg/10 focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-hidden"
                           >
-                            {item.actionLabel}
+                            {tr(item.actionLabel)}
                           </button>
                         )
                       )}
@@ -275,7 +284,7 @@ export function NotificationCentre({
                       <button
                         type="button"
                         onClick={() => handleDismiss(item.id)}
-                        aria-label={tr("Dismiss notification: {0}", { "0": item.title })}
+                        aria-label={tr("Dismiss notification: {0}", { "0": translateMessage(item.title) })}
                         className="rounded-md p-1 opacity-70 hover:opacity-100 hover:bg-fg/10 focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-hidden"
                       >
                         <svg

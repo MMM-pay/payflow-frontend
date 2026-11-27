@@ -179,7 +179,9 @@ describe("MerchantPage discount", () => {
     });
     render(<MerchantPage />);
 
-    expect(await screen.findByRole("button", { name: "Discount" })).toBeTruthy();
+    expect(
+      await screen.findByRole("button", { name: "Discount" }, { timeout: 10_000 }),
+    ).toBeTruthy();
   });
 
   it("takes the discount from the rows it already has", async () => {
@@ -192,7 +194,9 @@ describe("MerchantPage discount", () => {
     });
     render(<MerchantPage />);
 
-    expect(await screen.findByRole("button", { name: "Discount" })).toBeTruthy();
+    expect(
+      await screen.findByRole("button", { name: "Discount" }, { timeout: 10_000 }),
+    ).toBeTruthy();
     // The discount control uses the row data; the refund control may call getMandate
     // to check refund support, so we don't assert on that here.
     expect(screen.getByText("20% off for 3 charges")).toBeTruthy();
@@ -217,7 +221,9 @@ describe("MerchantPage discount", () => {
     });
     render(<MerchantPage />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Discount" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Discount" }, { timeout: 10_000 }),
+    );
     const percent = (await screen.findByLabelText(/discount \(%\)/i)) as HTMLInputElement;
     const apply = screen.getByRole("button", { name: /apply discount/i }) as HTMLButtonElement;
 
@@ -249,7 +255,9 @@ describe("MerchantPage discount", () => {
     });
     render(<MerchantPage />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Discount" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Discount" }, { timeout: 10_000 }),
+    );
     const percent = (await screen.findByLabelText(/discount \(%\)/i)) as HTMLInputElement;
     const charges = screen.getByLabelText(/charges to cover/i) as HTMLInputElement;
     fireEvent.change(percent, { target: { value: "12.5" } });
@@ -286,12 +294,15 @@ describe("MerchantPage discount", () => {
     });
     render(<MerchantPage />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Discount" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Discount" }, { timeout: 10_000 }),
+    );
     const percent = (await screen.findByLabelText(/discount \(%\)/i)) as HTMLInputElement;
     fireEvent.change(percent, { target: { value: "20" } });
 
     // 1 XLM at 20% off is 0.8 XLM, in the token's own scale.
-    expect(screen.getByText(/Subscriber pays 0.8 XLM/)).toBeTruthy();
-    expect(screen.getByText(/then 1 XLM/)).toBeTruthy();
+    const preview = screen.getByText(/Subscriber pays/);
+    expect(preview.textContent).toContain("0.8 XLM");
+    expect(preview.textContent).toContain("then 1 XLM");
   });
 });

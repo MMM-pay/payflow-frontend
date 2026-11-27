@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { VirtualList } from "@/components/VirtualList";
 
@@ -122,5 +122,64 @@ describe("VirtualList", () => {
 
     // Action 0 button remains in the document because it had keyboard focus
     expect(screen.getByRole("button", { name: "Action 0" })).toBeTruthy();
+  });
+
+  it("does not re-render unchanged visible items when focus state changes", () => {
+    const items = Array.from({ length: 500 }, (_, i) => ({ id: i, label: `Row #${i}` }));
+    const renderItem = vi.fn((item: (typeof items)[number]) => (
+      <button type="button">Action {item.id}</button>
+    ));
+
+    const { container } = render(
+      <VirtualList
+        items={items}
+        threshold={100}
+        itemHeight={100}
+        containerMaxHeight={400}
+        overscan={2}
+        keyExtractor={(item) => item.id}
+        renderItem={renderItem}
+      />,
+    );
+
+    const initialCalls = renderItem.mock.calls.length;
+    fireEvent.focus(screen.getByRole("button", { name: "Action 2" }));
+
+    expect(container.querySelector('[data-virtual-index="2"]')).toBeTruthy();
+    expect(renderItem).toHaveBeenCalledTimes(initialCalls);
+  });
+
+  it("re-renders an item when its data changes", () => {
+    const items = Array.from({ length: 20 }, (_, id) => ({ id, label: `Row #${id}` }));
+    const renderItem = (item: (typeof items)[number]) => <span>{item.label}</span>;
+    const keyExtractor = (item: (typeof items)[number]) => item.id;
+    const { rerender } = render(
+      <VirtualList
+        items={items}
+        threshold={10}
+        itemHeight={100}
+        containerMaxHeight={400}
+        overscan={2}
+        keyExtractor={keyExtractor}
+        renderItem={renderItem}
+      />,
+    );
+
+    const updatedItems = items.map((item) =>
+      item.id === 2 ? { ...item, label: "Updated row #2" } : item,
+    );
+    rerender(
+      <VirtualList
+        items={updatedItems}
+        threshold={10}
+        itemHeight={100}
+        containerMaxHeight={400}
+        overscan={2}
+        keyExtractor={keyExtractor}
+        renderItem={renderItem}
+      />,
+    );
+
+    expect(screen.getByText("Updated row #2")).toBeTruthy();
   });
 });

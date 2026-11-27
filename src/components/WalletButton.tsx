@@ -5,6 +5,7 @@ import { useI18n } from "@/i18n/provider";
 import { useWallet } from "@/lib/wallet";
 import { config } from "@/lib/config";
 import { fromStroops, shortAddress, spendableBalance } from "@/lib/format";
+import { Money } from "@/components/Money";
 
 /**
  * The header's wallet control: the connected address, what it can spend, and a
@@ -116,7 +117,7 @@ function BalanceLabel({
       aria-live="polite"
       title={`${fromStroops(balance)} XLM held, ${fromStroops(spendable)} XLM spendable after the ${subentryCount} ledger ${subentryCount === 1 ? "entry" : "entries"} this account keeps`}
     >
-      {fromStroops(spendable)} XLM
+      <Money amount={spendable} className="text-xs" />
     </span>
   );
 }

@@ -268,9 +268,13 @@ describe("AccountPage", () => {
     render(<AccountPage />);
 
     // 50_000_000 stroops renders as 5 XLM, not 50000000.
-    expect(await screen.findByText("5 XLM")).toBeTruthy();
+    expect(await screen.findByLabelText("5 XLM")).toBeTruthy();
     expect(screen.getByText("Mandate #7")).toBeTruthy();
-    expect(screen.getByText(/1 XLM per month/)).toBeTruthy();
+    expect(
+      (await screen.findAllByLabelText("1 XLM")).some((amount) =>
+        amount.closest("div")?.textContent?.includes("1 XLM per month"),
+      ),
+    ).toBe(true);
     expect(screen.getByRole("button", { name: "Pause" })).toBeTruthy();
     expect(
       screen.getByRole("button", { name: "Cancel subscription #7" }),
@@ -400,8 +404,12 @@ describe("AccountPage", () => {
 
     render(<AccountPage />);
 
-    expect(await screen.findByText("50 USDC")).toBeTruthy();
-    expect(await screen.findByText(/10 USDC per month/)).toBeTruthy();
+    expect(await screen.findByLabelText("50 USDC")).toBeTruthy();
+    expect(
+      (await screen.findAllByLabelText("10 USDC")).some((amount) =>
+        amount.closest("div")?.textContent?.includes("10 USDC per month"),
+      ),
+    ).toBe(true);
     expect(screen.getByLabelText("Amount (USDC)")).toBeTruthy();
     expect(payflowMock.readContract).toHaveBeenCalledWith(
       expect.any(String),
@@ -418,7 +426,7 @@ describe("AccountPage", () => {
     render(<AccountPage />);
 
     // Degrades to the native assumption rather than blanking the page.
-    expect(await screen.findByText("5 XLM")).toBeTruthy();
+    expect(await screen.findByLabelText("5 XLM")).toBeTruthy();
   });
 
   it("asks for confirmation before cancelling a subscription", async () => {
@@ -592,6 +600,55 @@ describe("AccountPage pause until", () => {
   beforeEach(() => {
     payflowMock.vaultBalance.mockResolvedValue(0n);
     apiMock.mandatesOf.mockResolvedValue({ mandates: [] });
+  });
+
+  describe("AccountPage subscription top-up", () => {
+    it("deposits only the shortfall for the selected subscription", async () => {
+      payflowMock.vaultBalance.mockResolvedValue(5_000_000n);
+      payflowMock.deposit.mockResolvedValue("c0ffee");
+      apiMock.mandatesOf.mockResolvedValue({
+        mandates: [
+          mandate({
+            next_charge: 1_700_000_000,
+            period: 2_592_000,
+            amount: "10000000",
+          }),
+        ],
+      });
+
+      render(<AccountPage />);
+
+      const topUp = await screen.findByRole("button", { name: /Top up/ });
+      fireEvent.click(topUp);
+
+      await waitFor(() =>
+        expect(payflowMock.deposit).toHaveBeenCalledWith(
+          SUBSCRIBER,
+          expect.any(Function),
+          expect.any(String),
+          5_000_000n,
+        ),
+      );
+    });
+
+    it("shows a visible error and unlocks the action when the deposit fails", async () => {
+      payflowMock.vaultBalance.mockResolvedValue(0n);
+      payflowMock.deposit.mockRejectedValue(new Error("host error: insufficient fee"));
+      apiMock.mandatesOf.mockResolvedValue({
+        mandates: [
+          mandate({
+            next_charge: 1_700_000_000,
+            period: 2_592_000,
+          }),
+        ],
+      });
+
+      render(<AccountPage />);
+      fireEvent.click(await screen.findByRole("button", { name: /Top up/ }));
+
+      expect(await screen.findByText("host error: insufficient fee")).toBeTruthy();
+      expect(screen.getByRole("button", { name: /Top up/ })).toBeTruthy();
+    });
   });
 
   it("hides the picker when the contract has no pause_until", async () => {

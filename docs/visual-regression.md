@@ -51,7 +51,7 @@ than raising the ratio.
 ## CI
 
 The `visual` job in `.github/workflows/ci.yml` runs inside
-`mcr.microsoft.com/playwright:v1.64.1-jammy`, the same image the baselines
+`mcr.microsoft.com/playwright:v1.65.1-jammy`, the same image the baselines
 are expected to match, so fonts line up however the runner is provisioned.
 Keep the image tag in sync with the `@playwright/test` version in
 `package.json`. On failure the job uploads `test-results/` (actual and diff

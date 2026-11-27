@@ -85,6 +85,8 @@ describe("status page", () => {
     expect(screen.getByText("987654")).toBeTruthy();
     expect(screen.getByText("ok")).toBeTruthy();
     expect(screen.getByText("10 ledgers")).toBeTruthy();
+    // Indexer sync also says how recently it advanced.
+    expect(screen.getByText("42s ago")).toBeTruthy();
     // The keeper's last pass is rendered from Unix seconds.
     expect(screen.getByText(/Tried \/ settled/)).toBeTruthy();
     expect(screen.getByText("2 / 2")).toBeTruthy();
@@ -159,6 +161,19 @@ describe("status page", () => {
     expect(screen.getByText(/retries with backoff/)).toBeTruthy();
     // RPC and indexer are unaffected by the keeper's failure.
     expect(screen.getAllByText("Operational")).toHaveLength(2);
+  });
+
+  it("shows the last indexing error while keeping the sync card usable", async () => {
+    mocks.health.mockResolvedValue({
+      ...HEALTH_BODY,
+      indexer: { ...HEALTH_BODY.indexer, lastError: "Horizon timed out" },
+    });
+
+    await renderAndWait();
+
+    expect(screen.getByText(/Last indexing error: Horizon timed out/)).toBeTruthy();
+    expect(screen.getByText("42s ago")).toBeTruthy();
+    expect(screen.getByText("10 ledgers")).toBeTruthy();
   });
 
   it("re-checks every dependency when the button is pressed", async () => {
