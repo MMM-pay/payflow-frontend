@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PlanPageClient } from "@/app/plans/[id]/PlanPageClient";
 import type { ApiCharge, ApiMandate, ApiPlan } from "@/lib/api";
@@ -110,7 +110,9 @@ describe("PlanPageClient recent charges table", () => {
     expect(screen.getByText("Net").closest("th")?.className).toContain("text-right");
 
     // Non-monetary columns are not monospaced.
-    const mandateCell = screen.getByText("1").closest("td");
+    // Scope to the charges table: other parts of the page can also show "1".
+    const table = amountCell?.closest("table") as HTMLElement;
+    const mandateCell = within(table).getByText("1").closest("td");
     expect(mandateCell?.className).not.toContain("font-mono");
   });
 });
