@@ -2,15 +2,15 @@
 
 import { useI18n } from "@/i18n/provider";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import dynamic from "next/dynamic";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 
+import dynamic from "next/dynamic";
 import { api, checkWebhookUrl, type ApiChargeAttempt, type ApiMandate, type ApiPlan, type ApiWebhook, type MerchantSummary, type StreamEvent } from "@/lib/api";
-import { buildCsv, buildMonthlyRevenueCsv, downloadCsv, exportFilename, monthlyRevenueFilename, type ChargeRow, type MonthlyRevenueRow } from "@/lib/csv";
+import { buildCsv, buildMonthlyRevenueCsv, buildSubscribersCsv, downloadCsv, exportFilename, monthlyRevenueFilename, subscribersFilename, type ChargeRow, type MonthlyRevenueRow, type SubscriberRow } from "@/lib/csv";
 import { fillBuckets, parseRevenue, type BucketSize, type RevenuePoint } from "@/lib/revenue";
 import { parseMerchantChurn, type MerchantChurnMonth } from "@/lib/churn";
-import { endMandatesSequentially, type EndOutcome, chainMandatesFor, chainMerchantSummary, chainPlanSubscriberCount, chainPlansOf, chainUnpaidMandates, endable, mandateFunding, type UnpaidMandate } from "@/lib/chain";
+import { endMandatesSequentially, type EndOutcome, chainMerchantMandatesPage, chainMerchantSummary, chainPlanSubscriberCount, chainPlansOf, chainUnpaidMandates, endable, mandateFunding, mergeMandates, MERCHANT_MANDATE_PAGE_SIZE, type UnpaidMandate } from "@/lib/chain";
 import { config, type ConfiguredToken } from "@/lib/config";
 import { VirtualList } from "@/components/VirtualList";
 
@@ -33,8 +33,6 @@ const DEFAULT_TOKENS: readonly ConfiguredToken[] = [
   },
 ];
 import {
-  checkDiscountBps,
-  checkDiscountCharges,
   discountedAmount,
   discountBadge,
   remainingDiscountCharges,
@@ -60,11 +58,10 @@ import{ feeSplit, fromStroops, type FeeSplit, type TokenMeta } from "@/lib/forma
 import { metaFor, useTokenMetas } from "@/lib/token";
 import { supportsTrials, TRIAL_OPTIONS } from "@/lib/trial";
 import { CUSTOM_PERIOD, DEFAULT_PERIOD, PERIOD_PRESETS, PERIOD_UNITS, checkCustomPeriod, checkPeriodSeconds, type PeriodCheck } from "@/lib/period";
-import { countOpenMandates, filterAndSortPlans, type PlanActiveOption } from "@/lib/plans";
+import { countOpenMandates, filterAndSortPlans, planDisplayName } from "@/lib/plans";
 import { formatUsdEstimate, formatUsdcEstimate, useXlmUsdPrice } from "@/lib/price";
 import { AmountInput } from "@/components/AmountInput";
 import { CopyButton } from "@/components/CopyButton";
-import { QrCode } from "@/components/QrCode";
 // Mirrors payflow.validatePlanName, kept here so the form can check a name
 // without the SDK-backed module in this route's first-load bundle.
 function validatePlanNameLocal(name: string): string | null {
@@ -78,37 +75,76 @@ function validatePlanNameLocal(name: string): string | null {
 
 import { OnboardingChecklist } from "@/components/OnboardingChecklist";
 import { SectionShortcuts } from "@/components/SectionShortcuts";
-import { AddressLink, Badge, Empty, Notice, Panel, SkeletonRows, Stat, TimeAgo, TxLink } from "@/components/ui";
+import { AddressLink, Badge, Empty, InlineError, Notice, Panel, SkeletonRows, Stat, TimeAgo, TxLink } from "@/components/ui";
 import { Search } from "@/components/Search";
-import { ConfirmDialog, confirmTitle } from "@/components/ConfirmDialog";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { confirmTitle } from "@/lib/confirm-title";
+import { DiscountForm } from "@/components/DiscountForm";
+import { InfoTip } from "@/components/Tooltip";
 import { observeContractRecord } from "@/lib/contract-compat";
 import { ContractVersionNotice } from "@/components/ContractVersionNotice";
 import { SyncLagIndicator } from "@/components/SyncLagIndicator";
+import { StaleDataNotice } from "@/components/StaleDataNotice";
 import { Money } from "@/components/Money";
 import { NotificationCentre } from "@/components/NotificationCentre";
 import { evaluateMerchantNotifications } from "@/lib/notifications";
-import { subscribeLink } from "@/lib/share";
+import { planLink } from "@/lib/share";
+import { buildEmbedSnippet } from "@/lib/embed";
 
-function MerchantFeatureLoading({ label }: { label: string }) {
+function RevenueChartSkeleton() {
   const { t: tr } = useI18n();
+  return <SkeletonRows rows={2} label={tr("Loading revenue")} />;
+}
+
+function CohortRetentionSkeleton() {
   return (
-    <span role="status" aria-busy="true" className="sr-only">
-      {tr(label)}
-    </span>
+    <Panel
+      title="Cohort retention"
+      subtitle="Percentage of each signup month's subscribers still active in subsequent months. Higher percentages indicate better retention."
+    >
+      <SkeletonRows rows={3} label="Loading cohort retention data" />
+    </Panel>
   );
+}
+
+function WebhookHistorySkeleton() {
+  const { t: tr } = useI18n();
+  return <div className="mt-3"><SkeletonRows rows={2} label={tr("Loading history…")} /></div>;
+}
+
+function MrrTrendSkeleton() {
+  const { t: tr } = useI18n();
+  return <SkeletonRows rows={2} label={tr("Loading…")} />;
+}
+
+function QrCodeSkeleton() {
+  const { t: tr } = useI18n();
+  return <div className="mt-3"><SkeletonRows rows={1} label={tr("Loading…")} /></div>;
 }
 
 const RevenueChart = dynamic(
   () => import("@/components/RevenueChart").then((module) => module.RevenueChart),
-  { loading: () => <MerchantFeatureLoading label="Loading revenue chart…" /> },
+  { ssr: false, loading: () => <RevenueChartSkeleton /> },
 );
+
 const CohortRetentionTable = dynamic(
   () => import("@/components/CohortRetentionTable").then((module) => module.CohortRetentionTable),
-  { loading: () => <MerchantFeatureLoading label="Loading cohort retention data…" /> },
+  { ssr: false, loading: () => <CohortRetentionSkeleton /> },
 );
+
 const WebhookDeliveryHistory = dynamic(
   () => import("@/components/WebhookDeliveryHistory").then((module) => module.WebhookDeliveryHistory),
-  { loading: () => <MerchantFeatureLoading label="Loading delivery history…" /> },
+  { ssr: false, loading: () => <WebhookHistorySkeleton /> },
+);
+
+const MrrTrendChart = dynamic(
+  () => import("@/components/MrrTrendChart").then((module) => module.MrrTrendChart),
+  { ssr: false, loading: () => <MrrTrendSkeleton /> },
+);
+
+const QrCode = dynamic(
+  () => import("@/components/QrCode").then((module) => module.QrCode),
+  { ssr: false, loading: () => <QrCodeSkeleton /> },
 );
 
 const PERIOD_OPTIONS = [
@@ -148,7 +184,10 @@ function FeePreview({
     <span>{tr("Subscriber pays")}{" "}<Money amount={split.gross} meta={meta} />
       {usdEstimate ? ` (≈ ${usdEstimate})` : ""}{" "}{tr("· protocol fee")}{" "}
       <Money amount={split.fee} meta={meta} /> ({formatFeeBps(feeBps)}{tr(") · you receive")}{" "}
-      <Money amount={split.net} meta={meta} />.
+      <Money amount={split.net} meta={meta} />.{" "}
+      <InfoTip label={tr("About the protocol fee")}>
+        {tr("The protocol takes {0} of every charge. The subscriber always pays the plan price; the fee is deducted from your payout.", { "0": formatFeeBps(feeBps) })}
+      </InfoTip>
     </span>
   );
 }
@@ -187,18 +226,17 @@ function ProfilePanel({
 
   const nameCheck = checkProfileName(name);
   const urlCheck = checkProfileUrl(url);
+  const { t: tr } = useI18n();
   const usable = nameCheck.ok && urlCheck.ok;
 
   if (!supported) {
     return (
       <Panel
-        title="Merchant profile"
-        subtitle="A display name and URL shown to subscribers on plan cards."
+        title={tr("Merchant profile")}
+        subtitle={tr("A display name and URL shown to subscribers on plan cards.")}
       >
         <Notice tone="info">
-          The deployed contract does not support merchant profiles yet, so this
-          control is hidden. It will appear once the contract exposes
-          set_profile and get_profile.
+          {tr("The deployed contract does not support merchant profiles yet, so this control is hidden. It will appear once the contract exposes set_profile and get_profile.")}
         </Notice>
       </Panel>
     );
@@ -225,20 +263,18 @@ function ProfilePanel({
 
   return (
     <Panel
-      title="Merchant profile"
-      subtitle="A display name and URL shown to subscribers on plan cards. Stored on-chain."
+      title={tr("Merchant profile")}
+      subtitle={tr("A display name and URL shown to subscribers on plan cards. Stored on-chain.")}
     >
       {error && <Notice tone="error">{error}</Notice>}
       {done && (
         <Notice tone="ok">
-          Profile saved. Transaction <TxLink hash={done} />
+          {tr("Profile saved. Transaction")} <TxLink hash={done} />
         </Notice>
       )}
       <div className="flex flex-wrap items-end gap-3">
         <div className="min-w-[12rem] flex-1">
-          <label className="label" htmlFor="profile-name">
-            Display name
-          </label>
+          <label className="label" htmlFor="profile-name">{tr("Display name")}</label>
           <input
             id="profile-name"
             className="input"
@@ -251,15 +287,13 @@ function ProfilePanel({
             aria-describedby={nameCheck.ok ? undefined : "profile-name-error"}
           />
           {!nameCheck.ok && (
-            <p id="profile-name-error" className="mt-1 text-sm text-danger">
+            <p id="profile-name-error" role="alert" className="mt-1 text-sm text-danger">
               {nameCheck.message}
             </p>
           )}
         </div>
         <div className="min-w-[16rem] flex-1">
-          <label className="label" htmlFor="profile-url">
-            URL
-          </label>
+          <label className="label" htmlFor="profile-url">{tr("URL")}</label>
           <input
             id="profile-url"
             className="input"
@@ -272,7 +306,7 @@ function ProfilePanel({
             aria-describedby={urlCheck.ok ? undefined : "profile-url-error"}
           />
           {!urlCheck.ok && (
-            <p id="profile-url-error" className="mt-1 text-sm text-danger">
+            <p id="profile-url-error" role="alert" className="mt-1 text-sm text-danger">
               {urlCheck.message}
             </p>
           )}
@@ -283,15 +317,15 @@ function ProfilePanel({
           disabled={busy || !usable}
           onClick={() => void save()}
         >
-          {busy ? "Saving…" : "Save profile"}
+          {busy ? tr("Saving…") : tr("Save profile")}
         </button>
       </div>
 
       <div className="mt-4 rounded-lg border border-edge p-3">
-        <p className="text-xs font-medium text-muted">Preview on plan cards</p>
+        <p className="text-xs font-medium text-muted">{tr("Preview on plan cards")}</p>
         <div className="mt-2">
           <div className="font-medium">
-            {nameCheck.ok && nameCheck.name ? nameCheck.name : "Your business name"}
+            {nameCheck.ok && nameCheck.name ? nameCheck.name : tr("Your business name")}
           </div>
           {urlCheck.ok && urlCheck.url ? (
             <div className="text-xs text-muted mono truncate" title={urlCheck.url}>
@@ -320,7 +354,7 @@ function ChargeAttemptsHistory({
   mandateId: number;
   apiConfigured: boolean;
 }) {
-  const { t: tr, formatDate, translateMessage } = useI18n();
+  const { t: tr, translateMessage } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const [attempts, setAttempts] = useState<ApiChargeAttempt[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -374,7 +408,7 @@ function ChargeAttemptsHistory({
       {expanded && (
         <div id={`attempts-${mandateId}`} className="mt-2 rounded-lg border border-edge p-3">
           {loading ? (
-            <p className="text-sm text-muted">{tr("Loading charge attempts…")}</p>
+            <SkeletonRows rows={1} label={tr("Loading charge attempts")} />
           ) : attempts === null ? (
             <Notice tone="info">{tr("Charge attempt history is not available. The backend does not serve this endpoint yet, or the feature has not been deployed to this network.")}</Notice>
           ) : attempts.length === 0 ? (
@@ -389,7 +423,7 @@ function ChargeAttemptsHistory({
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-muted">
-                        {formatDate(attempt.attempted_at)}
+                        <TimeAgo value={attempt.attempted_at} />
                       </span>
                       {attempt.result === "success" ? (
                         <Badge status="Active" />
@@ -484,27 +518,27 @@ function MerchantChurnPanel({
           aria-label={tr("Monthly subscriber activity table")}
           tabIndex={0}
         >
-          <table className="w-full min-w-[760px] text-left text-sm">
+          <table className="w-full min-w-[760px] text-start text-sm">
             <caption className="sr-only">{tr("Monthly subscription starts, departures, completions, and net change. Completed subscriptions are included in the net calculation.")}</caption>
             <thead>
               <tr className="border-b border-edge text-muted">
-                <th scope="col" className="py-2 pr-3 font-medium">{tr("Month (UTC)")}</th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Started")}</th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Subscriber cancellations")}</th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Merchant-ended")}</th>
-                <th scope="col" className="py-2 pr-3 text-right font-medium">{tr("Completed")}</th>
-                <th scope="col" className="py-2 text-right font-medium">{tr("Net subscriber change")}</th>
+                <th scope="col" className="py-2 pe-3 font-medium">{tr("Month (UTC)")}</th>
+                <th scope="col" className="py-2 pe-3 text-end font-medium">{tr("Started")}</th>
+                <th scope="col" className="py-2 pe-3 text-end font-medium">{tr("Subscriber cancellations")}</th>
+                <th scope="col" className="py-2 pe-3 text-end font-medium">{tr("Merchant-ended")}</th>
+                <th scope="col" className="py-2 pe-3 text-end font-medium">{tr("Completed")}</th>
+                <th scope="col" className="py-2 text-end font-medium">{tr("Net subscriber change")}</th>
               </tr>
             </thead>
             <tbody>
               {state.months.map((month) => (
                 <tr key={month.bucket} className="border-b border-edge last:border-0">
-                  <th scope="row" className="py-2 pr-3 font-medium">{month.bucket}</th>
-                  <td className="py-2 pr-3 text-right tabular-nums">{formatNumber(month.started)}</td>
-                  <td className="py-2 pr-3 text-right tabular-nums">{formatNumber(month.cancelled)}</td>
-                  <td className="py-2 pr-3 text-right tabular-nums">{formatNumber(month.ended)}</td>
-                  <td className="py-2 pr-3 text-right tabular-nums">{formatNumber(month.completed)}</td>
-                  <td className="py-2 text-right tabular-nums">
+                  <th scope="row" className="py-2 pe-3 font-medium">{month.bucket}</th>
+                  <td className="py-2 pe-3 text-end tabular-nums">{formatNumber(month.started)}</td>
+                  <td className="py-2 pe-3 text-end tabular-nums">{formatNumber(month.cancelled)}</td>
+                  <td className="py-2 pe-3 text-end tabular-nums">{formatNumber(month.ended)}</td>
+                  <td className="py-2 pe-3 text-end tabular-nums">{formatNumber(month.completed)}</td>
+                  <td className="py-2 text-end tabular-nums">
                     {month.net > 0
                       ?tr("+{0} (increase)", { "0": month.net })
                       : month.net < 0
@@ -545,7 +579,7 @@ function WebhooksPanel({
   merchant: string;
   apiConfigured: boolean;
 }) {
-  const { t: tr, formatDate, translateMessage } = useI18n();
+  const { t: tr, translateMessage } = useI18n();
   const [webhooks, setWebhooks] = useState<ApiWebhook[] | null>(null);
   const [url, setUrl] = useState("");
   const [events, setEvents] = useState<string[]>([]);
@@ -677,7 +711,7 @@ function WebhooksPanel({
           <div className="mt-3 rounded-lg border border-edge p-3">
             <p className="text-sm font-medium">{tr("Add a webhook")}</p>
             <div className="mt-2 flex flex-wrap items-end gap-3">
-              <div className="min-w-[16rem] flex-1">
+              <div className="max-[359px]:w-full max-[359px]:min-w-0 min-w-[16rem] flex-1">
                 <label className="label" htmlFor="webhook-url">{tr("URL")}</label>
                 <input
                   id="webhook-url"
@@ -692,13 +726,13 @@ function WebhooksPanel({
                   }
                 />
                 {url.length > 0 && !urlCheck.ok && (
-                  <p id="webhook-url-error" className="mt-1 text-sm text-danger">
+                  <p id="webhook-url-error" role="alert" className="mt-1 text-sm text-danger">
                     {translateMessage(urlCheck.message)}
                   </p>
                 )}
               </div>
-              <div className="min-w-[14rem] flex-1">
-                <p className="text-sm font-medium mb-2">{tr("Events")}</p>
+              <fieldset className="max-[359px]:w-full max-[359px]:min-w-0 min-w-[14rem] flex-1">
+                <legend className="text-sm font-medium mb-2">{tr("Events")}</legend>
                 <div className="space-y-1">
                   {WEBHOOK_EVENTS.map((option) => (
                     <label key={option.value} className="flex items-start gap-2">
@@ -712,7 +746,7 @@ function WebhooksPanel({
                     </label>
                   ))}
                 </div>
-              </div>
+              </fieldset>
               <button
                 type="button"
                 className="btn-primary"
@@ -730,12 +764,14 @@ function WebhooksPanel({
                 {showSecret.rotated ?tr("New signing secret (shown once)") :tr("Signing secret (shown once)")}
               </p>
               <div className="mt-2 flex items-end gap-2">
+                <label htmlFor="webhook-secret" className="sr-only">
+                  {tr("Copy the signing secret")}
+                </label>
                 <input
                   id="webhook-secret"
                   className="input mono flex-1"
                   readOnly
                   value={showSecret.secret}
-                  aria-label={tr("Copy the signing secret")}
                 />
                 <CopyButton value={showSecret.secret} label={tr("signing secret")} />
               </div>
@@ -761,7 +797,7 @@ function WebhooksPanel({
                         {w.url}
                       </div>
                       <div className="mt-1 text-xs text-muted">
-                        {w.events.join(", ")} · {formatDate(w.created_at)}
+                        {w.events.join(", ")} · <TimeAgo value={w.created_at} />
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -838,101 +874,6 @@ function WebhooksPanel({
   );
 }
 
-/**
- * The discount a merchant can attach to one mandate.
- *
- * The rate is a percentage the merchant types; it is converted to basis
- * points in integer arithmetic, and the preview says what the subscriber pays
- * while the discount runs and what they pay after it. The discount can only
- * lower the price, so the preview never shows more than the plan's price.
- */
-function DiscountForm({
-  amount,
-  meta,
-  busy,
-  onCancel,
-  onApply,
-}: {
-  amount: bigint;
-  meta: TokenMeta;
-  busy: boolean;
-  onCancel: () => void;
-  onApply: (bps: number, charges: number) => void;
-}) {
-  const { t: tr, formatAmount, translateMessage } = useI18n();
-  const [percent, setPercent] = useState("10");
-  const [charges, setCharges] = useState("3");
-  const bpsCheck = checkDiscountBps(percent);
-  const chargesCheck = checkDiscountCharges(charges);
-  const usable = bpsCheck.ok && chargesCheck.ok;
-
-  return (
-    <div className="mt-3 rounded-lg border border-edge p-3">
-      <p className="text-sm font-medium">{tr("Discount this mandate")}</p>
-      <div className="mt-2 flex flex-wrap items-end gap-3">
-        <div className="min-w-[7rem] flex-1">
-          <label className="label" htmlFor="discount-percent">{tr("Discount (%)")}</label>
-          <input
-            id="discount-percent"
-            className="input"
-            inputMode="decimal"
-            placeholder="10"
-            value={percent}
-            onChange={(e) => setPercent(e.target.value)}
-            aria-invalid={!bpsCheck.ok}
-            aria-describedby={bpsCheck.ok ? undefined : "discount-percent-error"}
-            disabled={busy}
-          />
-        </div>
-        <div className="min-w-[9rem] flex-1">
-          <label className="label" htmlFor="discount-charges">{tr("Charges to cover")}</label>
-          <input
-            id="discount-charges"
-            className="input"
-            inputMode="numeric"
-            placeholder="3"
-            value={charges}
-            onChange={(e) => setCharges(e.target.value)}
-            aria-invalid={!chargesCheck.ok}
-            aria-describedby={chargesCheck.ok ? undefined : "discount-charges-error"}
-            disabled={busy}
-          />
-        </div>
-        <button
-          type="button"
-          className="btn-primary"
-          disabled={busy || !usable}
-          onClick={() => {
-            if (!bpsCheck.ok || !chargesCheck.ok) return;
-            onApply(bpsCheck.bps, chargesCheck.charges);
-          }}
-        >
-          {busy ?tr("Applying…") :tr("Apply discount")}
-        </button>
-        <button type="button" className="btn-ghost" disabled={busy} onClick={onCancel}>{tr("Cancel")}</button>
-      </div>
-
-      {!bpsCheck.ok && (
-        <p id="discount-percent-error" className="mt-2 text-sm text-danger">
-          {translateMessage(bpsCheck.message)}
-        </p>
-      )}
-      {!chargesCheck.ok && (
-        <p id="discount-charges-error" className="mt-2 text-sm text-danger">
-          {translateMessage(chargesCheck.message)}
-        </p>
-      )}
-
-      {bpsCheck.ok && chargesCheck.ok && (
-        <p className="mt-2 text-sm text-muted">{tr("Subscriber pays")}{" "}<Money amount={discountedAmount(amount, bpsCheck.bps)} meta={meta} />{" "}{tr("for the next")}{" "}{chargesCheck.charges === 1 ?tr("charge") :tr("{0} charges", { "0": chargesCheck.charges })},{" "}{tr("then")}{" "}<Money amount={amount} meta={meta} />.
-          {discountedAmount(amount, bpsCheck.bps) === 0n && (
-            <>{" "}{tr("This discount rounds the charge down to zero, which the vault cannot debit.")}</>
-          )}
-        </p>
-      )}
-    </div>
-  );
-}
 
 /**
  * The refund a merchant can issue on one mandate.
@@ -961,6 +902,7 @@ function RefundForm({
   const { checkAmount, t: tr, formatAmount, translateMessage } = useI18n();
   const amountCheck = checkAmount(amount, meta.decimals);
   const maxRefundStroops = maxRefund;
+  const refundInvalid = !amountCheck.ok || amountCheck.stroops > maxRefundStroops;
   const usable = amountCheck.ok && amountCheck.stroops <= maxRefundStroops && amountCheck.stroops > 0n;
 
   return (
@@ -968,7 +910,7 @@ function RefundForm({
       <p className="text-sm font-medium">{tr("Issue a refund")}</p>
       <p className="mt-1 text-xs text-muted">{tr("Refund up to")}{" "}<Money amount={maxRefundStroops} meta={meta} />{" "}{tr("(what you received net of fees).")}</p>
       <div className="mt-2 flex flex-wrap items-end gap-3">
-        <div className="min-w-[12rem] flex-1">
+        <div className="max-[359px]:w-full max-[359px]:min-w-0 min-w-[12rem] flex-1">
           <label className="label" htmlFor="refund-amount">{tr("Amount (")}{meta.symbol})
           </label>
           <input
@@ -978,8 +920,8 @@ function RefundForm({
             placeholder={fromStroops(maxRefundStroops, 4, meta.decimals)}
             value={amount}
             onChange={(e) => onAmountChange(e.target.value)}
-            aria-invalid={!amountCheck.ok || amountCheck.stroops > maxRefundStroops}
-            aria-describedby={amountCheck.ok ? undefined : "refund-amount-error"}
+            aria-invalid={refundInvalid}
+            aria-describedby={refundInvalid ? "refund-amount-error" : undefined}
             disabled={busy}
           />
         </div>
@@ -998,12 +940,12 @@ function RefundForm({
       </div>
 
       {!amountCheck.ok && (
-        <p id="refund-amount-error" className="mt-2 text-sm text-danger">
+        <p id="refund-amount-error" role="alert" className="mt-2 text-sm text-danger">
           {translateMessage(amountCheck.message)}
         </p>
       )}
       {amountCheck.ok && amountCheck.stroops > maxRefundStroops && (
-        <p id="refund-amount-error" className="mt-2 text-sm text-danger">{tr("Refund cannot exceed")}{" "}<Money amount={maxRefundStroops} meta={meta} />.
+        <p id="refund-amount-error" role="alert" className="mt-2 text-sm text-danger">{tr("Refund cannot exceed")}{" "}<Money amount={maxRefundStroops} meta={meta} />.
         </p>
       )}
     </div>
@@ -1014,11 +956,14 @@ export default function MerchantPage() {
   const { checkAmount, t: tr, formatPeriod, translateMessage, unitLabel, trialBadge, formatTokenValue, discountBadge, formatUsdString, formatNumber } = useI18n();
   const { address, networkMismatch, signXdr, connect, connecting } = useWallet();
   const [plans, setPlans] = useState<ApiPlan[] | null>(null);
-  // Filter state for the merchant's own plan listing. Search is by name, and
-  // the token/status filters narrow the same list without hiding its counts.
+  // Filter state for the merchant's own plan listing. Search is by name, the
+  // token filter narrows the same list, and the active/archive tab decides
+  // whether live or deactivated plans are shown.
   const [planQuery, setPlanQuery] = useState("");
   const [planToken, setPlanToken] = useState("all");
-  const [planActive, setPlanActive] = useState<PlanActiveOption>("all");
+  // Deactivated plans live in their own tab instead of being mixed into the
+  // listing merchants use to manage live plans.
+  const [planView, setPlanView] = useState<"active" | "archive">("active");
   const [mandates, setMandates] = useState<ApiMandate[] | null>(null);
   const [unpaidMandates, setUnpaidMandates] = useState<import("@/lib/chain").UnpaidMandate[] | null>(null);
   const [subscribersTab, setSubscribersTab] = useState<"all" | "unpaid">("all");
@@ -1039,8 +984,18 @@ export default function MerchantPage() {
   >({});
   // Vault balance per subscriber address, read in parallel with mandates.
   const [balances, setBalances] = useState<Record<string, bigint | null>>({});
+  // Total mandates behind the merchant index, when the source can say.
+  const [mandateTotal, setMandateTotal] = useState<number | null>(null);
+  // True once every page has been read (or the source stopped returning rows).
+  const [mandatesComplete, setMandatesComplete] = useState(false);
+  const [moreBusy, setMoreBusy] = useState(false);
+  const [moreError, setMoreError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [monthlyExporting, setMonthlyExporting] = useState(false);
+  // Independent of the batch-end selection: a merchant may want to export a
+  // subscriber they would never end, so the two sets stay separate.
+  const [exportSelected, setExportSelected] = useState<Set<number>>(new Set());
+  const [exportingSubscribers, setExportingSubscribers] = useState(false);
   const [feeBps, setFeeBps] = useState<number | null>(null);
   const [bucketSize, setBucketSize] = useState<BucketSize>("day");
   /**
@@ -1115,6 +1070,9 @@ export default function MerchantPage() {
 
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  // When the projections on this page were last received, for staleness.
+  const [lastLoadedAt, setLastLoadedAt] = useState<number | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   // Ids of mandates ticked for the "End selected" batch action.
   const [selected, setSelected] = useState<Set<number>>(new Set());
   // Whether the batch-end confirmation dialog is open.
@@ -1185,10 +1143,15 @@ export default function MerchantPage() {
         sort: "oldest",
         query: planQuery,
         token: planToken,
-        active: planActive,
+        active: planView === "active" ? "active" : "inactive",
       }),
-    [plans, planQuery, planToken, planActive],
+    [plans, planQuery, planToken, planView],
   );
+  const activePlanCount = useMemo(
+    () => (plans ?? []).filter((plan) => plan.active === 1).length,
+    [plans],
+  );
+  const archivedPlanCount = (plans ?? []).length - activePlanCount;
   /** Tokens present on this merchant's plans, keeping a URL-selected one visible. */
   const planTokenOptions = useMemo(() => {
     const ids = [...new Set((plans ?? []).map((plan) => plan.token))];
@@ -1278,43 +1241,109 @@ export default function MerchantPage() {
     void loadProfile();
   }, [loadProfile]);
 
+  // Mirrors the live wallet address so a page that resolves after the wallet
+  // switched accounts cannot write the previous merchant's rows onto the new
+  // one's dashboard.
+  const addressRef = useRef(address);
+  useEffect(() => {
+    addressRef.current = address;
+  }, [address]);
+
+  /**
+   * One page of the merchant's mandates: newest first, `offset` rows already
+   * shown. The indexer is preferred; contract state is the fallback, exactly
+   * as for the rest of the dashboard.
+   */
+  const readMandatePage = useCallback(
+    async (
+      merchant: string,
+      offset: number,
+    ): Promise<{ rows: ApiMandate[]; total: number | null; done: boolean }> => {
+      const fromApi = api.isConfigured()
+        ? await api.mandatesFor(merchant, { offset, limit: MERCHANT_MANDATE_PAGE_SIZE })
+        : null;
+      if (fromApi) {
+        return {
+          rows: fromApi.mandates,
+          total: null,
+          // A short page is the only portable "no more rows" signal an
+          // optional paging API can give; a backend that ignores paging
+          // simply answers everything on the first page.
+          done: fromApi.mandates.length < MERCHANT_MANDATE_PAGE_SIZE,
+        };
+      }
+      const page = await chainMerchantMandatesPage(
+        merchant,
+        merchant,
+        offset,
+        MERCHANT_MANDATE_PAGE_SIZE,
+      );
+      return {
+        rows: page.rows,
+        total: page.total,
+        done: page.total !== null && offset + page.rows.length >= page.total,
+      };
+    },
+    [],
+  );
+
+  /** Read vault balances for subscribers not already looked up. */
+  const readBalances = useCallback(
+    async (subscribers: string[]): Promise<Record<string, bigint | null>> => {
+      if (!address) return {};
+      const settled = await Promise.allSettled(
+        subscribers.map((sub) => payflow.vaultBalance(address, sub, config.contracts.token)),
+      );
+      const found: Record<string, bigint | null> = {};
+      subscribers.forEach((sub, i) => {
+        if (settled[i]?.status === "fulfilled") found[sub] = settled[i].value;
+      });
+      return found;
+    },
+    [address],
+  );
+
   const load = useCallback(async () => {
     if (!address) return;
+    setRefreshing(true);
     const [p, m, s] = await Promise.all([
       api.plans(address),
-      api.mandatesFor(address),
+      // A failed fallback read must not take the whole dashboard down with it:
+      // an empty list is the pre-paging behaviour for an unreadable index.
+      readMandatePage(address, 0).catch(() => ({ rows: [], total: null, done: true })),
       api.merchantSummary(address),
     ]);
 
     let loadedPlans: ApiPlan[] = [];
     if (p) {
       p.plans.forEach((plan) => observeContractRecord("plan", plan));
-      setPlans(p.plans);
       loadedPlans = p.plans;
     } else {
       try {
         loadedPlans = await chainPlansOf(address, address);
-        setPlans(loadedPlans);
       } catch {
-        setPlans([]);
+        loadedPlans = [];
       }
     }
 
-    let rows: ApiMandate[] = [];
-    if (m) {
-      rows = m.mandates;
-    } else {
-      try {
-        rows = await chainMandatesFor(address, address);
-      } catch {
-        rows = [];
-      }
-    }
-    rows.forEach((mandate) => observeContractRecord("mandate", mandate));
+    const rows = m.rows;
+
+    // The wallet may have switched accounts while these reads were in flight.
+    if (addressRef.current !== address) return;
+
+    setPlans(loadedPlans);
     setMandates(rows);
+    setMandateTotal(m.total);
+    setMandatesComplete(m.done);
+    setMoreError(null);
+    rows.forEach((mandate) => observeContractRecord("mandate", mandate));
     // Drop selections for mandates that no longer exist or are no longer endable.
     const endableIds = new Set(rows.filter(endable).map((r) => r.id));
     setSelected((prev) => new Set([...prev].filter((id) => endableIds.has(id))));
+    // Export selection follows the same rule: a mandate that vanished from a
+    // refresh must not be exported from stale state.
+    const mandateIds = new Set(rows.map((r) => r.id));
+    setExportSelected((prev) => new Set([...prev].filter((id) => mandateIds.has(id))));
 
     // Load unpaid mandates
     try {
@@ -1372,7 +1401,7 @@ export default function MerchantPage() {
     if (loadedPlans.length > 0) {
       void Promise.all(
         loadedPlans.map(async (plan) => {
-          const apiStats = await api.planStats(plan.id);
+          const apiStats = typeof api.planStats === "function" ? await api.planStats(plan.id) : null;
           if (apiStats !== null) {
             setPlanStats((prev) => ({ ...prev, [plan.id]: apiStats }));
             return;
@@ -1393,16 +1422,52 @@ export default function MerchantPage() {
     // Read each subscriber's vault balance in parallel so the dashboard can
     // flag mandates that will fail. Individual reads may fail without breaking
     // the whole list.
-    const subscribers = [...new Set(rows.map((m) => m.subscriber))];
-    const settled = await Promise.allSettled(
-      subscribers.map((sub) => payflow.vaultBalance(address, sub, config.contracts.token)),
-    );
-    const b: Record<string, bigint | null> = {};
-    subscribers.forEach((sub, i) => {
-      if (settled[i]?.status === "fulfilled") b[sub] = settled[i].value;
-    });
+    const b = await readBalances([...new Set(rows.map((row) => row.subscriber))]);
+    if (addressRef.current !== address) return;
     setBalances(b);
-  }, [address]);
+  }, [address, readBalances, readMandatePage]);
+
+  /**
+   * Read the next page of older mandates and append it.
+   *
+   * Paging is offset based because the contract index is; `mergeMandates`
+   * keys by id so a subscription opened mid-page cannot duplicate a row.
+   */
+  async function loadMoreMandates() {
+    if (!address || mandates === null || moreBusy || mandatesComplete) return;
+    const merchant = address;
+    setMoreBusy(true);
+    setMoreError(null);
+    try {
+      const page = await readMandatePage(merchant, mandates.length);
+      if (addressRef.current !== merchant) return;
+
+      const merged = mergeMandates(mandates, page.rows);
+      page.rows.forEach((mandate) => observeContractRecord("mandate", mandate));
+      setMandates(merged);
+      if (page.total !== null) setMandateTotal(page.total);
+      // Stop when the source says it is done, or when a page added nothing —
+      // otherwise an indexer that ignores `offset` would load forever.
+      if (page.done || merged.length === mandates.length) setMandatesComplete(true);
+      // Without the backend, the totals are derived from the rows on screen.
+      setSummary((prev) =>
+        prev && prev.totalCollected !== null ? prev : chainMerchantSummary(merchant, merged),
+      );
+
+      const unseen = [...new Set(page.rows.map((row) => row.subscriber))].filter(
+        (subscriber) => !(subscriber in balances),
+      );
+      if (unseen.length > 0) {
+        const found = await readBalances(unseen);
+        if (addressRef.current !== merchant) return;
+        setBalances((prev) => ({ ...prev, ...found }));
+      }
+    } catch (err) {
+      setMoreError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setMoreBusy(false);
+    }
+  }
 
   // SSE stream for live updates (payflow-backend#19)
   useStream({
@@ -1552,7 +1617,7 @@ export default function MerchantPage() {
   useEffect(() => {
     const origin = window.location.origin;
     const links: Record<number, string> = {};
-    for (const plan of plans ?? []) links[plan.id] = subscribeLink(origin, plan.id);
+    for (const plan of plans ?? []) links[plan.id] = planLink(origin, plan.id);
     setPlanLinks(links);
   }, [plans]);
 
@@ -1662,6 +1727,77 @@ export default function MerchantPage() {
       const allSelected = ids.length > 0 && ids.every((id) => prev.has(id));
       return allSelected ? new Set() : new Set(ids);
     });
+  }
+
+  /** Toggle one subscriber's export checkbox. */
+  function toggleExportSelected(id: number) {
+    setExportSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  /** Select every subscriber for export, or clear the whole selection. */
+  function toggleExportSelectAll(ids: number[]) {
+    setExportSelected((prev) => {
+      const allSelected = ids.length > 0 && ids.every((id) => prev.has(id));
+      return allSelected ? new Set() : new Set(ids);
+    });
+  }
+
+  /**
+   * Export the selected subscribers (one row per mandate) as CSV.
+   *
+   * Reads only data already on the page, so no signature or backend call is
+   * involved; a malformed amount is caught rather than written as "NaN".
+   */
+  function exportSelectedSubscribers() {
+    if (!address) return;
+    setExportingSubscribers(true);
+    setError(null);
+    try {
+      if (exportSelected.size === 0) {
+        setError(tr("Select at least one subscriber to export."));
+        return;
+      }
+      const rows: SubscriberRow[] = (mandates ?? [])
+        .filter((m) => exportSelected.has(m.id))
+        .map((m) => {
+          const meta = metaFor(metas, m.token ?? config.contracts.token);
+          const plan = (plans ?? []).find((p) => p.id === m.plan_id);
+          const next = Number.isFinite(m.next_charge) && m.next_charge > 0
+            ? new Date(m.next_charge * 1000).toISOString()
+            : "—";
+          return {
+            mandateId: m.id,
+            subscriber: m.subscriber,
+            planId: m.plan_id,
+            planName: plan ? planDisplayName(plan) : `Plan #${m.plan_id}`,
+            status: m.status,
+            amount: fromStroops(m.amount, meta.decimals, meta.decimals),
+            token: meta.symbol,
+            periodSeconds: m.period,
+            chargesMade: m.charges_made,
+            maxCharges: m.max_charges,
+            nextCharge: next,
+          };
+        });
+      if (rows.length === 0) {
+        setError(tr("None of the selected subscribers are still listed. Refresh and try again."));
+        return;
+      }
+      downloadCsv(
+        buildSubscribersCsv(rows),
+        subscribersFilename(address, new Date().toISOString().slice(0, 10)),
+      );
+      setExportSelected(new Set());
+    } catch {
+      setError(tr("Could not build the subscriber export. Nothing was downloaded."));
+    } finally {
+      setExportingSubscribers(false);
+    }
   }
 
   /**
@@ -1885,26 +2021,30 @@ export default function MerchantPage() {
 
   if (!address) {
     return (
-      <Panel title={tr("Merchant dashboard")}>
-        <Empty
-          title={tr("No wallet connected")}
-          action={
-            <button
-              type="button"
-              className="btn-primary"
-              disabled={connecting}
-              onClick={() => void connect()}
-            >
-              {connecting ?tr("Connecting…") :tr("Connect wallet")}
-            </button>
-          }
-        >{tr("Connect the wallet that will publish plans. Plans, subscribers and revenue are all read for that address — on testnet, fund it with Friendbot before publishing.")}</Empty>
-      </Panel>
+      <div className="space-y-6">
+        <h1 className="text-2xl font-semibold tracking-tight">{tr("Merchant dashboard")}</h1>
+        <Panel>
+          <Empty
+            title={tr("No wallet connected")}
+            action={
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={connecting}
+                onClick={() => void connect()}
+              >
+                {connecting ?tr("Connecting…") :tr("Connect wallet")}
+              </button>
+            }
+          >{tr("Connect the wallet that will publish plans. Plans, subscribers and revenue are all read for that address — on testnet, fund it with Friendbot before publishing.")}</Empty>
+        </Panel>
+      </div>
     );
   }
 
   return (
     <div className="space-y-6">
+      <h1 className="text-2xl font-semibold tracking-tight">{tr("Merchant dashboard")}</h1>
       <SectionShortcuts />
       {onboardingDismissed === false && (
         <OnboardingChecklist
@@ -1946,9 +2086,10 @@ export default function MerchantPage() {
         subtitle={tr("Net of the protocol fee, over the last {0} days.", { "0": REVENUE_WINDOW_DAYS })}
         actions={
           revenue !== null ? (
-            <label className="flex items-center gap-2 text-sm text-muted">
+            <label htmlFor="revenue-bucket" className="flex items-center gap-2 text-sm text-muted">
               <span className="sr-only sm:not-sr-only">{tr("Group by")}</span>
               <select
+                id="revenue-bucket"
                 className="input w-auto py-1"
                 value={bucketSize}
                 onChange={(e) => setBucketSize(e.target.value as BucketSize)}
@@ -1976,15 +2117,18 @@ export default function MerchantPage() {
         )}
       </Panel>
 
+      <Panel
+        title={tr("Committed MRR")}
+        subtitle={tr("Monthly recurring revenue committed by active subscriptions. Estimated from each mandate's charge history.")}
+      >
+        <MrrTrendChart mandates={mandates} meta={tokenMeta} />
+      </Panel>
+
       <div className="grid gap-4 sm:grid-cols-3">
         <Stat
           label={tr("Collected")}
           loading={summary === null}
-          value={
-            summary?.totalCollected != null
-              ? <Money amount={summary.totalCollected} meta={tokenMeta} digits={4} />
-              : "—"
-          }
+          value={<Money amount={summary?.totalCollected} meta={tokenMeta} digits={4} />}
           hint={tr("{0}, net of protocol fee", { "0": tokenMeta.symbol })}
         />
         <Stat
@@ -2001,6 +2145,12 @@ export default function MerchantPage() {
 
       <ContractVersionNotice />
       <SyncLagIndicator />
+      <StaleDataNotice
+        fetchedAt={lastLoadedAt}
+        refreshing={refreshing}
+        onRefresh={() => { void load(); }}
+        className="mb-4"
+      />
       <NotificationCentre
         address={address}
         notifications={evaluateMerchantNotifications({
@@ -2035,7 +2185,7 @@ export default function MerchantPage() {
             {batchResult.filter((i) => i.ok).length} of {batchResult.length} mandates ended.
           </p>
           {batchResult.some((i) => !i.ok) && (
-            <ul className="mt-1 list-disc pl-5 text-sm">
+            <ul className="mt-1 list-disc ps-5 text-sm">
               {batchResult
                 .filter((i) => !i.ok)
                 .map((i) => (
@@ -2055,7 +2205,7 @@ export default function MerchantPage() {
         subtitle={tr("Price and period are frozen into every mandate opened against this plan. To change them, publish a new plan.")}
       >
         <div className="flex flex-wrap items-end gap-3">
-          <div className="min-w-[8rem] flex-1">
+          <div className="max-[359px]:w-full max-[359px]:min-w-0 min-w-[8rem] flex-1">
             <label className="label" htmlFor="plan-token">{tr("Token")}</label>
             <select
               id="plan-token"
@@ -2071,7 +2221,7 @@ export default function MerchantPage() {
               ))}
             </select>
           </div>
-          <div className="min-w-[10rem] flex-1">
+          <div className="max-[359px]:w-full max-[359px]:min-w-0 min-w-[10rem] flex-1">
             <AmountInput
               id="price"
               label={tr("Price ({0})", { "0": tokenMeta.symbol })}
@@ -2087,10 +2237,11 @@ export default function MerchantPage() {
               // The form renders the price message in the fee-preview slot
               // below, so the field must not repeat it inline.
               hideError
+              invalid={showPriceError}
               describedBy="price-preview"
             />
           </div>
-          <div className="min-w-[12rem] flex-1">
+          <div className="max-[359px]:w-full max-[359px]:min-w-0 min-w-[12rem] flex-1">
             <label className="label" htmlFor="plan-name">{tr("Plan name")}</label>
             <input
               id="plan-name"
@@ -2102,10 +2253,10 @@ export default function MerchantPage() {
               aria-describedby={nameTooLong ? "plan-name-error" : undefined}
             />
             {nameTooLong && (
-              <p id="plan-name-error" className="mt-1 text-sm text-danger">{tr("Too long —")}{" "}{MAX_NAME_LEN}{" "}{tr("bytes maximum.")}</p>
+              <p id="plan-name-error" role="alert" className="mt-1 text-sm text-danger">{tr("Too long —")}{" "}{MAX_NAME_LEN}{" "}{tr("bytes maximum.")}</p>
             )}
           </div>
-          <div className="min-w-[10rem] flex-1">
+          <div className="max-[359px]:w-full max-[359px]:min-w-0 min-w-[10rem] flex-1">
             <label className="label" htmlFor="period">{tr("Billing period")}</label>
             <select
               id="period"
@@ -2128,7 +2279,7 @@ export default function MerchantPage() {
             // its own form row the pair keeps its width at every size, and
             // both controls keep visible labels — a placeholder is not a
             // label, and it disappears once typing starts.
-            <div className="min-w-[16rem] flex-1">
+            <div className="max-[359px]:w-full max-[359px]:min-w-0 min-w-[16rem] flex-1">
               <div className="flex flex-wrap items-end gap-3">
                 <div className="w-28">
                   <label className="label" htmlFor="period-count">{tr("Custom period")}</label>
@@ -2163,14 +2314,14 @@ export default function MerchantPage() {
                 </div>
               </div>
               {periodError && (
-                <p id="period-error" className="mt-2 text-sm text-rose-200">
+                <p id="period-error" role="alert" className="mt-2 text-sm text-danger">
                   {translateMessage(periodError)}
                 </p>
               )}
             </div>
           )}
           {trialSupported && (
-            <div className="min-w-[10rem] flex-1">
+            <div className="max-[359px]:w-full max-[359px]:min-w-0 min-w-[10rem] flex-1">
               <label className="label" htmlFor="trial">{tr("Free trial")}</label>
               <select
                 id="trial"
@@ -2282,66 +2433,111 @@ export default function MerchantPage() {
           >{tr("Use the form above to publish your first plan — it is written straight to the contract, so it works with or without the indexer. Subscribers can open a mandate against it as soon as it confirms.")}</Empty>
         ) : (
           <div className="space-y-3">
-            <div className="flex flex-wrap items-end gap-3 rounded-lg border border-edge bg-surface/50 p-3">
-              <div className="w-full sm:w-auto sm:min-w-[14rem] sm:flex-1">
-                <Search
-                  id="merchant-plan-search"
-                  value={planQuery}
-                  onChange={setPlanQuery}
-                  label={tr("Search plans by name")}
-                  placeholder={tr("Search by name")}
-                />
-              </div>
-
-              <div className="flex items-center gap-2">
-                <label htmlFor="merchant-plan-token" className="whitespace-nowrap text-sm font-medium text-muted">{tr("Token:")}</label>
-                <select
-                  id="merchant-plan-token"
-                  className="input py-1 px-2.5 text-sm"
-                  value={planToken}
-                  onChange={(e) => setPlanToken(e.target.value)}
+            <div className="rounded-lg border border-edge bg-surface/50 p-3">
+              <div className="mb-3 flex flex-wrap items-center gap-3">
+                <div
+                  className="flex rounded-lg border border-edge bg-surface/30"
+                  role="tablist"
+                  aria-label={tr("Plan views")}
                 >
-                  <option value="all">{tr("All tokens")}</option>
-                  {planTokenOptions.map((id) => (
-                    <option key={id} value={id}>
-                      {metaFor(metas, id).symbol}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <label htmlFor="merchant-plan-active" className="whitespace-nowrap text-sm font-medium text-muted">{tr("Status:")}</label>
-                <select
-                  id="merchant-plan-active"
-                  className="input py-1 px-2.5 text-sm"
-                  value={planActive}
-                  onChange={(e) => setPlanActive(e.target.value as PlanActiveOption)}
-                >
-                  <option value="all">{tr("All plans")}</option>
-                  <option value="active">{tr("Active")}</option>
-                  <option value="inactive">{tr("Inactive")}</option>
-                </select>
-              </div>
-
-              <span className="ml-auto text-xs text-muted" aria-live="polite">{tr("Showing")}{" "}{formatNumber(filteredPlans.length)}{" "}{tr("of")}{" "}{formatNumber(plans.length)}{" "}{tr("plans")}</span>
-            </div>
-
-            {filteredPlans.length === 0 ? (
-              <Empty
-                title={tr("No plans match these filters")}
-                action={
                   <button
                     type="button"
-                    className="btn-ghost"
-                    onClick={() => {
-                      setPlanQuery("");
-                      setPlanToken("all");
-                      setPlanActive("all");
-                    }}
-                  >{tr("Reset filters")}</button>
-                }
-              >{tr("No plan name, token or status matches the current filters. Clear them to see every plan.")}</Empty>
+                    role="tab"
+                    id="merchant-plans-active-tab"
+                    aria-selected={planView === "active"}
+                    aria-controls="merchant-plans-panel"
+                    className={`rounded-l-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                      planView === "active"
+                        ? "bg-accent text-white"
+                        : "text-muted hover:text-fg"
+                    }`}
+                    onClick={() => setPlanView("active")}
+                  >
+                    {tr("Active")}{" "}
+                    <span className="tabular-nums">({formatNumber(activePlanCount)})</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    id="merchant-plans-archive-tab"
+                    aria-selected={planView === "archive"}
+                    aria-controls="merchant-plans-panel"
+                    className={`rounded-r-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                      planView === "archive"
+                        ? "bg-accent text-white"
+                        : "text-muted hover:text-fg"
+                    }`}
+                    onClick={() => setPlanView("archive")}
+                  >
+                    {tr("Archive")}{" "}
+                    <span className="tabular-nums">({formatNumber(archivedPlanCount)})</span>
+                  </button>
+                </div>
+                <span className="ml-auto text-xs text-muted" aria-live="polite">{tr("Showing")}{" "}{formatNumber(filteredPlans.length)}{" "}{tr("of")}{" "}{formatNumber(plans.length)}{" "}{tr("plans")}</span>
+              </div>
+
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="max-[359px]:w-full max-[359px]:min-w-0 min-w-[14rem] flex-1">
+                  <Search
+                    id="merchant-plan-search"
+                    value={planQuery}
+                    onChange={setPlanQuery}
+                    label={tr("Search plans by name")}
+                    placeholder={tr("Search by name")}
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <label htmlFor="merchant-plan-token" className="whitespace-nowrap text-sm font-medium text-muted">{tr("Token:")}</label>
+                  <select
+                    id="merchant-plan-token"
+                    className="input py-1 px-2.5 text-sm"
+                    value={planToken}
+                    onChange={(e) => setPlanToken(e.target.value)}
+                  >
+                    <option value="all">{tr("All tokens")}</option>
+                    {planTokenOptions.map((id) => (
+                      <option key={id} value={id}>
+                        {metaFor(metas, id).symbol}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div
+              role="tabpanel"
+              id="merchant-plans-panel"
+              aria-labelledby={planView === "active" ? "merchant-plans-active-tab" : "merchant-plans-archive-tab"}
+            >
+            {filteredPlans.length === 0 ? (
+              planView === "archive" && archivedPlanCount === 0 ? (
+                <Empty title={tr("No archived plans")}>{tr("Deactivated plans move here, so the active list only shows plans you can still sell. Deactivate a plan to archive it.")}</Empty>
+              ) : planView === "active" && activePlanCount === 0 ? (
+                <Empty
+                  title={tr("No active plans")}
+                  action={
+                    <button type="button" className="btn-ghost" onClick={() => setPlanView("archive")}>
+                      {tr("Open archive")}
+                    </button>
+                  }
+                >{tr("Every plan is deactivated. Open the archive to review or reactivate them.")}</Empty>
+              ) : (
+                <Empty
+                  title={tr("No plans match these filters")}
+                  action={
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => {
+                        setPlanQuery("");
+                        setPlanToken("all");
+                      }}
+                    >{tr("Reset filters")}</button>
+                  }
+                >{tr("No plan name or token matches the current filters. Clear them to see every plan.")}</Empty>
+              )
             ) : (
           <VirtualList
             items={filteredPlans}
@@ -2368,6 +2564,18 @@ export default function MerchantPage() {
                   : meta.symbol === "USDC"
                     ? formatUsdString(formatUsdcEstimate(p.amount, meta.decimals))
                     : null;
+              const planUrl = planLinks[p.id];
+              const embedSnippet = address && planUrl
+                ? buildEmbedSnippet({
+                    appOrigin: new URL(planUrl).origin,
+                    basePath: config.basePath,
+                    planId: p.id,
+                    merchant: address,
+                    name: p.name || `Plan #${p.id}`,
+                    amount: `${fromStroops(p.amount, 4, meta.decimals)} ${meta.symbol}`,
+                    period: formatPeriod(p.period),
+                  })
+                : null;
               return (
                 <div
                   key={p.id}
@@ -2457,6 +2665,7 @@ export default function MerchantPage() {
                       className="btn-ghost text-xs"
                       onClick={() => setEmbedFor(embedFor === p.id ? null : p.id)}
                       aria-expanded={embedFor === p.id}
+                      aria-controls={`plan-embed-${p.id}`}
                       aria-label={tr("Embed snippet for plan {0}", { "0": p.name || `#${p.id}` })}
                     >
                       {embedFor === p.id ?tr("Close embed") :tr("Embed")}
@@ -2506,41 +2715,44 @@ export default function MerchantPage() {
                       </p>
                     </ConfirmDialog>
                   )}
-                  {renameFor === p.id && (
-                    <form
-                      className="w-full mt-3 space-y-2"
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        if (validatePlanNameLocal(renameValue) !== null) return;
-                        void run(`rename-${p.id}`, () =>
-                          payflow.setPlanName(address, signXdr, p.id, renameValue),
-                        ).then(() => setRenameFor(null));
-                      }}
-                    >
-                      <label className="label" htmlFor={`rename-${p.id}`}>{tr("New plan name")}</label>
-                      <input
-                        id={`rename-${p.id}`}
-                        className="input"
-                        value={renameValue}
-                        onChange={(e) => setRenameValue(e.target.value)}
-                        aria-invalid={validatePlanNameLocal(renameValue) !== null}
-                        aria-describedby={`rename-error-${p.id}`}
-                      />
-                      <p id={`rename-error-${p.id}`} className="text-sm text-danger" role="alert">
-                        {nameByteLength(renameValue.trim()) > MAX_NAME_LEN
-                          ? `${tr("Too long —")} ${MAX_NAME_LEN} ${tr("bytes maximum.")}`
-                          : ""}
-                      </p>
-                      <div className="flex items-center gap-2">
-                        <button type="button" className="btn-ghost text-xs" disabled={busy !== null} onClick={() => setRenameFor(null)}>{tr("Cancel")}</button>
-                        <button
-                          type="submit"
-                          className="btn-primary text-xs"
-                          disabled={busy !== null || networkMismatch || validatePlanNameLocal(renameValue) !== null}
-                        >{busy === `rename-${p.id}` ? tr("Saving…") : tr("Save name")}</button>
-                      </div>
-                    </form>
-                  )}
+                  {renameFor === p.id && (() => {
+                    const renameError = validatePlanNameLocal(renameValue);
+                    return (
+                      <form
+                        className="w-full mt-3 space-y-2"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          if (renameError !== null) return;
+                          void run(`rename-${p.id}`, () =>
+                            payflow.setPlanName(address, signXdr, p.id, renameValue),
+                          ).then(() => setRenameFor(null));
+                        }}
+                      >
+                        <label className="label" htmlFor={`rename-${p.id}`}>{tr("New plan name")}</label>
+                        <input
+                          id={`rename-${p.id}`}
+                          className="input"
+                          value={renameValue}
+                          onChange={(e) => setRenameValue(e.target.value)}
+                          aria-invalid={renameError !== null}
+                          aria-describedby={renameError !== null ? `rename-error-${p.id}` : undefined}
+                        />
+                        {renameError !== null && (
+                          <p id={`rename-error-${p.id}`} className="text-sm text-danger" role="alert">
+                            {translateMessage(renameError)}
+                          </p>
+                        )}
+                        <div className="flex items-center gap-2">
+                          <button type="button" className="btn-ghost text-xs" disabled={busy !== null} onClick={() => setRenameFor(null)}>{tr("Cancel")}</button>
+                          <button
+                            type="submit"
+                            className="btn-primary text-xs"
+                            disabled={busy !== null || networkMismatch || renameError !== null}
+                          >{busy === `rename-${p.id}` ? tr("Saving…") : tr("Save name")}</button>
+                        </div>
+                      </form>
+                    );
+                  })()}
                   <div className="flex w-full flex-wrap items-center gap-2 mt-2">
                     <CopyButton
                       value={planLinks[p.id] ?? ""}
@@ -2572,7 +2784,12 @@ export default function MerchantPage() {
                     </div>
                   )}
                   {embedFor === p.id && (
-                    <div className="w-full mt-3 rounded-lg border border-edge bg-surface/50 p-3 text-xs space-y-2">
+                    <div
+                      id={`plan-embed-${p.id}`}
+                      role="region"
+                      aria-label={tr("Embed on your website")}
+                      className="w-full mt-3 rounded-lg border border-edge bg-surface/50 p-3 text-xs space-y-2"
+                    >
                       <div className="flex items-center justify-between">
                         <span className="font-semibold text-foreground">{tr("Embed on your website")}</span>
                         <button
@@ -2582,13 +2799,16 @@ export default function MerchantPage() {
                         >{tr("Close")}</button>
                       </div>
                       <p className="text-muted">{tr("Add this snippet to any HTML website. Subscribers can click it to subscribe in a secure popup window.")}</p>
-                      <pre className="overflow-x-auto rounded border border-edge bg-background p-2 font-mono text-[11px] text-muted">
-                        <code>{`<script src="${typeof window !== "undefined" ? window.location.origin : ""}/payflow-frontend/embed/payflow-embed.js" defer></script>\n<payflow-button\n  plan-id="${p.id}"\n  merchant="${address}"\n  name="${p.name || `Plan #${p.id}`}"\n  amount="${fromStroops(p.amount, 4, meta.decimals)} ${meta.symbol}"\n  period="${formatPeriod(p.period)}">\n</payflow-button>`}</code>
-                      </pre>
-                      <CopyButton
-                        value={`<script src="${typeof window !== "undefined" ? window.location.origin : ""}/payflow-frontend/embed/payflow-embed.js" defer></script>\n<payflow-button plan-id="${p.id}" merchant="${address}" name="${p.name || `Plan #${p.id}`}" amount="${fromStroops(p.amount, 4, meta.decimals)} ${meta.symbol}" period="${formatPeriod(p.period)}"></payflow-button>`}
-                        label={tr("embed snippet")}
-                      />
+                      {embedSnippet ? (
+                        <>
+                          <pre className="overflow-x-auto rounded border border-edge bg-background p-2 font-mono text-[11px] text-muted">
+                            <code>{embedSnippet}</code>
+                          </pre>
+                          <CopyButton value={embedSnippet} label={tr("embed snippet")} />
+                        </>
+                      ) : (
+                        <p role="status" className="text-muted">{tr("Preparing…")}</p>
+                      )}
                     </div>
                   )}
                 </div>
@@ -2596,6 +2816,7 @@ export default function MerchantPage() {
             }}
           />
             )}
+            </div>
           </div>
         )}
       </Panel>
@@ -2608,7 +2829,9 @@ export default function MerchantPage() {
             :tr("Active mandates where the subscriber's vault cannot cover the next charge.")
         }
         actions={
-          <div className="flex items-center gap-3">
+          // The tab list and the export buttons share this row. They wrap
+          // rather than force the panel wider than the viewport at 200% zoom.
+          <div className="flex flex-wrap items-center gap-3">
             {/* Tab navigation */}
             <div className="flex rounded-lg border border-edge bg-surface/30" role="tablist" aria-label={tr("Subscriber views")}>
               <button
@@ -2617,7 +2840,7 @@ export default function MerchantPage() {
                 aria-selected={subscribersTab === "all"}
                 aria-controls="subscribers-all-panel"
                 id="subscribers-all-tab"
-                className={`px-3 py-1.5 text-sm font-medium transition-colors rounded-l-lg ${
+                className={`px-3 py-1.5 text-sm font-medium transition-colors rounded-s-lg ${
                   subscribersTab === "all"
                     ? "bg-accent text-white"
                     : "text-muted hover:text-fg"
@@ -2630,14 +2853,14 @@ export default function MerchantPage() {
                 aria-selected={subscribersTab === "unpaid"}
                 aria-controls="subscribers-unpaid-panel"
                 id="subscribers-unpaid-tab"
-                className={`px-3 py-1.5 text-sm font-medium transition-colors rounded-r-lg ${
+                className={`px-3 py-1.5 text-sm font-medium transition-colors rounded-e-lg ${
                   subscribersTab === "unpaid"
                     ? "bg-accent text-white"
                     : "text-muted hover:text-fg"
                 }`}
                 onClick={() => setSubscribersTab("unpaid")}
               >{tr("Unpaid")}{unpaidMandates && unpaidMandates.length > 0 && (
-                  <span className="ml-1.5 rounded-full bg-danger px-1.5 py-0.5 text-xs font-semibold text-white">
+                  <span className="ms-1.5 rounded-full bg-danger px-1.5 py-0.5 text-xs font-semibold text-white">
                     {formatNumber(unpaidMandates.length)}
                   </span>
                 )}
@@ -2675,6 +2898,33 @@ export default function MerchantPage() {
           aria-labelledby="subscribers-all-tab"
           hidden={subscribersTab !== "all"}
         >
+        {mandates !== null && mandates.length > 0 && (
+          <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-edge p-3">
+            <span className="text-sm text-muted" aria-live="polite">
+              {tr("{0} selected for export", { "0": exportSelected.size })}
+            </span>
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-muted">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-accent"
+                checked={mandates.length > 0 && mandates.every((m) => exportSelected.has(m.id))}
+                onChange={() => toggleExportSelectAll(mandates.map((m) => m.id))}
+                aria-label={tr("Select all subscribers for export")}
+              />
+              {tr("Select all")}
+            </label>
+            <button
+              type="button"
+              className="btn-ghost"
+              disabled={exportingSubscribers || exportSelected.size === 0}
+              onClick={() => void exportSelectedSubscribers()}
+            >
+              {exportingSubscribers
+                ? tr("Exporting…")
+                : tr("Export selected ({0})", { "0": exportSelected.size })}
+            </button>
+          </div>
+        )}
         {mandates !== null && mandates.some(endable) && (
           <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-edge p-3">
             <span className="text-sm text-muted" aria-live="polite">
@@ -2767,14 +3017,27 @@ export default function MerchantPage() {
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
                         {endable(m) && (
-                          <input
-                            type="checkbox"
-                            checked={selected.has(m.id)}
-                            onChange={() => toggleSelected(m.id)}
-                            disabled={busy !== null}
-                            aria-label={`Select subscription #${m.id} for batch end`}
-                          />
+                          <>
+                            <label htmlFor={`select-mandate-${m.id}`} className="sr-only">
+                              {`Select subscription #${m.id} for batch end`}
+                            </label>
+                            <input
+                              id={`select-mandate-${m.id}`}
+                              type="checkbox"
+                              checked={selected.has(m.id)}
+                              onChange={() => toggleSelected(m.id)}
+                              disabled={busy !== null}
+                            />
+                          </>
                         )}
+                        <input
+                          id={`export-mandate-${m.id}`}
+                          type="checkbox"
+                          className="h-4 w-4 accent-accent"
+                          checked={exportSelected.has(m.id)}
+                          onChange={() => toggleExportSelected(m.id)}
+                          aria-label={tr("Select subscription #{0} for export", { "0": m.id })}
+                        />
                         <Link
                           href={`/mandates/?id=${m.id}`}
                           className="font-medium hover:underline text-soft focus:outline-none focus:ring-1 focus:ring-accent rounded"
@@ -2969,6 +3232,8 @@ export default function MerchantPage() {
                       amount={BigInt(m.amount)}
                       meta={meta}
                       busy={busy === `discount-${m.id}`}
+                      maxCharges={Number(m.max_charges ?? 0)}
+                      chargesMade={Number(m.charges_made ?? 0)}
                       onCancel={() => setDiscountFor(null)}
                       onApply={(bps, charges) =>
                         void run(`discount-${m.id}`, () =>
@@ -3007,6 +3272,42 @@ export default function MerchantPage() {
             }}
           />
         )}
+        {mandates !== null && mandates.length > 0 && (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-edge pt-4">
+            <p className="text-xs text-muted" role="status" aria-live="polite">
+              {mandateTotal !== null
+                ? tr("Showing {shown} of {total} subscribers.", {
+                    shown: mandates.length,
+                    total: mandateTotal,
+                  })
+                : tr("Showing {shown} subscribers.", { shown: mandates.length })}{" "}
+              {mandatesComplete
+                ? mandateTotal !== null && mandates.length < mandateTotal
+                  ? tr("Some subscribers could not be read.")
+                  : tr("All subscribers loaded.")
+                : ""}
+            </p>
+            {!mandatesComplete && (
+              <button
+                type="button"
+                className="btn-ghost"
+                disabled={moreBusy}
+                onClick={() => void loadMoreMandates()}
+              >
+                {moreBusy ? tr("Loading more…") : tr("Load more subscribers")}
+              </button>
+            )}
+          </div>
+        )}
+        {moreError && (
+          <div className="mt-3">
+            <Notice tone="error">
+              {tr("Could not load older subscribers: {error}. The rows already shown are unaffected.", {
+                error: moreError,
+              })}
+            </Notice>
+          </div>
+        )}
         </div>
 
         {/* Unpaid Subscribers Tab */}
@@ -3028,12 +3329,18 @@ export default function MerchantPage() {
                 const badge = discountBadge(m);
                 const overdueHours = Math.floor(unpaid.overdueDuration / 3600);
                 const overdueDays = Math.floor(unpaid.overdueDuration / 86400);
+                // Plural keys rather than a suffix: German and French pluralise
+                // nouns differently, so concatenating an English "s" is wrong.
                 const overdueText =
                   overdueDays > 0
-                    ?tr("{0} day{1}", { "0": overdueDays, "1": overdueDays === 1 ? "" :tr("s") })
+                    ? overdueDays === 1
+                      ? tr("1 day")
+                      : tr("{0} days", { "0": overdueDays })
                     : overdueHours > 0
-                      ?tr("{0} hour{1}", { "0": overdueHours, "1": overdueHours === 1 ? "" :tr("s") })
-                      :tr("less than 1 hour");
+                      ? overdueHours === 1
+                        ? tr("1 hour")
+                        : tr("{0} hours", { "0": overdueHours })
+                      : tr("less than 1 hour");
                 return (
                   <div
                     key={m.id}

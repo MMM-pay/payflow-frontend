@@ -143,6 +143,8 @@ export const NetworkMismatch: Story = {
     <NetworkMismatchBanner
       walletNetwork="Public"
       expectedNetwork="Test SDF Network ; September 2015"
+      expectedNetworkLabel="Testnet"
+      status="mismatch"
     />
   ),
 };
