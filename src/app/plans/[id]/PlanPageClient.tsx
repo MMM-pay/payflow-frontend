@@ -326,7 +326,7 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
           <Link href="/account" className="text-accent hover:underline">{tr("account page")}</Link>{" "}{tr("first, or charges will fail for lack of balance.")}</p>
         {unavailable && <p id="plan-availability" className="text-sm text-muted">{unavailable}</p>}
         <div className="flex flex-wrap items-end gap-3">
-          <div className="w-full sm:w-auto sm:min-w-[12rem] sm:flex-1">
+          <div className="max-[359px]:w-full max-[359px]:min-w-0 min-w-[12rem] flex-1">
             <label className="label" htmlFor="plan-charge-limit">{tr("Charge limit (0 = open-ended)")}</label>
             <input
               id="plan-charge-limit"

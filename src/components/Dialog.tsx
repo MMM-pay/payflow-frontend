@@ -125,7 +125,11 @@ export function Dialog({
   if (!open) return null;
 
   return (
+    // The backdrop is a mouse convenience: Escape and the labelled close
+    // button are the accessible ways out, so it stays out of the
+    // accessibility tree instead of pretending to be a control.
     <div
+      role="presentation"
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 sm:items-center"
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose();

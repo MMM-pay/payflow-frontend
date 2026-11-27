@@ -38,7 +38,11 @@ export function Tooltip({
   if (isEmpty(content)) return <>{children}</>;
   return (
     <span className={`relative inline-flex ${className}`} onMouseEnter={show} onMouseLeave={hide}>
+      {/* Focus opens the explanation below (`onFocus` in triggerProps) and
+          `aria-describedby` reads it out, so the trigger is an interactive
+          control for keyboard users even though it only displays text. */}
       <span
+        role="button"
         tabIndex={0}
         className="cursor-help rounded underline decoration-dotted decoration-muted underline-offset-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
         {...triggerProps}
