@@ -17,13 +17,13 @@ vi.mock("@stellar/stellar-sdk", async (importOriginal) => {
     ...original,
     rpc: {
       ...original.rpc,
-      Server: vi.fn().mockImplementation(() => ({
+      Server: vi.fn().mockImplementation(function () { return {
         getAccount: vi.fn().mockResolvedValue({}),
         simulateTransaction: vi.fn(),
         sendTransaction: vi.fn(),
         getTransaction: vi.fn(),
         prepareTransaction: vi.fn(),
-      })),
+      }; }),
       Api: {
         ...original.rpc.Api,
         isSimulationError: vi.fn(),
@@ -33,19 +33,19 @@ vi.mock("@stellar/stellar-sdk", async (importOriginal) => {
         },
       },
     },
-    Contract: vi.fn().mockImplementation(() => ({
+    Contract: vi.fn().mockImplementation(function () { return {
       call: vi.fn(),
-    })),
-    TransactionBuilder: vi.fn().mockImplementation(() => ({
+    }; }),
+    TransactionBuilder: vi.fn().mockImplementation(function () { return {
       addOperation: vi.fn().mockReturnThis(),
       setTimeout: vi.fn().mockReturnThis(),
       build: vi.fn().mockReturnValue({}),
       fromXDR: vi.fn().mockReturnValue({}),
       toXDR: vi.fn().mockReturnValue("xdr"),
-    })),
-    Address: vi.fn().mockImplementation(() => ({
+    }; }),
+    Address: vi.fn().mockImplementation(function () { return {
       toScVal: vi.fn().mockReturnValue({}),
-    })),
+    }; }),
     nativeToScVal: vi.fn().mockReturnValue({}),
     scValToNative: vi.fn().mockImplementation((val) => val?.retval ?? val),
     xdr: {

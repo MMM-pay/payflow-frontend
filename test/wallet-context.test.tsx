@@ -25,7 +25,8 @@ const kitMock = vi.hoisted(() => ({
   allowAllModules: vi.fn(() => []),
   WalletNetwork: { PUBLIC: "PUBLIC", TESTNET: "TESTNET" },
 }));
-kitMock.StellarWalletsKit.mockImplementation(() => kitMock);
+// A regular function, because the provider constructs the kit with `new`.
+kitMock.StellarWalletsKit.mockImplementation(function () { return kitMock; });
 
 vi.mock("@/lib/account", () => ({ readNativeAccount, fundWithFriendbot }));
 vi.mock("@creit.tech/stellar-wallets-kit", () => kitMock);

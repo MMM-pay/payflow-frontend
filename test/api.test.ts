@@ -256,6 +256,53 @@ describe("api fail-soft behaviour", () => {
   });
 });
 
+describe("api.merchantChurn", () => {
+  it("requests the documented monthly churn endpoint", async () => {
+    let seenUrl = "";
+    mockFetch(async (url, init) => {
+      seenUrl = String(url);
+      expect(init?.cache).toBe("no-store");
+      return jsonResponse({ merchant: "GABC", bucket: "month", buckets: [], totals: {} });
+    });
+
+    await api.merchantChurn("GABC");
+
+    expect(seenUrl).toContain("/api/merchants/GABC/churn?bucket=month");
+  });
+
+  it("returns null without issuing a request when NEXT_PUBLIC_API_URL is empty", async () => {
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "");
+    vi.resetModules();
+    const { api: unconfiguredApi } = await import("@/lib/api");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(unconfiguredApi.isConfigured()).toBe(false);
+    expect(await unconfiguredApi.merchantChurn("GABC")).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not issue a request for ordinary endpoints when the backend is unset", async () => {
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "");
+    vi.resetModules();
+    const { api: unconfiguredApi } = await import("@/lib/api");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await unconfiguredApi.stats()).toBeNull();
+    expect(await unconfiguredApi.plans()).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("returns null when the endpoint is unavailable or fails", async () => {
+    mockFetch(async () => jsonResponse({ error: "not found" }, 404, false));
+    expect(await api.merchantChurn("GABC")).toBeNull();
+
+    mockFetch(() => Promise.reject(new Error("ENETUNREACH")));
+    expect(await api.merchantChurn("GABC")).toBeNull();
+  });
+});
+
 describe("api.planStats", () => {
   it("returns the parsed body on success", async () => {
     mockFetch(async (url) => {
@@ -263,52 +310,6 @@ describe("api.planStats", () => {
       return jsonResponse({ subscriber_count: 12, total_collected: "120000000", cancellations: 2 });
     });
 
-    describe("api.merchantChurn", () => {
-      it("requests the documented monthly churn endpoint", async () => {
-        let seenUrl = "";
-        mockFetch(async (url, init) => {
-          seenUrl = String(url);
-          expect(init?.cache).toBe("no-store");
-          return jsonResponse({ merchant: "GABC", bucket: "month", buckets: [], totals: {} });
-        });
-
-        await api.merchantChurn("GABC");
-
-        expect(seenUrl).toContain("/api/merchants/GABC/churn?bucket=month");
-      });
-
-      it("returns null without issuing a request when NEXT_PUBLIC_API_URL is empty", async () => {
-        vi.stubEnv("NEXT_PUBLIC_API_URL", "");
-        vi.resetModules();
-        const { api: unconfiguredApi } = await import("@/lib/api");
-        const fetchMock = vi.fn();
-        vi.stubGlobal("fetch", fetchMock);
-
-        expect(unconfiguredApi.isConfigured()).toBe(false);
-        expect(await unconfiguredApi.merchantChurn("GABC")).toBeNull();
-        expect(fetchMock).not.toHaveBeenCalled();
-      });
-
-      it("does not issue a request for ordinary endpoints when the backend is unset", async () => {
-        vi.stubEnv("NEXT_PUBLIC_API_URL", "");
-        vi.resetModules();
-        const { api: unconfiguredApi } = await import("@/lib/api");
-        const fetchMock = vi.fn();
-        vi.stubGlobal("fetch", fetchMock);
-
-        expect(await unconfiguredApi.stats()).toBeNull();
-        expect(await unconfiguredApi.plans()).toBeNull();
-        expect(fetchMock).not.toHaveBeenCalled();
-      });
-
-      it("returns null when the endpoint is unavailable or fails", async () => {
-        mockFetch(async () => jsonResponse({ error: "not found" }, 404, false));
-        expect(await api.merchantChurn("GABC")).toBeNull();
-
-        mockFetch(() => Promise.reject(new Error("ENETUNREACH")));
-        expect(await api.merchantChurn("GABC")).toBeNull();
-      });
-    });
     expect(await api.planStats(5)).toEqual({
       subscriber_count: 12,
       total_collected: "120000000",
