@@ -47,11 +47,18 @@ export interface StoredSession {
   address: string;
 }
 
+export type WalletNetworkStatus = "unknown" | "matching" | "mismatch";
+
 export function parseStoredSession(raw: string | null): StoredSession | null {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as Partial<StoredSession>;
-    if (typeof parsed?.walletId === "string" && typeof parsed?.address === "string") {
+    if (
+      typeof parsed?.walletId === "string" &&
+      parsed.walletId.trim() &&
+      typeof parsed.address === "string" &&
+      parsed.address.trim()
+    ) {
       return { walletId: parsed.walletId, address: parsed.address };
     }
     return null;
@@ -123,6 +130,44 @@ export function checkNetworkMismatch(
   return walletNetwork !== targetPassphrase;
 }
 
+export function getWalletNetworkStatus(
+  walletNetwork: string | null,
+  targetPassphrase = config.networkPassphrase,
+): WalletNetworkStatus {
+  if (!walletNetwork) return "unknown";
+  return checkNetworkMismatch(walletNetwork, targetPassphrase) ? "mismatch" : "matching";
+}
+
+function getWalletStorage(): Storage | null {
+  try {
+    return typeof window === "undefined" ? null : window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function saveWalletSession(walletId: string, address: string): boolean {
+  try {
+    const storage = getWalletStorage();
+    if (!storage) return false;
+    storage.setItem(STORAGE_KEY, serializeSession(walletId, address));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function clearWalletSession(): boolean {
+  try {
+    const storage = getWalletStorage();
+    if (!storage) return false;
+    storage.removeItem(STORAGE_KEY);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function shouldUpdateAddress(
   currentAddress: string | null,
   detectedAddress: string | null | undefined,
@@ -145,6 +190,9 @@ export type AccountState =
 
 export interface WalletState {
   address: string | null;
+  walletId: string | null;
+  rememberedWalletId: string | null;
+  walletSelectionLoaded: boolean;
   connecting: boolean;
   /** True while re-establishing a wallet session after the tab returns to focus. */
   reconnecting?: boolean;
@@ -157,6 +205,7 @@ export interface WalletState {
   /** Error surfaced if re-establishing the session on resume failed. */
   reconnectError?: string | null;
   networkMismatch: boolean;
+  networkStatus: WalletNetworkStatus;
   walletNetwork: string | null;
   /** Native balance and entry count, or why they are not known. */
   account: AccountState;
@@ -169,6 +218,7 @@ export interface WalletState {
   /** True while the wallet is locked or unresponsive. */
   locked: boolean;
   connect: () => Promise<void>;
+  reconnect: () => Promise<void>;
   disconnect: () => Promise<void>;
   /** Re-establishes the active wallet session without a full reload. */
   reconnect: () => Promise<void>;
@@ -215,6 +265,9 @@ export function setKitPromiseForTesting(p: Promise<StellarWalletsKit> | null) {
 
 export function WalletProvider({ children }: { children: ReactNode }) {
   const [address, setAddress] = useState<string | null>(null);
+  const [walletId, setWalletId] = useState<string | null>(null);
+  const [rememberedWalletId, setRememberedWalletId] = useState<string | null>(null);
+  const [walletSelectionLoaded, setWalletSelectionLoaded] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const [rememberedWalletId, setRememberedWalletId] = useState<string | null>(null);
@@ -331,10 +384,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
   }, [funding, refreshAccount]);
 
-  const networkMismatch = useMemo(
-    () => checkNetworkMismatch(walletNetwork),
-    [walletNetwork],
-  );
+  const networkStatus = address ? getWalletNetworkStatus(walletNetwork) : "unknown";
+  const networkMismatch = networkStatus === "mismatch";
 
   const applyAccountChange = useCallback((newAddress: string) => {
     addressRef.current = newAddress;
@@ -416,7 +467,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
   }, [applyAccountChange]);
 
-  // Restore the previous session without prompting the user again.
+  // Restore only the public wallet choice; reconnecting remains user-initiated.
   useEffect(() => {
     const stored = readStoredSessionRaw();
     if (!stored) {
@@ -446,8 +497,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
             writeStoredSessionRaw(serializeSession(walletId, detected));
           }
         }
-      } catch {
-        // Wallet may be locked or not ready; keep saved
       }
       if (!mountedRef.current) return;
       addressRef.current = activeAddress;
@@ -495,6 +544,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   }, [reconnect]);
 
   const connect = useCallback(async () => {
+    if (connectionAttemptRef.current || disconnectAttemptRef.current) return;
+    connectionAttemptRef.current = true;
     setConnecting(true);
     setConnectingWallet(true);
     setError(null);
@@ -505,6 +556,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setNoWallet(await detectMissingWallet(kit));
       await kit.openModal({
         onWalletSelected: async (option) => {
+          if (!connectionAttemptRef.current) return;
           try {
             kit.setWallet(option.id);
             activeWalletIdRef.current = option.id;
@@ -523,8 +575,20 @@ export function WalletProvider({ children }: { children: ReactNode }) {
             }
             writeStoredSessionRaw(serializeSession(option.id, selected));
           } catch (err) {
-            setError(err instanceof Error ? err.message : "Could not read address");
-            setWalletNetwork(null);
+            let message = err instanceof Error
+              ? err.message
+              : "Could not connect to the selected wallet.";
+            if (previousWalletId) {
+              try {
+                kit.setWallet(previousWalletId);
+              } catch (restoreError) {
+                const detail = restoreError instanceof Error
+                  ? restoreError.message
+                  : String(restoreError);
+                message = `${message} The previous wallet selection could not be restored: ${detail}`;
+              }
+            }
+            setError(message);
           } finally {
             setConnecting(false);
             setConnectingWallet(false);
@@ -537,17 +601,66 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not open wallet");
+      finish();
+    }
+  }, [activateWallet]);
+
+  const reconnect = useCallback(async () => {
+    const selectedWalletId = rememberedWalletId;
+    if (
+      !selectedWalletId ||
+      connectionAttemptRef.current ||
+      disconnectAttemptRef.current
+    ) {
+      return;
+    }
+
+    connectionAttemptRef.current = true;
+    setConnecting(true);
+    setReconnecting(true);
+    setError(null);
+    try {
+      const kit = await getKit();
+      await activateWallet(kit, selectedWalletId);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not reconnect to the saved wallet.",
+      );
+    } finally {
+      connectionAttemptRef.current = false;
       setConnecting(false);
       setConnectingWallet(false);
     }
-  }, []);
+  }, [activateWallet, rememberedWalletId]);
 
   const disconnect = useCallback(async () => {
-    const kit = await getKit();
+    if (disconnectAttemptRef.current || connectionAttemptRef.current) return;
+    disconnectAttemptRef.current = true;
+    setDisconnecting(true);
+    setError(null);
     try {
+      const kit = await getKit();
       await kit.disconnect();
-    } catch {
-      // Some wallets have no disconnect concept; clearing local state is enough.
+      const cleared = clearWalletSession();
+      walletIdRef.current = null;
+      setWalletId(null);
+      setRememberedWalletId(null);
+      addressRef.current = null;
+      setAddress(null);
+      setWalletNetwork(null);
+      clearMerchantSession();
+      if (!cleared) {
+        setError("Wallet disconnected, but this browser could not clear the saved wallet selection.");
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Could not disconnect the wallet.",
+      );
+    } finally {
+      disconnectAttemptRef.current = false;
+      setDisconnecting(false);
     }
     removeStoredSessionRaw();
     // Drop the SEP-10 session now: the wallet is gone, so the token must not
@@ -699,6 +812,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const value = useMemo<WalletState>(
     () => ({
       address,
+      walletId,
+      rememberedWalletId,
+      walletSelectionLoaded,
       connecting,
       reconnecting,
       rememberedWalletId,
@@ -708,6 +824,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       error,
       reconnectError,
       networkMismatch,
+      networkStatus,
       walletNetwork,
       account,
       funding,
@@ -715,6 +832,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       signError,
       locked,
       connect,
+      reconnect,
       disconnect,
       reconnect,
       refreshAccount,
@@ -723,6 +841,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }),
     [
       address,
+      walletId,
+      rememberedWalletId,
+      walletSelectionLoaded,
       connecting,
       reconnecting,
       rememberedWalletId,
@@ -732,6 +853,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       error,
       reconnectError,
       networkMismatch,
+      networkStatus,
       walletNetwork,
       account,
       funding,
@@ -739,6 +861,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       signError,
       locked,
       connect,
+      reconnect,
       disconnect,
       reconnect,
       refreshAccount,

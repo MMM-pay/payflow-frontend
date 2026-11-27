@@ -10,6 +10,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { WalletButton } from "@/components/WalletButton";
+import { PersistentWarningBanner } from "@/components/PersistentWarningBanner";
 import { Activity } from "@/components/Activity";
 import { NetworkMismatchBanner, Notice } from "@/components/ui";
 import { PersistentWarningBanner } from "@/components/PersistentWarningBanner";
@@ -129,18 +130,6 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
   const toggleRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLElement>(null);
 
-  let walletName: string | null = null;
-  try { walletName = typeof window !== "undefined" ? window.localStorage.getItem("payflow.wallet") : null; } catch { /* Storage is optional. */ }
-  let walletDisplayName = "Unknown";
-  if (walletName) {
-    try {
-      const parsed = JSON.parse(walletName);
-      walletDisplayName = parsed.walletId || "Unknown";
-    } catch {
-      walletDisplayName = walletName;
-    }
-  }
-
   // "/" focuses the search field from anywhere on the page, unless the user
   // is already typing into an input, textarea, or contenteditable element.
   useEffect(() => {
@@ -163,7 +152,7 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
 
   const handleCopyDebugInfo = async () => {
     const debugInfo = buildDebugInfo(
-      address ? { name: walletDisplayName, address } : null,
+      address ? { name: walletId ?? "Unknown", address } : null,
     );
     const text = formatDebugInfo(debugInfo);
     const ok = await copyToClipboard(text);
@@ -276,7 +265,7 @@ export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
               <HeaderSearch onNavigate={(href) => router.push(href)} />
             </div>
 
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="flex w-full min-w-0 flex-wrap items-center justify-end gap-2 md:w-auto md:shrink-0">
               <NetworkSwitcher network={network} networks={networks} select={select} />
               <ThemeToggle />
               <WalletButton />

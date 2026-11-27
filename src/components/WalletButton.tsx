@@ -7,6 +7,7 @@ import { useWallet } from "@/lib/wallet";
 import { config } from "@/lib/config";
 import { copyToClipboard } from "@/lib/clipboard";
 import { fromStroops, shortAddress, spendableBalance } from "@/lib/format";
+import { copyToClipboard } from "@/lib/clipboard";
 
 /**
  * The header's wallet control: the connected address, what it can spend, and a
