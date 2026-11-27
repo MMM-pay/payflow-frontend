@@ -488,8 +488,14 @@ function MandateDetailsInner() {
           <Empty title={tr("No charges yet")}>{tr("No charges have been settled for this mandate so far.")}</Empty>
         ) : (
           <>
-            <div className="overflow-x-auto">
+            <div
+              className="overflow-x-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              role="region"
+              aria-label={tr("Charge history table")}
+              tabIndex={0}
+            >
             <table className="w-full text-left text-sm">
+              <caption className="sr-only">{tr("Charges settled under this mandate, newest first.")}</caption>
               <thead className="border-b border-edge text-xs uppercase text-muted">
                 <tr>
                   <th className="py-2 pe-4">{tr("Ledger")}</th>

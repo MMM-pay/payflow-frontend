@@ -133,6 +133,8 @@
   "Charge attempt history is not available. The backend does not serve this endpoint yet, or the feature has not been deployed to this network.": "Charge attempt history is not available. The backend does not serve this endpoint yet, or the feature has not been deployed to this network.",
   "Charge failed for an unknown reason.": "Charge failed for an unknown reason.",
   "Charge history": "Charge history",
+  "Charge history table": "Charge history table",
+  "Charges settled under this mandate, newest first.": "Charges settled under this mandate, newest first.",
   "Charge history requires the indexer. When running in contract-only mode, individual transaction records are not available; the on-chain counters (charges made:": "Charge history requires the indexer. When running in contract-only mode, individual transaction records are not available; the on-chain counters (charges made:",
   "Charge limit": "Charge limit",
   "Charge limit (0 = open-ended)": "Charge limit (0 = open-ended)",
