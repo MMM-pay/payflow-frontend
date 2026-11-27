@@ -1,9 +1,10 @@
 "use client";
 
 import { useI18n } from "@/i18n/provider";
+import { useReducedData } from "@/lib/useReducedData";
 import { useReducedMotion } from "@/lib/useReducedMotion";
 
-import { useId, useMemo } from "react";
+import { useId, useMemo, useState } from "react";
 import type { TokenMeta } from "@/lib/format";
 import { scaleSeries, toPolyline, totalNet, type BucketSize, type RevenuePoint } from "@/lib/revenue";
 import { Money } from "@/components/Money";
@@ -42,9 +43,12 @@ export function RevenueChart({
   const { formatAmount, t: tr, describeSeries, formatBucketLabel, bucketTitle } = useI18n();
   const tableId = useId();
   const reducedMotion = useReducedMotion();
+  const reducedData = useReducedData();
+  const [showVisual, setShowVisual] = useState(false);
+  const deferVisual = reducedData && !showVisual;
   const scaled = useMemo(
-    () => scaleSeries(points, WIDTH, HEIGHT, PADDING),
-    [points],
+    () => (deferVisual ? [] : scaleSeries(points, WIDTH, HEIGHT, PADDING)),
+    [points, deferVisual],
   );
   const render = useMemo(
     () => (value: bigint) => formatAmount(value, meta, meta.decimals),
@@ -59,43 +63,63 @@ export function RevenueChart({
 
   return (
     <div className="space-y-3">
-      <svg
-        viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-        className={`h-44 w-full ${reducedMotion ? "transition-none" : ""}`}
-        preserveAspectRatio="none"
-        role="img"
-        aria-label={summary}
-      >
-        <line
-          x1={0}
-          x2={WIDTH}
-          y1={HEIGHT - PADDING}
-          y2={HEIGHT - PADDING}
-          className="stroke-edge"
-          strokeWidth={1}
-          vectorEffect="non-scaling-stroke"
-        />
-        {scaled.length > 0 && (
-          <polyline
-            points={toPolyline(scaled)}
-            fill="none"
-            className={`stroke-accent ${reducedMotion ? "transition-none" : "transition-[stroke] duration-200"}`}
-            strokeWidth={2}
-            strokeLinejoin="round"
-            strokeLinecap="round"
-            vectorEffect="non-scaling-stroke"
-          />
-        )}
-      </svg>
-
-      {scaled.length > 0 && (
-        <div className="flex justify-between text-xs text-muted" aria-hidden="true">
-          {points.map((p, i) =>
-            i % labelStride === 0 || i === points.length - 1 ? (
-              <span key={p.start}>{formatBucketLabel(p.start)}</span>
-            ) : null,
-          )}
+      {deferVisual ? (
+        <div
+          role="region"
+          aria-label={summary}
+          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-edge bg-fg/5 p-3 text-xs text-muted"
+        >
+          <span>{tr("Chart graphic paused to save data. The summary and table below remain available.")}</span>
+          <button
+            type="button"
+            className="btn-ghost text-xs"
+            aria-expanded={showVisual}
+            onClick={() => setShowVisual(true)}
+          >
+            {tr("Show chart")}
+          </button>
         </div>
+      ) : (
+        <>
+          <svg
+            viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+            className={`h-44 w-full ${reducedMotion ? "transition-none" : ""}`}
+            preserveAspectRatio="none"
+            role="img"
+            aria-label={summary}
+          >
+            <line
+              x1={0}
+              x2={WIDTH}
+              y1={HEIGHT - PADDING}
+              y2={HEIGHT - PADDING}
+              className="stroke-edge"
+              strokeWidth={1}
+              vectorEffect="non-scaling-stroke"
+            />
+            {scaled.length > 0 && (
+              <polyline
+                points={toPolyline(scaled)}
+                fill="none"
+                className={`stroke-accent ${reducedMotion ? "transition-none" : "transition-[stroke] duration-200"}`}
+                strokeWidth={2}
+                strokeLinejoin="round"
+                strokeLinecap="round"
+                vectorEffect="non-scaling-stroke"
+              />
+            )}
+          </svg>
+
+          {scaled.length > 0 && (
+            <div className="flex justify-between text-xs text-muted" aria-hidden="true">
+              {points.map((p, i) =>
+                i % labelStride === 0 || i === points.length - 1 ? (
+                  <span key={p.start}>{formatBucketLabel(p.start)}</span>
+                ) : null,
+              )}
+            </div>
+          )}
+        </>
       )}
 
       {allZero && (
@@ -105,35 +129,35 @@ export function RevenueChart({
       <details className="text-sm">
         <summary className={`cursor-pointer text-muted hover:text-fg ${reducedMotion ? "transition-none" : "transition-colors"}`}>{tr("Show revenue as a table")}</summary>
         <div className="mt-3 overflow-x-auto" id={tableId}>
-          <table className="w-full text-left text-sm">
+          <table className="w-full text-start text-sm">
             <caption className="sr-only">{summary}</caption>
             <thead>
               <tr className="border-b border-edge text-xs uppercase tracking-wide text-muted">
-                <th scope="col" className="py-1.5 pr-3 font-medium">
+                <th scope="col" className="py-1.5 pe-3 font-medium">
                   {size === "week" ?tr("Week of") :tr("Day")}
                 </th>
-                <th scope="col" className="py-1.5 pr-3 text-right font-medium">{tr("Charged")}</th>
-                <th scope="col" className="py-1.5 pr-3 text-right font-medium">{tr("Fee")}</th>
-                <th scope="col" className="py-1.5 text-right font-medium">{tr("You received")}</th>
+                <th scope="col" className="py-1.5 pe-3 text-end font-medium">{tr("Charged")}</th>
+                <th scope="col" className="py-1.5 pe-3 text-end font-medium">{tr("Fee")}</th>
+                <th scope="col" className="py-1.5 text-end font-medium">{tr("You received")}</th>
               </tr>
             </thead>
             <tbody className="tabular-nums">
               {points.map((p) => (
                 <tr key={p.start} className="border-b border-edge/60 last:border-0">
-                  <th scope="row" className="py-1.5 pr-3 font-normal" title={bucketTitle(p.start, size)}>
+                  <th scope="row" className="py-1.5 pe-3 font-normal" title={bucketTitle(p.start, size)}>
                     {formatBucketLabel(p.start)}
                   </th>
-                  <td className="py-1.5 pr-3 text-right"><Money amount={p.gross} meta={meta} /></td>
-                  <td className="py-1.5 pr-3 text-right text-muted"><Money amount={p.fee} meta={meta} /></td>
-                  <td className="py-1.5 text-right"><Money amount={p.net} meta={meta} /></td>
+                  <td className="py-1.5 pe-3 text-end"><Money amount={p.gross} meta={meta} /></td>
+                  <td className="py-1.5 pe-3 text-end text-muted"><Money amount={p.fee} meta={meta} /></td>
+                  <td className="py-1.5 text-end"><Money amount={p.net} meta={meta} /></td>
                 </tr>
               ))}
             </tbody>
             <tfoot>
               <tr className="border-t border-edge font-medium">
-                <th scope="row" className="py-1.5 pr-3 text-left font-medium">{tr("Total")}</th>
+                <th scope="row" className="py-1.5 pe-3 text-start font-medium">{tr("Total")}</th>
                 <td className="sr-only" colSpan={2} />
-                <td className="py-1.5 text-right"><Money amount={totalNet(points)} meta={meta} /></td>
+                <td className="py-1.5 text-end"><Money amount={totalNet(points)} meta={meta} /></td>
               </tr>
             </tfoot>
           </table>

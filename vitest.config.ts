@@ -25,10 +25,15 @@ export default defineConfig({
       // functions; rounded down to whole numbers so trivial v8 count jitter
       // cannot fail a green suite). A change that lowers coverage fails CI
       // and must raise the number again in the same PR.
+      //
+      // Branches re-measured 2026-11-27 after the vitest 3 -> 5 upgrade: v5's
+      // v8 provider maps branches through the AST and counts more of them, so
+      // the same code that read 90.77% under v3 reads 81.26% under v5. The
+      // threshold follows the new measurement; it is not a drop in tests.
       thresholds: {
         lines: 80,
         functions: 77,
-        branches: 90,
+        branches: 81,
         statements: 80,
       },
     },
