@@ -173,13 +173,16 @@ function MandateDetailsInner() {
 
   if (!mandateId) {
     return (
-      <Empty
-        title={tr("No mandate specified")}
-        action={
-          <Link href="/account" className="btn-primary">{tr("Go to my account")}</Link>
-        }
-      >{tr("Please provide a mandate ID in the URL, for example:")}{" "}<code>/mandates/?id=1</code>
-      </Empty>
+      <div className="space-y-6">
+        <h1 className="text-2xl font-semibold tracking-tight">{tr("Mandates")}</h1>
+        <Empty
+          title={tr("No mandate specified")}
+          action={
+            <Link href="/account" className="btn-primary">{tr("Go to my account")}</Link>
+          }
+        >{tr("Please provide a mandate ID in the URL, for example:")}{" "}<code>/mandates/?id=1</code>
+        </Empty>
+      </div>
     );
   }
 
@@ -497,12 +500,9 @@ function MandateDetailsInner() {
                 <tr>
                   <th className="py-2 pe-4">{tr("Ledger")}</th>
                   <th className="py-2 px-4">{tr("Charge #")}</th>
-                  <th className="py-2 px-4">{tr("Amount")}</th>
-                  <th className="py-2 px-4">{tr("Fee")}</th>
-                  <th className="py-2 ps-4">{tr("Transaction")}</th>
                   <th className="py-2 px-4 text-right">{tr("Amount")}</th>
                   <th className="py-2 px-4 text-right">{tr("Fee")}</th>
-                  <th className="py-2 pl-4">{tr("Transaction")}</th>
+                  <th className="py-2 ps-4">{tr("Transaction")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-edge">

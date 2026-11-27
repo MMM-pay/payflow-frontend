@@ -48,6 +48,7 @@ const payflowMock = vi.hoisted(() => ({
   merchantPlanCount: vi.fn(),
   deactivatePage: vi.fn(),
   vaultBalance: vi.fn(),
+  getProfile: vi.fn(),
   getMandate: vi.fn(),
 }));
 
@@ -73,6 +74,10 @@ vi.mock("@/lib/payflow", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/payflow")>();
   return { payflow: payflowMock, MAX_NAME_LEN: 64, MAX_PAGE: actual.MAX_PAGE, nameByteLength: (n: string) => n.length, mandateSupportsRefund: actual.mandateSupportsRefund, mandateRefundableAmount: actual.mandateRefundableAmount, mandatePauseUntil: actual.mandatePauseUntil };
 });
+vi.mock("@/lib/lazy-payflow", () => ({
+  payflow: payflowMock,
+  server: { getTransaction: vi.fn().mockResolvedValue(null) },
+}));
 vi.mock("@/lib/end-mandates", () => ({ endMandates: endMandatesMock }));
 vi.mock("@/lib/chain", () => chainMock);
 
@@ -95,6 +100,7 @@ beforeEach(() => {
   payflowMock.feeBps.mockResolvedValue(100); // 1%
   payflowMock.createPlan.mockResolvedValue("tx-hash");
   payflowMock.vaultBalance.mockResolvedValue(10_000_000n);
+  payflowMock.getProfile.mockResolvedValue(null);
   payflowMock.getMandate.mockResolvedValue({
     id: 1,
     subscriber: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
@@ -207,6 +213,41 @@ describe("MerchantPage plan search and filters (#300)", () => {
     expect(
       (screen.getByLabelText("Search plans by name") as HTMLInputElement).value,
     ).toBe("");
+  });
+});
+
+describe("MerchantPage plan embed", () => {
+  it("shows a copyable, correctly based snippet for the selected plan", async () => {
+    apiMock.plans.mockResolvedValue({
+      plans: [
+        {
+          id: 12,
+          merchant: MERCHANT,
+          name: "Starter",
+          token: PLAN_TOKEN_XLM,
+          amount: "10000000",
+          period: 2_592_000,
+          active: 1,
+          ledger: 0,
+        },
+      ],
+    });
+
+    render(<MerchantPage />);
+    await screen.findByText("Starter");
+    fireEvent.click(screen.getByRole("button", { name: "Embed snippet for plan Starter" }));
+
+    const panel = await screen.findByRole("region", { name: "Embed on your website" });
+    await waitFor(() => {
+      expect(panel.textContent).toContain(
+        "http://localhost:3000/embed/payflow-embed.js",
+      );
+    });
+    expect(panel.textContent).toContain(`plan-id="12"`);
+    expect(panel.textContent).toContain(`merchant="${MERCHANT}"`);
+    expect(
+      within(panel).getByRole("button", { name: "Copy embed snippet" }),
+    ).toBeTruthy();
   });
 });
 

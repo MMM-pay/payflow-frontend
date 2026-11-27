@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { AddressLink, Notice, Skeleton, TxLink } from "@/components/ui";
+import { Money } from "@/components/Money";
 import { copyToClipboard } from "@/lib/clipboard";
 import { downloadReceipt, loadReceipt, parseReceiptParams, receiptShareUrl, type ReceiptData } from "@/lib/receipt";
 
@@ -34,7 +35,7 @@ function ReceiptSkeleton() {
 }
 
 function ReceiptContent() {
-  const { t: tr, formatAmount, formatPeriod } = useI18n();
+  const { t: tr, formatPeriod } = useI18n();
   const searchParams = useSearchParams();
   const txParam = searchParams.get("tx");
   const mandateParam = searchParams.get("mandate");
@@ -106,9 +107,6 @@ function ReceiptContent() {
     );
   }
 
-  const grossFormatted = formatAmount(receipt.gross, receipt.tokenMeta);
-  const feeFormatted = formatAmount(receipt.fee, receipt.tokenMeta);
-  const netFormatted = formatAmount(receipt.net, receipt.tokenMeta);
   const shareReceipt = async () => {
     const url = receiptShareUrl(window.location.href, receipt);
     const copied = await copyToClipboard(url);
@@ -289,21 +287,20 @@ function ReceiptContent() {
               <tr>
                 <td className="py-2.5 text-muted print:text-slate-700">{tr("Subscription charge (Mandate #")}{receipt.mandateId})
                 </td>
-                <td className="py-2.5 text-end font-mono text-slate-200 print:text-black tabular-nums">
                 <td className="py-2.5 text-right font-mono text-soft print:text-black tabular-nums">
-                  {grossFormatted}
+                  <Money amount={receipt.gross} meta={receipt.tokenMeta} className="print:text-black" />
                 </td>
               </tr>
               <tr>
                 <td className="py-2 text-muted print:text-slate-700">{tr("Protocol fee")}</td>
                 <td className="py-2 text-end font-mono text-muted print:text-slate-600 tabular-nums">
-                  -{feeFormatted}
+                  <Money amount={-receipt.fee} meta={receipt.tokenMeta} className="print:text-black" />
                 </td>
               </tr>
               <tr>
                 <td className="py-2 text-muted print:text-slate-700">{tr("Net payout to merchant")}</td>
                 <td className="py-2 text-end font-mono text-muted print:text-slate-600 tabular-nums">
-                  {netFormatted}
+                  <Money amount={receipt.net} meta={receipt.tokenMeta} className="print:text-black" />
                 </td>
               </tr>
             </tbody>
@@ -311,7 +308,7 @@ function ReceiptContent() {
               <tr className="border-t-2 border-edge text-base font-semibold print:border-slate-400 print:text-sm">
                 <th scope="row" className="pt-3 text-start print:text-black">{tr("Total Paid")}</th>
                 <td className="pt-3 text-end font-mono text-accent print:text-black tabular-nums">
-                  {grossFormatted}
+                  <Money amount={receipt.gross} meta={receipt.tokenMeta} className="print:text-black" />
                 </td>
               </tr>
             </tfoot>

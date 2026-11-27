@@ -602,6 +602,55 @@ describe("AccountPage pause until", () => {
     apiMock.mandatesOf.mockResolvedValue({ mandates: [] });
   });
 
+  describe("AccountPage subscription top-up", () => {
+    it("deposits only the shortfall for the selected subscription", async () => {
+      payflowMock.vaultBalance.mockResolvedValue(5_000_000n);
+      payflowMock.deposit.mockResolvedValue("c0ffee");
+      apiMock.mandatesOf.mockResolvedValue({
+        mandates: [
+          mandate({
+            next_charge: 1_700_000_000,
+            period: 2_592_000,
+            amount: "10000000",
+          }),
+        ],
+      });
+
+      render(<AccountPage />);
+
+      const topUp = await screen.findByRole("button", { name: /Top up/ });
+      fireEvent.click(topUp);
+
+      await waitFor(() =>
+        expect(payflowMock.deposit).toHaveBeenCalledWith(
+          SUBSCRIBER,
+          expect.any(Function),
+          expect.any(String),
+          5_000_000n,
+        ),
+      );
+    });
+
+    it("shows a visible error and unlocks the action when the deposit fails", async () => {
+      payflowMock.vaultBalance.mockResolvedValue(0n);
+      payflowMock.deposit.mockRejectedValue(new Error("host error: insufficient fee"));
+      apiMock.mandatesOf.mockResolvedValue({
+        mandates: [
+          mandate({
+            next_charge: 1_700_000_000,
+            period: 2_592_000,
+          }),
+        ],
+      });
+
+      render(<AccountPage />);
+      fireEvent.click(await screen.findByRole("button", { name: /Top up/ }));
+
+      expect(await screen.findByText("host error: insufficient fee")).toBeTruthy();
+      expect(screen.getByRole("button", { name: /Top up/ })).toBeTruthy();
+    });
+  });
+
   it("hides the picker when the contract has no pause_until", async () => {
     // A contract built before payflow-contract#41 decodes mandates without it.
     payflowHelpers.mandatePauseUntil.mockReturnValue(null);

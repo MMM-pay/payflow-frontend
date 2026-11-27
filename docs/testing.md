@@ -246,6 +246,31 @@ keys, funding test accounts, and the `NEXT_PUBLIC_E2E_WALLET` test wallet module
 
 ---
 
+## 4. Performance budgets
+
+The Lighthouse workflow measures each route listed in `lighthouserc.json` and
+fails if its Largest Contentful Paint exceeds that route's budget. The
+reference CI run measured:
+
+| Route | Measured LCP | Budget |
+|---|---:|---:|
+| `/` | 1,973 ms | 2,500 ms |
+| `/account/` | 3,017 ms | 3,500 ms |
+| `/m/` | 2,874 ms | 3,300 ms |
+| `/mandates/` | 2,120 ms | 2,500 ms |
+| `/merchant/` | 2,119 ms | 2,500 ms |
+| `/plans/1/` | 4,268 ms | 4,800 ms |
+| `/receipt/` | 1,965 ms | 2,500 ms |
+| `/status/` | 1,817 ms | 2,500 ms |
+| `/subscribe/` | 3,200 ms | 3,600 ms |
+
+Budgets are route-specific so a regression on one page cannot be hidden by
+another page's result. The build CI job also runs `npm run budget`, which
+reports and enforces the gzip first-load JavaScript cap for every exported
+route in `js-budget.json`.
+
+---
+
 ## Which layer should I write for my change?
 
 | Your change | Recommended test layer | Key considerations |

@@ -13,8 +13,64 @@ export const localeTag = (locale: Locale) =>
 export const isRtlLocale = (locale: Locale) => locale === "ar";
 export const direction = (locale: Locale): "ltr" | "rtl" => isRtlLocale(locale) ? "rtl" : "ltr";
 
+const numberFormatters = new Map<Locale, Intl.NumberFormat>();
+
+export function numberFormatterFor(locale: Locale): Intl.NumberFormat {
+  let formatter = numberFormatters.get(locale);
+  if (!formatter) {
+    formatter = new Intl.NumberFormat(localeTag(locale));
+    numberFormatters.set(locale, formatter);
+  }
+  return formatter;
+}
+
 export function formatNumber(value: number | bigint, locale: Locale): string {
-  return new Intl.NumberFormat(localeTag(locale)).format(value);
+  return numberFormatterFor(locale).format(value);
+}
+
+/** Format a trial duration using the selected locale's unit names. */
+export function formatUnit(
+  count: number,
+  unit: "day" | "hour" | "minute" | "second",
+  locale: Locale,
+): string {
+  const labels: Record<
+    Locale,
+    Record<typeof unit, { one: string; other: string; two?: string }>
+  > = {
+    en: {
+      day: { one: "day", other: "days" },
+      hour: { one: "hour", other: "hours" },
+      minute: { one: "minute", other: "minutes" },
+      second: { one: "second", other: "seconds" },
+    },
+    fr: {
+      day: { one: "jour", other: "jours" },
+      hour: { one: "heure", other: "heures" },
+      minute: { one: "minute", other: "minutes" },
+      second: { one: "seconde", other: "secondes" },
+    },
+    de: {
+      day: { one: "Tag", other: "Tage" },
+      hour: { one: "Stunde", other: "Stunden" },
+      minute: { one: "Minute", other: "Minuten" },
+      second: { one: "Sekunde", other: "Sekunden" },
+    },
+    ar: {
+      day: { one: "يوم", two: "يومين", other: "أيام" },
+      hour: { one: "ساعة", two: "ساعتين", other: "ساعات" },
+      minute: { one: "دقيقة", two: "دقيقتين", other: "دقائق" },
+      second: { one: "ثانية", two: "ثانيتين", other: "ثوان" },
+    },
+  };
+  const forms = labels[locale][unit];
+  const label =
+    locale === "ar" && count === 2
+      ? forms.two
+      : count === 1
+        ? forms.one
+        : forms.other;
+  return `${formatNumber(count, locale)}${locale === "fr" ? "\u00a0" : " "}${label}`;
 }
 
 /** The decimal mark the locale uses, read from Intl rather than hard-coded. */

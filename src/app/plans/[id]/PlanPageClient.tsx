@@ -15,8 +15,10 @@ import { config } from "@/lib/config";
 import { payflow } from "@/lib/lazy-payflow";
 import { useWallet } from "@/lib/wallet";
 
+import { AddressDisplay } from "@/components/AddressDisplay";
 import { AddressLink, Badge, Empty, Notice, Panel, SkeletonPlanDetail, TxLink } from "@/components/ui";
 import { cursorPage, TABLE_PAGE_SIZE } from "@/lib/pagination";
+import { metaFor, useTokenMetas } from "@/lib/token";
 
 const PaginationControl = lazy(() =>
   import("@/components/Pagination").then((module) => ({
@@ -31,10 +33,11 @@ interface PlanPageClientProps {
 }
 
 export function PlanPageClient({ planId }: PlanPageClientProps) {
-  const { t: tr, formatPeriod, translateMessage, formatTokenValue } = useI18n();
+  const { t: tr, formatPeriod, formatDate, formatFeeBps, translateMessage, formatTokenValue, trialBadge } = useI18n();
   const { address, networkMismatch, signXdr } = useWallet();
   const wanted = Number(planId);
   const [plan, setPlan] = useState<ApiPlan | null>(null);
+  const tokenMetas = useTokenMetas(plan ? [plan.token] : []);
   const [charges, setCharges] = useState<ChargeRow[]>([]);
   const [chargesCursor, setChargesCursor] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -43,6 +46,8 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
   const [maxCharges, setMaxCharges] = useState("");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<string | null>(null);
+  const [feeBps, setFeeBps] = useState<number | null>(null);
+  const [feeUnavailable, setFeeUnavailable] = useState(false);
 
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const visibleCharges = cursorPage(charges, chargesCursor);
@@ -55,6 +60,26 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
   useEffect(() => {
     const timer = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
     return () => clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    let active = true;
+    if (typeof payflow.feeBps !== "function") {
+      setFeeUnavailable(true);
+      return () => {
+        active = false;
+      };
+    }
+    void payflow.feeBps(config.readSource).then(
+      (rate) => {
+        if (active) setFeeBps(rate);
+      },
+      () => {
+        if (active) setFeeUnavailable(true);
+      },
+    );
+    return () => {
+      active = false;
+    };
   }, []);
 
   const load = useCallback(async () => {
@@ -125,9 +150,11 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
   // `notFound()` terminates rendering when the plan is missing, so `plan` is
   // non-null from here on.
   const subscribePlanId = plan.id;
+  const availability = planAvailability(plan, now);
   const unavailable = plan.active !== 1
     ? "This plan is closed to new subscriptions."
-    : planAvailability(plan, now).reason;
+    : availability.reason;
+  const tokenMeta = metaFor(tokenMetas, plan.token);
   const chargeLimitCheck = checkChargeLimit(maxCharges);
 
   async function subscribe() {
@@ -195,7 +222,7 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
           <div>
             <span className="label">{tr("Price")}</span>
             <div className="text-2xl font-semibold tabular-nums">
-              {formatTokenValue(plan.amount)}{" "}{tr("XLM")}</div>
+              {formatTokenValue(plan.amount, 4, tokenMeta.decimals)}{" "}{tokenMeta.symbol}</div>
           </div>
           <div>
             <span className="label">{tr("Billing period")}</span>
@@ -209,12 +236,45 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
             <span className="label">{tr("Status")}</span>
             <Badge status={plan.active === 1 ? "Active" : "Paused"} />
           </div>
+          {plan.max_subscribers !== undefined && plan.max_subscribers > 0 && (
+            <div>
+              <span className="label">{tr("Seats")}</span>
+              <div className="text-sm text-muted">
+                {availability.seats === null
+                  ? tr("Count unavailable")
+                  : tr(availability.seats === 1 ? "{0} seat left" : "{0} seats left", { "0": availability.seats })}
+              </div>
+            </div>
+          )}
+          {plan.available_until !== undefined && plan.available_until > 0 && (
+            <div>
+              <span className="label">{tr("Available until")}</span>
+              <div className="text-sm text-muted">{formatDate(plan.available_until)}</div>
+            </div>
+          )}
+          {trialBadge(plan) && (
+            <div>
+              <span className="label">{tr("Free trial")}</span>
+              <div className="text-sm text-muted">{trialBadge(plan)}</div>
+            </div>
+          )}
+          <div>
+            <span className="label">{tr("Protocol fee")}</span>
+            <div className="text-sm text-muted">
+              {feeBps === null ? (feeUnavailable ? tr("Unavailable") : tr("Checking…")) : formatFeeBps(feeBps)}
+            </div>
+          </div>
         </div>
       </Panel>
 
       <Panel title={tr("Recent charges")}>
         {charges.length === 0 ? (
-          <Empty>{tr("No charges settled against this plan yet.")}</Empty>
+          <Empty
+            title={tr("No charges yet")}
+            action={<Link href="#plan-subscribe" className="btn-ghost">{tr("Subscribe to this plan")}</Link>}
+          >
+            {tr("No charges settled against this plan yet.")}
+          </Empty>
         ) : (
           <>
             <div className="overflow-x-auto">
@@ -223,9 +283,9 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
                 <tr>
                   <th className="text-muted text-start">{tr("Mandate")}</th>
                   <th className="text-muted text-start">{tr("Subscriber")}</th>
-                  <th className="text-muted text-end">{tr("Amount")}</th>
-                  <th className="text-muted text-end">{tr("Fee")}</th>
-                  <th className="text-muted text-end">{tr("Net")}</th>
+                  <th className="text-muted text-right text-end">{tr("Amount")}</th>
+                  <th className="text-muted text-right text-end">{tr("Fee")}</th>
+                  <th className="text-muted text-right text-end">{tr("Net")}</th>
                   <th className="text-muted text-start">{tr("Tx hash")}</th>
                 </tr>
               </thead>
@@ -236,14 +296,10 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
                     <td className="py-2">
                       <AddressDisplay value={c.subscriber} />
                     </td>
-                    <td className="py-2 text-end">{c.amount}{" "}{tr("XLM")}</td>
-                    <td className="py-2 text-end">{c.fee}{" "}{tr("XLM")}</td>
-                    <td className="py-2 text-end">{c.net}{" "}{tr("XLM")}</td>
-                    <td className="py-2 text-end">
-                    <td className="py-2 text-right font-mono tabular-nums">{c.amount}{" "}{tr("XLM")}</td>
-                    <td className="py-2 text-right font-mono tabular-nums">{c.fee}{" "}{tr("XLM")}</td>
-                    <td className="py-2 text-right font-mono tabular-nums">{c.net}{" "}{tr("XLM")}</td>
-                    <td className="py-2 text-right">
+                    <td className="py-2 text-right text-end font-mono tabular-nums">{c.amount}{" "}{tokenMeta.symbol}</td>
+                    <td className="py-2 text-right text-end font-mono tabular-nums">{c.fee}{" "}{tokenMeta.symbol}</td>
+                    <td className="py-2 text-right text-end font-mono tabular-nums">{c.net}{" "}{tokenMeta.symbol}</td>
+                    <td className="py-2">
                       <TxLink hash={c.txHash} />
                     </td>
                   </tr>
@@ -265,7 +321,7 @@ export function PlanPageClient({ planId }: PlanPageClientProps) {
         )}
       </Panel>
 
-      <Panel title={tr("Subscribe to this plan")}>
+      <Panel id="plan-subscribe" title={tr("Subscribe to this plan")}>
         <p className="text-sm text-muted">{tr("Open a mandate against this plan. Fund your vault on the")}{" "}
           <Link href="/account" className="text-accent hover:underline">{tr("account page")}</Link>{" "}{tr("first, or charges will fail for lack of balance.")}</p>
         {unavailable && <p id="plan-availability" className="text-sm text-muted">{unavailable}</p>}

@@ -393,7 +393,7 @@ describe("WalletProvider and account change detection", () => {
 
     // Wait for initial session restore
     expect(await screen.findByText(/GAEWD/)).toBeTruthy();
-    expect(screen.getByRole("button").title).toBe(`${ADDRESS_A} — click to disconnect`);
+    expect(screen.getByRole("button", { name: "Copy connected wallet address" }).title).toBe(ADDRESS_A);
 
     // Switch account in wallet
     mockKit.getAddress.mockResolvedValue({ address: ADDRESS_B });
@@ -402,9 +402,9 @@ describe("WalletProvider and account change detection", () => {
       window.dispatchEvent(new Event("focus"));
     });
 
-    const updated = await screen.findByTitle(`${ADDRESS_B} — click to disconnect`, {}, { timeout: 3000 });
+    const updated = await screen.findByText(/GAP6Q/);
     expect(updated).toBeTruthy();
-    expect(updated.textContent).toContain("GAP6Q");
+    expect(screen.getByRole("button", { name: "Copy connected wallet address" }).title).toBe(ADDRESS_B);
   });
 
 
@@ -437,7 +437,7 @@ describe("WalletProvider and account change detection", () => {
     );
 
     expect(await screen.findByText(`User: ${ADDRESS_A}`)).toBeTruthy();
-    expect(loadMock).toHaveBeenCalledWith(ADDRESS_A);
+    await waitFor(() => expect(loadMock).toHaveBeenCalledWith(ADDRESS_A));
 
     // Mock account switch in extension
     mockKit.getAddress.mockResolvedValue({ address: ADDRESS_B });
@@ -447,7 +447,7 @@ describe("WalletProvider and account change detection", () => {
     });
 
     expect(await screen.findByText(`User: ${ADDRESS_B}`)).toBeTruthy();
-    expect(loadMock).toHaveBeenCalledWith(ADDRESS_B);
+    await waitFor(() => expect(loadMock).toHaveBeenCalledWith(ADDRESS_B));
   });
 
   it("handles wallet getAddress error gracefully on focus without clearing state", async () => {
@@ -750,7 +750,9 @@ describe("WalletProvider connection and signing lifecycle", () => {
       </WalletProvider>,
     );
 
-    expect(await screen.findByTitle(`${ADDRESS_A} — click to disconnect`)).toBeTruthy();
+    expect(await screen.findByText(/GAEWD/)).toBeTruthy();
+    await screen.findByRole("button", { name: "Copy connected wallet address" });
+    expect(screen.getByRole("button", { name: "Copy connected wallet address" }).title).toBe(ADDRESS_A);
 
     // Simulate failed background resume first
     kit.getAddress.mockRejectedValueOnce(new Error("Extension locked"));
@@ -784,7 +786,7 @@ describe("WalletProvider connection and signing lifecycle", () => {
     });
 
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
-    expect(screen.getByTitle(`${ADDRESS_A} — click to disconnect`)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copy connected wallet address" }).title).toBe(ADDRESS_A);
   });
 
   it("sets reconnectError when wallet returns an empty address on resume", async () => {

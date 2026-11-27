@@ -113,7 +113,11 @@ function ComparisonTable({
               const meta = metaFor(metas, plan.token);
               const monthly = planMonthlyEquivalent(plan);
               return (
-                <td key={plan.id} className="px-3 py-2 tabular-nums">
+                <td
+                  key={plan.id}
+                  className="px-3 py-2 tabular-nums"
+                  aria-label={monthly === null ? tr("Unavailable") : formatAmount(monthly, meta)}
+                >
                   {monthly === null ? "—" : formatAmount(monthly, meta)}
                 </td>
               );
@@ -342,7 +346,7 @@ function SubscribeInner() {
           loaded.map(async (plan) => {
             // The backend fails soft and the stat source may be unable to
             // supply a count; treat anything but a real object as absent.
-            const stats = await api.planStats(plan.id);
+            const stats = typeof api.planStats === "function" ? await api.planStats(plan.id) : null;
             if (generation === request.current) {
               setPlanStats((prev) => ({
                 ...prev,
@@ -701,7 +705,7 @@ function SubscribeInner() {
         <div className="space-y-4">
           {/* Search, filter and sort toolbar */}
           <div className="flex flex-wrap items-end gap-3 rounded-lg border border-edge bg-surface/50 p-3">
-            <div className="w-full sm:w-auto sm:min-w-[14rem] sm:flex-1">
+            <div className="w-full min-w-0 sm:w-auto sm:min-w-[14rem] sm:flex-1">
               <Search
                 id="plan-search"
                 value={query}
@@ -815,8 +819,10 @@ function SubscribeInner() {
           ) : (
             <div className="grid gap-4 sm:grid-cols-2">
               {filteredPlans.map((plan) => {
-
+                const cap = checkChargeLimit(maxCharges[plan.id]);
                 const meta = metaFor(metas, plan.token);
+                const currentBal = vaultBalances[plan.token] ?? 0n;
+                const funded = currentBal >= BigInt(plan.amount);
                 const badge = trialBadge(plan);
                 const availability = planAvailability(plan, now);
                 const usdEstimate =
@@ -1033,7 +1039,9 @@ function SubscribeInner() {
               <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
                 <dt className="text-muted">{tr("Amount")}</dt>
                 <dd className="font-medium tabular-nums">
-                  {formatAmount(confirmation.gross, pendingMeta)}
+                  <span aria-label={formatAmount(confirmation.gross, pendingMeta)}>
+                    {formatAmount(confirmation.gross, pendingMeta)}
+                  </span>
                 </dd>
               </div>
               <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
@@ -1047,7 +1055,14 @@ function SubscribeInner() {
                     ? feeLoading
                       ? tr("Checking…")
                       : tr("Unavailable")
-                    : `${formatAmount(confirmation.fee, pendingMeta)} (${formatFeeBps(confirmation.feeBps)})`}
+                    : (
+                      <>
+                        <span aria-label={formatAmount(confirmation.fee, pendingMeta)}>
+                          {formatAmount(confirmation.fee, pendingMeta)}
+                        </span>{" "}
+                        <span>({formatFeeBps(confirmation.feeBps)})</span>
+                      </>
+                    )}
                 </dd>
               </div>
               <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">

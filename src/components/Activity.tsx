@@ -255,71 +255,73 @@ export function Activity() {
   if (!api.isConfigured() || !address) return null;
 
   return (
-    <Panel
-      title={tr("Activity")}
-      subtitle={unread.length ? tr("{0} unread", { "0": unread.length }) : tr("Recent mandate activity")}
-      actions={
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            className="btn-ghost"
-            onClick={() => void refresh(address)}
-          >
-            {tr("Refresh")}
-          </button>
-          <button
-            type="button"
-            className="btn-ghost"
-            onClick={markSeen}
-            disabled={!unread.length}
-          >
-            {tr("Mark all read")}
-          </button>
-        </div>
-      }
-    >
-      {loading ? <SkeletonRows rows={3} label={tr("Loading activity")} /> : null}
-      {!loading && partial ? (
-        <Notice tone="info">
-          {tr("Some activity could not be loaded. The list below may be incomplete.")}
-        </Notice>
-      ) : null}
-      {!loading && failed ? (
-        <div className="space-y-3">
-          <Notice tone="error">{tr("Activity is unavailable right now. Try again later.")}</Notice>
-          <button type="button" className="btn-ghost" onClick={() => void refresh(address)}>
-            {tr("Try again")}
-          </button>
-        </div>
-      ) : null}
-      {!loading && !failed && !partial && visibleItems.length === 0 ? (
-        <Empty>{tr("No activity yet.")}</Empty>
-      ) : null}
-      {!loading && !failed && visibleItems.length > 0 ? (
-        <ol className="space-y-3" aria-label={tr("Wallet activity")}>
-          {visibleItems.map((item) => (
-            <li
-              key={item.identity}
-              className="flex min-w-0 items-start justify-between gap-3 rounded-lg border border-edge p-3"
+    <div className="print:hidden">
+      <Panel
+        title={tr("Activity")}
+        subtitle={unread.length ? tr("{0} unread", { "0": unread.length }) : tr("Recent mandate activity")}
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => void refresh(address)}
             >
-              <div className="min-w-0">
-                <p className="break-words text-sm font-medium">
-                  {eventDescription(item, tr, formatAmount)}
-                </p>
-                <p className="mt-1 break-words text-xs text-muted">
-                  {tr(labelFor(item.type))} | {tr("mandate #{0}", { "0": String(item.mandate_id) })} |{" "}
-                  {tr("ledger {0}", { "0": String(item.ledger) })}
-                </p>
-              </div>
-              {!visibleSeen.has(item.identity) ? (
-                <span className="shrink-0 rounded-full bg-accent/15 px-2 py-0.5 text-xs text-accent">
-                  {tr("New")}
-                </span>
-              ) : null}
-            </li>
-          ))}
-        </ol>
-      ) : null}
-    </Panel>
+              {tr("Refresh")}
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={markSeen}
+              disabled={!unread.length}
+            >
+              {tr("Mark all read")}
+            </button>
+          </div>
+        }
+      >
+        {loading ? <SkeletonRows rows={3} label={tr("Loading activity")} /> : null}
+        {!loading && partial ? (
+          <Notice tone="info">
+            {tr("Some activity could not be loaded. The list below may be incomplete.")}
+          </Notice>
+        ) : null}
+        {!loading && failed ? (
+          <div className="space-y-3">
+            <Notice tone="error">{tr("Activity is unavailable right now. Try again later.")}</Notice>
+            <button type="button" className="btn-ghost" onClick={() => void refresh(address)}>
+              {tr("Try again")}
+            </button>
+          </div>
+        ) : null}
+        {!loading && !failed && !partial && visibleItems.length === 0 ? (
+          <Empty>{tr("No activity yet.")}</Empty>
+        ) : null}
+        {!loading && !failed && visibleItems.length > 0 ? (
+          <ol className="space-y-3" aria-label={tr("Wallet activity")}>
+            {visibleItems.map((item) => (
+              <li
+                key={item.identity}
+                className="flex min-w-0 items-start justify-between gap-3 rounded-lg border border-edge p-3"
+              >
+                <div className="min-w-0">
+                  <p className="break-words text-sm font-medium">
+                    {eventDescription(item, tr, formatAmount)}
+                  </p>
+                  <p className="mt-1 break-words text-xs text-muted">
+                    {tr(labelFor(item.type))} | {tr("mandate #{0}", { "0": String(item.mandate_id) })} |{" "}
+                    {tr("ledger {0}", { "0": String(item.ledger) })}
+                  </p>
+                </div>
+                {!visibleSeen.has(item.identity) ? (
+                  <span className="shrink-0 rounded-full bg-accent/15 px-2 py-0.5 text-xs text-accent">
+                    {tr("New")}
+                  </span>
+                ) : null}
+              </li>
+            ))}
+          </ol>
+        ) : null}
+      </Panel>
+    </div>
   );
 }

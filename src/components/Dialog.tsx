@@ -43,6 +43,7 @@ export function Dialog({
 }) {
   const { t: tr } = useI18n();
   const titleId = useId();
+  const descriptionId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   // The handler is read through a ref so that an inline `onClose={() => …}` —
   // the natural way to call this — cannot re-run the effect below. A dialog
@@ -62,6 +63,8 @@ export function Dialog({
     const root: HTMLElement = panel;
 
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
 
     // Focus the panel rather than its first control, so a reader hears the
     // title before any button — and so a dialog that only shows text still
@@ -110,6 +113,7 @@ export function Dialog({
     return () => {
       document.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("focusin", onFocusIn);
+      document.body.style.overflow = previousOverflow;
       // Hand focus back to the control that opened the dialog, otherwise a
       // keyboard user dismissing it is dropped at the top of the document.
       // An opener the parent removed while the dialog was open is skipped
@@ -121,12 +125,21 @@ export function Dialog({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 sm:items-center">
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 sm:items-center"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) event.preventDefault();
+      }}
+    >
       <div
         ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        aria-describedby={descriptionId}
         tabIndex={-1}
         className="panel max-h-full w-full max-w-lg overflow-y-auto"
       >
@@ -153,7 +166,7 @@ export function Dialog({
             </svg>
           </button>
         </div>
-        <div className="text-sm">{children}</div>
+        <div id={descriptionId} className="text-sm">{children}</div>
         {actions && <div className="mt-4 flex flex-wrap justify-end gap-2">{actions}</div>}
       </div>
     </div>

@@ -551,8 +551,9 @@ export function Notice({
     info: "border-edge bg-fg/5 text-muted",
     warn: "border-warn/40 bg-warn/10 text-warn",
   } as const;
+  const announcementRole = role ?? (tone === "error" ? "alert" : "status");
   return (
-    <div role={role} className={`rounded-lg border px-3 py-2 text-sm ${tones[tone]}`}>
+    <div role={announcementRole} aria-live="polite" className={`rounded-lg border px-3 py-2 text-sm ${tones[tone]}`}>
       {typeof children === "string" ? translateMessage(children) : children}
     </div>
   );

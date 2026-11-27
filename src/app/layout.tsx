@@ -5,6 +5,7 @@ import { WalletProvider } from "@/lib/wallet";
 import { WalletLayoutInner } from "@/components/WalletLayoutInner";
 import { AppErrorBoundary } from "@/components/AppErrorBoundary";
 import { THEME_INIT_SCRIPT } from "@/lib/theme";
+import { ToastProvider } from "@/components/Toast";
 
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 // The Content-Security-Policy is injected into the static export after the
@@ -37,9 +38,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <AppErrorBoundary>
           <I18nProvider>
-            <WalletProvider>
-              <WalletLayoutInner>{children}</WalletLayoutInner>
-            </WalletProvider>
+            <ToastProvider>
+              <WalletProvider>
+                <WalletLayoutInner>{children}</WalletLayoutInner>
+              </WalletProvider>
+            </ToastProvider>
           </I18nProvider>
         </AppErrorBoundary>
       </body>

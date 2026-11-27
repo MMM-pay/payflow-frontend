@@ -112,11 +112,6 @@ export function CohortRetentionTable({ merchant, apiConfigured }: CohortRetentio
             </caption>
             <thead>
               <tr className="border-b border-edge text-muted">
-                <th scope="col" className="sticky start-0 bg-panel py-2 pe-3 font-medium z-10">
-                  Signup month
-                </th>
-                <th scope="col" className="py-2 pe-3 text-end font-medium">
-                  Cohort size
                 <th scope="col" className="sticky left-0 bg-panel py-2 pr-3 font-medium z-10">
                   {tr("Signup month")}
                 </th>

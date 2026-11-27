@@ -86,12 +86,13 @@ jobs:
           NEXT_PUBLIC_TOKEN_ID: CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC
           NEXT_PUBLIC_API_URL: http://localhost:8080
           NEXT_PUBLIC_SITE_URL: https://mmm-pay.github.io
+      - run: npm run budget
 
   visual:
     name: visual
     # Runs in the Playwright image so fonts, and therefore rendered pixels,
     # match the committed baselines however the runner is provisioned.
-    container: mcr.microsoft.com/playwright:v1.64.1-jammy
+    container: mcr.microsoft.com/playwright:v1.65.1-jammy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

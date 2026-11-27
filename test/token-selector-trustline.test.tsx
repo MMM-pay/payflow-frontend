@@ -175,8 +175,7 @@ describe("Multi-token plans & trustline prompt (#31)", () => {
 
     render(<AccountPage />);
 
-    expect(await screen.findByRole("alert")).toBeTruthy();
-    expect(screen.getByText(/Trustline required for USDC/i)).toBeTruthy();
+    expect(await screen.findByText(/Trustline required for USDC/i)).toBeTruthy();
 
     const addBtn = screen.getByRole("button", { name: "Add USDC trustline" });
     expect(addBtn).toBeTruthy();

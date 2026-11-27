@@ -90,7 +90,7 @@ export function ConfirmDialog({
       }
     >
       {error && (
-        <div role="alert" className="mb-3">
+        <div className="mb-3">
           <Notice tone="error">{error}</Notice>
         </div>
       )}
