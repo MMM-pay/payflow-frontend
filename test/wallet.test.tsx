@@ -980,7 +980,10 @@ describe("WalletProvider connection and signing lifecycle", () => {
   it("re-establishes the wallet session on visibility resume without a full reload", async () => {
     localStorage.setItem(STORAGE_KEY, serializeSession(WALLET_ID, ADDRESS_A));
     const { result } = mountWallet();
-    await waitFor(() => expect(result.current.address).toBe(ADDRESS_A));
+    // A saved wallet is only reconnected when the user asks for it.
+    await waitFor(() => expect(result.current.walletSelectionLoaded).toBe(true));
+    await act(async () => result.current.reconnect());
+    expect(result.current.address).toBe(ADDRESS_A);
 
     kit.setWallet.mockClear();
     kit.getAddress.mockClear();
@@ -1020,6 +1023,7 @@ describe("WalletProvider connection and signing lifecycle", () => {
       </WalletProvider>,
     );
 
+    fireEvent.click(await screen.findByRole("button", { name: `Reconnect ${WALLET_ID}` }));
     expect(await screen.findByText(/GAEWD/)).toBeTruthy();
     await screen.findByRole("button", { name: "Copy connected wallet address" });
     expect(screen.getByRole("button", { name: "Copy connected wallet address" }).title).toBe(ADDRESS_A);
@@ -1062,7 +1066,10 @@ describe("WalletProvider connection and signing lifecycle", () => {
   it("sets reconnectError when wallet returns an empty address on resume", async () => {
     localStorage.setItem(STORAGE_KEY, serializeSession(WALLET_ID, ADDRESS_A));
     const { result } = mountWallet();
-    await waitFor(() => expect(result.current.address).toBe(ADDRESS_A));
+    // A saved wallet is only reconnected when the user asks for it.
+    await waitFor(() => expect(result.current.walletSelectionLoaded).toBe(true));
+    await act(async () => result.current.reconnect());
+    expect(result.current.address).toBe(ADDRESS_A);
 
     kit.getAddress.mockResolvedValueOnce({ address: "" });
     await act(async () => {
@@ -1076,7 +1083,10 @@ describe("WalletProvider connection and signing lifecycle", () => {
   it("configures merchant auth token provider only for connected account", async () => {
     localStorage.setItem(STORAGE_KEY, serializeSession(WALLET_ID, ADDRESS_A));
     const { result } = mountWallet();
-    await waitFor(() => expect(result.current.address).toBe(ADDRESS_A));
+    // A saved wallet is only reconnected when the user asks for it.
+    await waitFor(() => expect(result.current.walletSelectionLoaded).toBe(true));
+    await act(async () => result.current.reconnect());
+    expect(result.current.address).toBe(ADDRESS_A);
 
     expect(await merchantAuthToken(ADDRESS_B)).toBeNull();
   });

@@ -119,7 +119,7 @@ function NetworkSwitcher({
  */
 export function WalletLayoutInner({ children }: { children: React.ReactNode }) {
   const { t: tr } = useI18n();
-  const { networkMismatch, walletNetwork, address, locked } = useWallet();
+  const { networkMismatch, walletNetwork, address, walletId, locked } = useWallet();
   const { network, networks, select } = useNetwork();
   const reducedData = useReducedData();
   const pathname = usePathname();

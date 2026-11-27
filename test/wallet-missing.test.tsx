@@ -52,7 +52,10 @@ describe("WalletProvider when no wallet is installed", () => {
   beforeEach(() => {
     window.localStorage.clear();
     vi.clearAllMocks();
-    kit.openModal.mockResolvedValue(undefined);
+    // The user dismisses the modal without choosing a wallet.
+    kit.openModal.mockImplementation(async (opts: { onClosed?: () => void }) => {
+      opts.onClosed?.();
+    });
     kit.getNetwork.mockResolvedValue({ networkPassphrase: "Test SDF Network ; September 2015" });
     setKitPromiseForTesting(Promise.resolve(kit as unknown as StellarWalletsKit));
   });
