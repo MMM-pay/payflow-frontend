@@ -1,34 +1,35 @@
 @import "tailwindcss";
 
+/*
+ * Tailwind 4 applies opacity modifiers (`bg-accent/15`) with color-mix(), so a
+ * theme colour is the plain colour; v3's `<alpha-value>` placeholder is gone.
+ */
 @theme {
-  --color-ink: rgb(var(--ink) / <alpha-value>);
-  --color-panel: rgb(var(--panel) / <alpha-value>);
-  --color-edge: rgb(var(--edge) / <alpha-value>);
-  --color-muted: rgb(var(--muted) / <alpha-value>);
-  --color-accent: rgb(var(--accent) / <alpha-value>);
-  --color-fg: rgb(var(--fg) / <alpha-value>);
-  --color-soft: rgb(var(--soft) / <alpha-value>);
-  --color-danger: rgb(var(--danger) / <alpha-value>);
-  --color-warn: rgb(var(--warn) / <alpha-value>);
-  --color-info: rgb(var(--info) / <alpha-value>);
-  --color-danger-solid: rgb(var(--danger-solid) / <alpha-value>);
-  --color-danger-solid-hover: rgb(var(--danger-solid-hover) / <alpha-value>);
-  --color-chart-1: rgb(var(--chart-1) / <alpha-value>);
-  --color-chart-2: rgb(var(--chart-2) / <alpha-value>);
-  --color-chart-3: rgb(var(--chart-3) / <alpha-value>);
-  --color-chart-4: rgb(var(--chart-4) / <alpha-value>);
-  --color-chart-5: rgb(var(--chart-5) / <alpha-value>);
+  --color-ink: rgb(var(--ink));
+  --color-panel: rgb(var(--panel));
+  --color-edge: rgb(var(--edge));
+  --color-muted: rgb(var(--muted));
+  --color-accent: rgb(var(--accent));
+  --color-fg: rgb(var(--fg));
+  --color-soft: rgb(var(--soft));
+  --color-danger: rgb(var(--danger));
+  --color-warn: rgb(var(--warn));
+  --color-info: rgb(var(--info));
+  --color-danger-solid: rgb(var(--danger-solid));
+  --color-danger-solid-hover: rgb(var(--danger-solid-hover));
+  --color-chart-1: rgb(var(--chart-1));
+  --color-chart-2: rgb(var(--chart-2));
+  --color-chart-3: rgb(var(--chart-3));
+  --color-chart-4: rgb(var(--chart-4));
+  --color-chart-5: rgb(var(--chart-5));
 
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
-/* Logical spacing utilities for RTL/LTR support */
-@utility ps-*;
-@utility pe-*;
-@utility ms-*;
-@utility me-*;
-@utility start-*;
-@utility end-*;
+/*
+ * Logical spacing (ps-/pe-/ms-/me-) and inset (start-/end-) utilities are
+ * built into Tailwind 4, so the v3 plugin that added them is no longer needed.
+ */
 
 /*
  * Two palettes behind one set of CSS variables.
@@ -118,33 +119,49 @@ body {
   @apply bg-ink text-fg antialiased;
 }
 
-@layer components {
-  .panel {
-    @apply rounded-xl border border-edge bg-panel p-5;
+/*
+ * Tailwind 3 gave every border the theme's edge-like grey by default; Tailwind
+ * 4 uses currentColor. Keep the v3 look for bare `border` classes.
+ */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-edge, currentColor);
   }
-  .label {
-    @apply mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted;
-  }
-  .input {
-    @apply w-full rounded-lg border border-edge bg-ink px-3 py-2 text-sm text-fg
-      outline-none placeholder:text-muted focus:border-accent/60 focus-visible:ring-2 focus-visible:ring-accent/40;
-  }
-  .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm
-      font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-ink disabled:cursor-not-allowed disabled:opacity-40;
-  }
-  .btn-primary {
-    @apply btn bg-accent text-ink hover:bg-accent/90;
-  }
-  .btn-ghost {
-    @apply btn border border-edge text-soft hover:border-muted hover:bg-fg/5;
-  }
-  .btn-danger {
-    @apply btn bg-danger-solid text-white hover:bg-danger-solid-hover;
-  }
-  .mono {
-    @apply font-mono text-[13px];
-  }
+}
+
+/*
+ * Shared component classes. Tailwind 4 only lets `@apply` use classes that
+ * are declared with `@utility`, and `.btn-*` builds on `btn`.
+ */
+@utility panel {
+  @apply rounded-xl border border-edge bg-panel p-5;
+}
+@utility label {
+  @apply mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted;
+}
+@utility input {
+  @apply w-full rounded-lg border border-edge bg-ink px-3 py-2 text-sm text-fg
+    outline-none placeholder:text-muted focus:border-accent/60 focus-visible:ring-2 focus-visible:ring-accent/40;
+}
+@utility btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm
+    font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-ink disabled:cursor-not-allowed disabled:opacity-40;
+}
+@utility btn-primary {
+  @apply btn bg-accent text-ink hover:bg-accent/90;
+}
+@utility btn-ghost {
+  @apply btn border border-edge text-soft hover:border-muted hover:bg-fg/5;
+}
+@utility btn-danger {
+  @apply btn bg-danger-solid text-white hover:bg-danger-solid-hover;
+}
+@utility mono {
+  @apply font-mono text-[13px];
 }
 
 /*
