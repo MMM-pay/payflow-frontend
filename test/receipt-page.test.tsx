@@ -210,3 +210,138 @@ describe("ReceiptPage component", () => {
     expect(screen.getByText("Loading receipt…")).toBeTruthy();
   });
 });
+
+describe("receipt charge fields (#388)", () => {
+  const TX = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  const SUBSCRIBER = "GAP6QFLXQD73URCC3EXU2WOQHIAREPCGMSIMKF5PFLLI5TR6HTMNDTIE";
+  const MERCHANT = "GCH5VHWNS24VI75HLDBHK4SSJ2E5XZA5IB6XEZTNE4BJH7AKZI6Z3MHU";
+
+  function representativeReceipt(overrides: Partial<ReceiptData> = {}): ReceiptData {
+    return {
+      txHash: TX,
+      mandateId: 42,
+      date: "19 Oct 2026, 14:30 UTC",
+      timestamp: Date.UTC(2026, 9, 19, 14, 30, 0),
+      subscriber: SUBSCRIBER,
+      merchant: MERCHANT,
+      gross: 125_000_000n, // 12.5 XLM
+      fee: 1_250_000n, // 0.125 XLM
+      net: 123_750_000n, // 12.375 XLM
+      tokenMeta: XLM,
+      chargeNumber: 4,
+      totalCharges: 12,
+      ledger: 987_654,
+      period: 2_592_000, // monthly
+      planId: 9,
+      source: "api",
+      ...overrides,
+    };
+  }
+
+  function renderReceipt(receipt: ReceiptData | null, apiAvailable = true, error: string | null = null) {
+    mockSearchParams = new URLSearchParams({ tx: TX, mandate: "42" });
+    receiptMock.loadReceipt.mockResolvedValue({ receipt, apiAvailable, error });
+    render(<ReceiptPage />);
+  }
+
+  beforeEach(() => {
+    mockSearchParams = new URLSearchParams();
+    receiptMock.loadReceipt.mockReset();
+  });
+
+  afterEach(cleanup);
+
+  it("snapshots a representative charge with every field visible", async () => {
+    renderReceipt(representativeReceipt());
+
+    const receiptCard = await screen.findByRole("article", {
+      name: "Payment receipt for mandate 42",
+    });
+    const text = receiptCard.textContent ?? "";
+
+    // Header and status.
+    expect(screen.getByText("Payment Receipt")).toBeTruthy();
+    expect(screen.getByText("Settled")).toBeTruthy();
+    expect(screen.getByText("Mandate #42 · Plan #9")).toBeTruthy();
+    expect(screen.getByText("19 Oct 2026, 14:30 UTC")).toBeTruthy();
+
+    // Parties, billing frequency and charge sequence.
+    expect(screen.getByText("Subscriber (Payer)")).toBeTruthy();
+    expect(screen.getByText("Merchant (Payee)")).toBeTruthy();
+    expect(screen.getByText("Billing frequency")).toBeTruthy();
+    expect(screen.getByText("per month")).toBeTruthy();
+    expect(screen.getByText("Charge sequence")).toBeTruthy();
+    expect(screen.getByText("Charge 4 of 12 · Ledger #987654")).toBeTruthy();
+
+    // Both party addresses are linked to the explorer using the shortened form.
+    expect(screen.getByText("GAP6QF…MNDTIE")).toBeTruthy();
+    expect(screen.getByText("GCH5VH…6Z3MHU")).toBeTruthy();
+    expect(
+      screen.getByText("GAP6QF…MNDTIE").closest("a")?.getAttribute("href"),
+    ).toContain(`/account/${SUBSCRIBER}`);
+    expect(
+      screen.getByText("GCH5VH…6Z3MHU").closest("a")?.getAttribute("href"),
+    ).toContain(`/account/${MERCHANT}`);
+
+    // The breakdown table shows the gross, fee and net as bigint-derived strings.
+    expect(text).toContain("Subscription charge (Mandate #42)");
+    expect(screen.getByText("Description")).toBeTruthy();
+    expect(screen.getByText("Amount")).toBeTruthy();
+    expect(screen.getAllByText("12.5 XLM")).toHaveLength(2); // charge row and total
+    expect(screen.getByText("-0.125 XLM")).toBeTruthy();
+    expect(screen.getByText("12.375 XLM")).toBeTruthy();
+    expect(screen.getByText("Protocol fee")).toBeTruthy();
+    expect(screen.getByText("Net payout to merchant")).toBeTruthy();
+    expect(screen.getByText("Total Paid")).toBeTruthy();
+
+    // Transaction proof carries the full and shortened hash, plus the explorer link.
+    expect(text).toContain(`Hash: ${TX}`);
+    expect(screen.getByText("01234567…89abcdef")).toBeTruthy();
+    expect(
+      screen.getByText("01234567…89abcdef").closest("a")?.getAttribute("href"),
+    ).toContain(`/tx/${TX}`);
+    expect(text).toContain(
+      "Settled permissionlessly on Stellar via Payflow recurring mandate.",
+    );
+
+    // Both actions are present and labelled.
+    expect(screen.getByRole("button", { name: "Download this receipt" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Print this receipt" })).toBeTruthy();
+  });
+
+  it("falls back to recurring-charge labels when the sequence and ledger are unknown", async () => {
+    renderReceipt(
+      representativeReceipt({
+        chargeNumber: null,
+        totalCharges: null,
+        ledger: null,
+        fee: 0n,
+        source: "contract-estimate",
+      }),
+      false,
+    );
+
+    const receiptCard = await screen.findByRole("article", {
+      name: "Payment receipt for mandate 42",
+    });
+
+    // No invented charge number or ledger.
+    expect(receiptCard.textContent).toContain("Recurring charge");
+    expect(receiptCard.textContent).not.toContain("Ledger #");
+    expect(receiptCard.textContent).not.toContain("Charge 0");
+    // A zero protocol fee is still shown explicitly rather than omitted.
+    expect(screen.getByText("-0 XLM")).toBeTruthy();
+    // The receipt says why the history is estimated.
+    expect(screen.getByText(/Contract-only mode:/i)).toBeTruthy();
+  });
+
+  it("renders the error state when the charge cannot be loaded for valid parameters", async () => {
+    const error = "Mandate #42 could not be found on-chain or in API index.";
+    renderReceipt(null, false, error);
+
+    expect(await screen.findByText("Could not load receipt")).toBeTruthy();
+    expect(screen.getByText(error)).toBeTruthy();
+    // A failed load must not leave a half-rendered receipt on screen.
+    expect(screen.queryByRole("article")).toBeNull();
+  });
+});

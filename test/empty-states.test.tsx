@@ -276,3 +276,26 @@ describe("MerchantPage empty states", () => {
     expect(apiMock.merchantChurn).not.toHaveBeenCalled();
   });
 });
+
+describe("Primary view API error states (#357)", () => {
+  it("SubscribePage shows an error and a working retry when both sources fail", async () => {
+    apiMock.plans.mockResolvedValue(null);
+    chainMock.chainPlans
+      .mockRejectedValueOnce(new Error("RPC unavailable"))
+      .mockResolvedValueOnce([]);
+
+    render(<SubscribePage />);
+
+    expect(await screen.findByText("Could not load plans")).toBeTruthy();
+    expect(
+      screen.getByText(/Neither the plan indexer nor the contract could be read/),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    // The retry re-runs the load and recovers into the empty state, not a
+    // permanently stuck error.
+    expect(await screen.findByText("No plans yet")).toBeTruthy();
+    expect(screen.queryByText("Could not load plans")).toBeNull();
+  });
+});

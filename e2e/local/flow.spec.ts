@@ -134,10 +134,13 @@ test("subscriber cancels the mandate", async ({ page }) => {
   });
   await expect(cancel).toBeVisible({ timeout: 60_000 });
   await cancel.click();
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "Confirm cancellation" })
-    .click();
+  // Every confirmation uses the shared dialog, whose committing button is the
+  // action label ("Confirm cancellation") rather than a per-row name.
+  const dialog = page.getByRole("dialog");
+  await expect(
+    dialog.getByText(`Cancel subscription #${mandateId}?`),
+  ).toBeVisible();
+  await dialog.getByRole("button", { name: "Confirm cancellation" }).click();
   await approveWalletSigning(page);
 
   await expect(page.getByText("Cancelled", { exact: true })).toBeVisible({

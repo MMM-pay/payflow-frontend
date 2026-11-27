@@ -1,5 +1,6 @@
 import { execSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { cspConnectSources } from "./scripts/csp.mjs";
 
 // Copy embed files into public/embed so they are included in static export
 if (existsSync("./embed")) {

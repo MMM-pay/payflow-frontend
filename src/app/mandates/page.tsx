@@ -173,12 +173,27 @@ function MandateDetailsInner() {
 
   if (!mandate) {
     return (
-      <Empty
-        title={tr("Mandate #{0} not found", { "0": mandateId })}
-        action={
-          <Link href="/account" className="btn-primary">{tr("Go to my account")}</Link>
-        }
-      >{tr("This mandate does not exist or could not be loaded from contract state.")}</Empty>
+      <div className="space-y-4">
+        {/* A failed read is not the same as a mandate that does not exist: say
+            what went wrong and let the reader retry instead of implying the
+            subscription was deleted. */}
+        {error && <Notice tone="error">{translateMessage(error)}</Notice>}
+        <Empty
+          title={tr("Mandate #{0} not found", { "0": mandateId })}
+          action={
+            <>
+              {error && (
+                <button type="button" className="btn-ghost" onClick={() => void load()}>
+                  {tr("Retry")}
+                </button>
+              )}
+              <Link href="/account" className="btn-primary">{tr("Go to my account")}</Link>
+            </>
+          }
+        >{error
+          ? tr("The mandate could not be loaded from the indexer or contract state. Try again.")
+          : tr("This mandate does not exist or could not be loaded from contract state.")}</Empty>
+      </div>
     );
   }
 

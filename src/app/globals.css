@@ -118,6 +118,34 @@ body {
   @apply bg-ink text-fg antialiased;
 }
 
+/*
+ * One theme-aware focus ring for every interactive element.
+ *
+ * Components can (and some do) add their own `focus-visible:ring-*` utilities;
+ * `:where()` keeps this rule at zero specificity so those always win. The
+ * outline is painted from the same `--accent` token as the rest of the UI, so
+ * it is legible in both light and dark themes, and `outline-offset` keeps it
+ * clear of the element's own border instead of swallowing it.
+ *
+ * This is the fallback for plain links (`AddressLink`, `TxLink`, inline
+ * anchors) and controls that do not opt into a component-level ring; it is
+ * never a reason to remove an outline without a replacement.
+ */
+@layer base {
+  :where(
+    a[href],
+    button,
+    input,
+    select,
+    textarea,
+    summary,
+    [tabindex]:not([tabindex="-1"])
+  ):focus-visible {
+    outline: 2px solid rgb(var(--accent));
+    outline-offset: 2px;
+  }
+}
+
 @layer components {
   .panel {
     @apply rounded-xl border border-edge bg-panel p-5;

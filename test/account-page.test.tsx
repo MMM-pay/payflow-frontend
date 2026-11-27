@@ -1193,4 +1193,25 @@ describe("AccountPage vault split, grouped subscriptions and receipts (#298, #29
     ).toBeTruthy();
     expect(apiMock.charges).not.toHaveBeenCalled();
   });
+
+  it("shows the payment history error, keeps the rest of the page, and retries", async () => {
+    payflowMock.vaultBalance.mockResolvedValue(0n);
+    apiMock.mandatesOf.mockResolvedValue({ mandates: [mandate()] });
+    apiMock.charges
+      .mockRejectedValueOnce(new Error("indexer 503: unavailable"))
+      .mockResolvedValueOnce({ charges: [] });
+
+    render(<AccountPage />);
+
+    // The failed API call is surfaced as an error, not as "no charges yet".
+    expect(await screen.findByText("indexer 503: unavailable")).toBeTruthy();
+    expect(screen.queryByText("No charges yet")).toBeNull();
+    // A failed history read must not take out the subscription list.
+    expect(screen.getByText("Mandate #7")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByText("No charges yet")).toBeTruthy();
+    expect(screen.queryByText("indexer 503: unavailable")).toBeNull();
+  });
 });
