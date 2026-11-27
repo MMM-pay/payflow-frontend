@@ -1,8 +1,6 @@
 ﻿"use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useI18n } from "@/i18n/provider";
-import type { Translation } from "@/i18n/translate";
 import {
   api,
   type ApiActivityType,
@@ -11,9 +9,9 @@ import {
 } from "@/lib/api";
 import { config } from "@/lib/config";
 import type { TokenMeta } from "@/lib/format";
-import { subscribeToStreamEvents } from "@/lib/stream";
 import { useWallet } from "@/lib/wallet";
 import { Empty, Notice, Panel, SkeletonRows } from "@/components/ui";
+import { Money } from "@/components/Money";
 
 const SEEN_PREFIX = "payflow.activity.seen.";
 
@@ -99,29 +97,25 @@ function tokenMetaFor(event: ActivityItem): TokenMeta | null {
   return { symbol: event.token_symbol, decimals: event.token_decimals };
 }
 
-function eventDescription(
-  event: ActivityItem,
-  tr: Translation,
-  formatAmount: (raw: string | bigint, meta?: TokenMeta, digits?: number) => string,
-): string {
+function eventDescription(event: ActivityItem) {
   if (event.type === "charged") {
-    if (!event.amount) return tr("Payment charged");
+    if (!event.amount) return "Payment charged";
     const meta = tokenMetaFor(event);
     return meta
-      ? tr("Charged {0}", { "0": formatAmount(event.amount, meta) })
-      : tr("Charged {0} (smallest units; token metadata unavailable)", { "0": event.amount });
+      ? <>Charged <Money amount={event.amount} meta={meta} /></>
+      : `Charged ${event.amount} (smallest units; token metadata unavailable)`;
   }
   switch (event.type) {
     case "pause_changed":
-      return tr("Pause status changed");
+      return "Pause status changed";
     case "mandate_completed":
-      return tr("Mandate completed");
+      return "Mandate completed";
     case "mandate_ended":
-      return tr("Mandate ended");
+      return "Mandate ended";
     case "cancelled":
-      return tr("Mandate cancelled");
+      return "Mandate cancelled";
     case "subscribed":
-      return tr("Mandate subscribed");
+      return "Mandate subscribed";
   }
 }
 
@@ -171,7 +165,6 @@ async function loadActivity(address: string): Promise<ActivityLoad | null> {
 }
 
 export function Activity() {
-  const { t: tr, formatAmount } = useI18n();
   const { address } = useWallet();
   const [items, setItems] = useState<ActivityItem[]>([]);
   const [itemsAddress, setItemsAddress] = useState<string | null>(null);
@@ -223,13 +216,6 @@ export function Activity() {
     };
   }, [address, refresh]);
 
-  useEffect(() => {
-    if (!address) return;
-    return subscribeToStreamEvents((update) => {
-      if (update.address === address) void refresh(address);
-    });
-  }, [address, refresh]);
-
   const visibleItems = useMemo(
     () => (itemsAddress === address ? items : []),
     [itemsAddress, address, items],
@@ -255,73 +241,68 @@ export function Activity() {
   if (!api.isConfigured() || !address) return null;
 
   return (
-    <div className="print:hidden">
-      <Panel
-        title={tr("Activity")}
-        subtitle={unread.length ? tr("{0} unread", { "0": unread.length }) : tr("Recent mandate activity")}
-        actions={
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="btn-ghost"
-              onClick={() => void refresh(address)}
+    <Panel
+      title="Activity"
+      subtitle={unread.length ? `${unread.length} unread` : "Recent mandate activity"}
+      actions={
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={() => void refresh(address)}
+          >
+            Refresh
+          </button>
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={markSeen}
+            disabled={!unread.length}
+          >
+            Mark all read
+          </button>
+        </div>
+      }
+    >
+      {loading ? <SkeletonRows rows={3} label="Loading activity" /> : null}
+      {!loading && partial ? (
+        <Notice tone="info">
+          Some activity could not be loaded. The list below may be incomplete.
+        </Notice>
+      ) : null}
+      {!loading && failed ? (
+        <div className="space-y-3">
+          <Notice tone="error">Activity is unavailable right now. Try again later.</Notice>
+          <button type="button" className="btn-ghost" onClick={() => void refresh(address)}>
+            Try again
+          </button>
+        </div>
+      ) : null}
+      {!loading && !failed && !partial && visibleItems.length === 0 ? (
+        <Empty>No activity yet.</Empty>
+      ) : null}
+      {!loading && !failed && visibleItems.length > 0 ? (
+        <ol className="space-y-3" aria-label="Wallet activity">
+          {visibleItems.map((item) => (
+            <li
+              key={item.identity}
+              className="flex min-w-0 items-start justify-between gap-3 rounded-lg border border-edge p-3"
             >
-              {tr("Refresh")}
-            </button>
-            <button
-              type="button"
-              className="btn-ghost"
-              onClick={markSeen}
-              disabled={!unread.length}
-            >
-              {tr("Mark all read")}
-            </button>
-          </div>
-        }
-      >
-        {loading ? <SkeletonRows rows={3} label={tr("Loading activity")} /> : null}
-        {!loading && partial ? (
-          <Notice tone="info">
-            {tr("Some activity could not be loaded. The list below may be incomplete.")}
-          </Notice>
-        ) : null}
-        {!loading && failed ? (
-          <div className="space-y-3">
-            <Notice tone="error">{tr("Activity is unavailable right now. Try again later.")}</Notice>
-            <button type="button" className="btn-ghost" onClick={() => void refresh(address)}>
-              {tr("Try again")}
-            </button>
-          </div>
-        ) : null}
-        {!loading && !failed && !partial && visibleItems.length === 0 ? (
-          <Empty>{tr("No activity yet.")}</Empty>
-        ) : null}
-        {!loading && !failed && visibleItems.length > 0 ? (
-          <ol className="space-y-3" aria-label={tr("Wallet activity")}>
-            {visibleItems.map((item) => (
-              <li
-                key={item.identity}
-                className="flex min-w-0 items-start justify-between gap-3 rounded-lg border border-edge p-3"
-              >
-                <div className="min-w-0">
-                  <p className="break-words text-sm font-medium">
-                    {eventDescription(item, tr, formatAmount)}
-                  </p>
-                  <p className="mt-1 break-words text-xs text-muted">
-                    {tr(labelFor(item.type))} | {tr("mandate #{0}", { "0": String(item.mandate_id) })} |{" "}
-                    {tr("ledger {0}", { "0": String(item.ledger) })}
-                  </p>
-                </div>
-                {!visibleSeen.has(item.identity) ? (
-                  <span className="shrink-0 rounded-full bg-accent/15 px-2 py-0.5 text-xs text-accent">
-                    {tr("New")}
-                  </span>
-                ) : null}
-              </li>
-            ))}
-          </ol>
-        ) : null}
-      </Panel>
-    </div>
+              <div className="min-w-0">
+                <p className="break-words text-sm font-medium">{eventDescription(item)}</p>
+                <p className="mt-1 break-words text-xs text-muted">
+                  {labelFor(item.type)} | mandate #{item.mandate_id} | ledger {item.ledger}
+                </p>
+              </div>
+              {!visibleSeen.has(item.identity) ? (
+                <span className="shrink-0 rounded-full bg-accent/15 px-2 py-0.5 text-xs text-accent">
+                  New
+                </span>
+              ) : null}
+            </li>
+          ))}
+        </ol>
+      ) : null}
+    </Panel>
   );
 }

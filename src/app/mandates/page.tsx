@@ -2,7 +2,7 @@
 
 import { useI18n } from "@/i18n/provider";
 
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { api, type ApiCharge, type ApiMandate, type ApiPlan } from "@/lib/api";
@@ -13,7 +13,7 @@ import { mandateStatus, type Plan } from "@/lib/payflow-core";
 // stays out of this route's first-load bundle.
 import { payflow } from "@/lib/lazy-payflow";
 import { useWallet } from "@/lib/wallet";
-import { fromStroops } from "@/lib/format";
+import{ fromStroops } from "@/lib/format";
 import { metaFor, useTokenMetas } from "@/lib/token";
 import { discountBps, discountedAmount, remainingDiscountCharges } from "@/lib/discount";
 import {
@@ -24,27 +24,13 @@ import {
   Panel,
   SkeletonRows,
   Stat,
-  TimeAgo,
   TxLink,
 } from "@/components/ui";
-import dynamic from "next/dynamic";
-import { confirmTitle } from "@/lib/confirm-title";
-
-// Only rendered once the visitor asks to cancel or end the mandate.
-const ConfirmDialog = dynamic(
-  () => import("@/components/ConfirmDialog").then((m) => m.ConfirmDialog),
-  { ssr: false },
-);
-
-const PaginationControl = lazy(() =>
-  import("@/components/Pagination").then((module) => ({
-    default: module.Pagination,
-  })),
-);
-import { cursorPage, TABLE_PAGE_SIZE } from "@/lib/pagination";
+import { ConfirmDialog, confirmTitle } from "@/components/ConfirmDialog";
+import { Money } from "@/components/Money";
 
 function MandateDetailsInner() {
-  const { t: tr, formatPeriod, formatAmount, translateMessage, formatTokenValue, formatNumber } = useI18n();
+  const { t: tr, formatPeriod, formatDate, translateMessage, formatNumber } = useI18n();
   const searchParams = useSearchParams();
   const idParam = searchParams?.get("id");
   const mandateId =
@@ -57,7 +43,6 @@ function MandateDetailsInner() {
   const [mandate, setMandate] = useState<ApiMandate | null>(null);
   const [plan, setPlan] = useState<ApiPlan | null>(null);
   const [charges, setCharges] = useState<ApiCharge[] | null>(null);
-  const [chargesCursor, setChargesCursor] = useState(0);
   const [chargesUnavailable, setChargesUnavailable] = useState(false);
   const [vaultBalance, setVaultBalance] = useState<bigint | null>(null);
   const [loading, setLoading] = useState(true);
@@ -70,7 +55,6 @@ function MandateDetailsInner() {
 
   const metas = useTokenMetas(mandate ? [mandate.token || config.contracts.token] : []);
   const tokenMeta = metaFor(metas, mandate?.token || config.contracts.token);
-  const visibleCharges = charges ? cursorPage(charges, chargesCursor) : [];
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
@@ -173,16 +157,13 @@ function MandateDetailsInner() {
 
   if (!mandateId) {
     return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-semibold tracking-tight">{tr("Mandates")}</h1>
-        <Empty
-          title={tr("No mandate specified")}
-          action={
-            <Link href="/account" className="btn-primary">{tr("Go to my account")}</Link>
-          }
-        >{tr("Please provide a mandate ID in the URL, for example:")}{" "}<code>/mandates/?id=1</code>
-        </Empty>
-      </div>
+      <Empty
+        title={tr("No mandate specified")}
+        action={
+          <Link href="/account" className="btn-primary">{tr("Go to my account")}</Link>
+        }
+      >{tr("Please provide a mandate ID in the URL, for example:")}{" "}<code>/mandates/?id=1</code>
+      </Empty>
     );
   }
 
@@ -258,7 +239,7 @@ function MandateDetailsInner() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Stat
           label={tr("Recurring amount")}
-          value={`${fromStroops(currentAmount, 4, tokenMeta.decimals)} ${tokenMeta.symbol}`}
+          value={<Money amount={currentAmount} meta={tokenMeta} digits={4} />}
           hint={hasDiscount ?tr("Discount active ({0}% off)", { "0": discBps / 100 }) : formatPeriod(mandate.period)}
         />
         <Stat
@@ -268,13 +249,13 @@ function MandateDetailsInner() {
         />
         <Stat
           label={tr("Next charge")}
-          value={!isTerminal && mandate.next_charge > 0 ? <TimeAgo value={mandate.next_charge} /> : tr("None")}
+          value={!isTerminal && mandate.next_charge > 0 ? formatDate(mandate.next_charge) : tr("None")}
           hint={isDue ?tr("Due now") : !isTerminal ?tr("Scheduled") :tr("Terminal")}
         />
         <Stat
           label={tr("Protocol fee")}
           value={`${mandate.fee_bps / 100}%`}
-          hint={`${formatTokenValue(feeAmount, 4, tokenMeta.decimals)} ${tokenMeta.symbol}`}
+          hint={<Money amount={feeAmount} meta={tokenMeta} digits={4} />}
         />
       </div>
 
@@ -305,18 +286,18 @@ function MandateDetailsInner() {
           </div>
           <div className="flex flex-wrap items-center justify-between py-2.5">
             <span className="text-muted">{tr("Net to merchant per charge")}</span>
-            <span>{formatTokenValue(netAmount, 4, tokenMeta.decimals)} {tokenMeta.symbol}</span>
+            <span><Money amount={netAmount} meta={tokenMeta} digits={4} /></span>
           </div>
           {vaultBalance !== null && (
             <div className="flex flex-wrap items-center justify-between py-2.5">
               <span className="text-muted">{tr("Subscriber vault balance")}</span>
-              <span>{formatAmount(vaultBalance, tokenMeta)}</span>
+              <span><Money amount={vaultBalance} meta={tokenMeta} /></span>
             </div>
           )}
           {mandate.last_charge > 0 && (
             <div className="flex flex-wrap items-center justify-between py-2.5">
               <span className="text-muted">{tr("Last charge settled")}</span>
-              <span><TimeAgo value={mandate.last_charge} /></span>
+              <span>{formatDate(mandate.last_charge)}</span>
             </div>
           )}
         </div>
@@ -487,58 +468,40 @@ function MandateDetailsInner() {
         ) : charges.length === 0 ? (
           <Empty title={tr("No charges yet")}>{tr("No charges have been settled for this mandate so far.")}</Empty>
         ) : (
-          <>
-            <div
-              className="overflow-x-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-              role="region"
-              aria-label={tr("Charge history table")}
-              tabIndex={0}
-            >
+          <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
-              <caption className="sr-only">{tr("Charges settled under this mandate, newest first.")}</caption>
               <thead className="border-b border-edge text-xs uppercase text-muted">
                 <tr>
-                  <th className="py-2 pe-4">{tr("Ledger")}</th>
+                  <th className="py-2 pr-4">{tr("Ledger")}</th>
                   <th className="py-2 px-4">{tr("Charge #")}</th>
-                  <th className="py-2 px-4 text-right">{tr("Amount")}</th>
-                  <th className="py-2 px-4 text-right">{tr("Fee")}</th>
-                  <th className="py-2 ps-4">{tr("Transaction")}</th>
+                  <th className="py-2 px-4">{tr("Amount")}</th>
+                  <th className="py-2 px-4">{tr("Fee")}</th>
+                  <th className="py-2 pl-4">{tr("Transaction")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-edge">
-                {visibleCharges.map((c) => (
+                {charges.map((c) => (
                   <tr key={c.tx_hash} className="hover:bg-surface/50">
-                    <td className="py-3 pe-4 tabular-nums">
+                    <td className="py-3 pr-4 tabular-nums">
                       #{c.ledger}
                     </td>
                     <td className="py-3 px-4 tabular-nums">
                       #{formatNumber(c.charges_made)}
                     </td>
-                    <td className="py-3 px-4 text-right font-mono tabular-nums">
-                      {formatTokenValue(c.amount, 4, tokenMeta.decimals)} {tokenMeta.symbol}
+                    <td className="py-3 px-4 font-medium tabular-nums">
+                      <Money amount={c.amount} meta={tokenMeta} digits={4} />
                     </td>
-                    <td className="py-3 px-4 text-right font-mono tabular-nums text-muted">
-                      {formatTokenValue(c.fee, 4, tokenMeta.decimals)} {tokenMeta.symbol}
+                    <td className="py-3 px-4 text-muted tabular-nums">
+                      <Money amount={c.fee} meta={tokenMeta} digits={4} />
                     </td>
-                    <td className="py-3 ps-4">
+                    <td className="py-3 pl-4">
                       <TxLink hash={c.tx_hash} />
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            </div>
-            {charges.length > TABLE_PAGE_SIZE && (
-              <Suspense fallback={null}>
-                <PaginationControl
-                  cursor={chargesCursor}
-                  limit={TABLE_PAGE_SIZE}
-                  total={charges.length}
-                  onCursorChange={setChargesCursor}
-                />
-              </Suspense>
-            )}
-          </>
+          </div>
         )}
       </Panel>
     </div>
