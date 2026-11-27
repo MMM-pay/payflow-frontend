@@ -150,7 +150,9 @@ describe("Mandate details page (/mandates/?id=N) (#10)", () => {
 
     // Monetary columns are right-aligned and monospace; non-monetary columns are not.
     const monetaryCell = (text: string): HTMLElement => {
-      for (const el of screen.getAllByText(text)) {
+      // Amounts render through <Money>, which splits number and symbol into
+      // separate spans but carries the whole amount in its accessible name.
+      for (const el of screen.getAllByLabelText(text)) {
         const cell = el.closest("td");
         if (cell && cell.className.includes("font-mono")) return cell as HTMLElement;
       }

@@ -148,37 +148,38 @@ describe("receipt pure functions", () => {
   });
 });
 
+// vi.hoisted and vi.mock must sit at module top level (they are hoisted).
+const apiMock = vi.hoisted(() => ({
+  charges: vi.fn(),
+  mandate: vi.fn(),
+}));
+
+const payflowMock = vi.hoisted(() => ({
+  getMandate: vi.fn(),
+}));
+
+const serverMock = vi.hoisted(() => ({
+  getTransaction: vi.fn(),
+}));
+
+vi.mock("@/lib/api", () => ({
+  api: apiMock,
+}));
+
+vi.mock("@/lib/payflow", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/payflow")>();
+  return {
+    ...actual,
+    payflow: payflowMock,
+    server: serverMock,
+  };
+});
+
+vi.mock("@/lib/token", () => ({
+  loadTokenMeta: vi.fn().mockResolvedValue({ symbol: "XLM", decimals: 7 }),
+}));
+
 describe("loadReceipt integration", () => {
-  const apiMock = vi.hoisted(() => ({
-    charges: vi.fn(),
-    mandate: vi.fn(),
-  }));
-
-  const payflowMock = vi.hoisted(() => ({
-    getMandate: vi.fn(),
-  }));
-
-  const serverMock = vi.hoisted(() => ({
-    getTransaction: vi.fn(),
-  }));
-
-  vi.mock("@/lib/api", () => ({
-    api: apiMock,
-  }));
-
-  vi.mock("@/lib/payflow", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("@/lib/payflow")>();
-    return {
-      ...actual,
-      payflow: payflowMock,
-      server: serverMock,
-    };
-  });
-
-  vi.mock("@/lib/token", () => ({
-    loadTokenMeta: vi.fn().mockResolvedValue({ symbol: "XLM", decimals: 7 }),
-  }));
-
   beforeEach(() => {
     vi.clearAllMocks();
   });

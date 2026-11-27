@@ -14,7 +14,7 @@ const appUrl = "https://mmm-pay.github.io/payflow-frontend/";
 describe("wallet module registration", () => {
   beforeEach(() => {
     bridge.mockReset();
-    bridge.mockImplementation(() => ({ productId: "wallet_connect" }));
+    bridge.mockImplementation(function () { return { productId: "wallet_connect" }; });
   });
 
   it("preserves every default wallet without requiring backend or bridge configuration", async () => {
