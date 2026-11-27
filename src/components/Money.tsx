@@ -15,7 +15,7 @@ export interface MoneyProps {
   meta?: TokenMeta;
   /** Custom symbol override if meta is omitted. */
   symbol?: string;
-  /** Maximum fractional digits to show. Defaults to the token's full precision. */
+  /** Maximum fractional digits to show. Defaults to the token's precision. */
   digits?: number;
   /** Whether the amount is currently loading. */
   loading?: boolean;
@@ -67,7 +67,7 @@ export function parseMoneyValue(raw: string | bigint | number | null | undefined
       if (!Number.isSafeInteger(raw)) {
         return { valid: false, value: null, isZero: false, isNegative: false, isPositive: false };
       }
-      b = BigInt(Math.trunc(raw));
+      b = BigInt(raw);
     } else {
       const trimmed = String(raw).trim();
       if (!/^[+-]?\d+$/.test(trimmed)) {
@@ -151,13 +151,20 @@ export function Money({
   // 5. Normal amount rendering (positive, zero, or negative/refund)
   const tokenSymbol = symbol ?? meta.symbol;
   const tokenDecimals = meta.decimals;
-  const displayDigits = digits ?? tokenDecimals;
+  const precision = Number.isFinite(tokenDecimals)
+    ? Math.min(18, Math.max(0, Math.trunc(tokenDecimals)))
+    : 7;
+  const maxFractionDigits = Number.isFinite(digits)
+    ? Math.min(precision, Math.max(0, Math.trunc(digits ?? precision)))
+    : precision;
   const absValue = parsed.isNegative ? -parsed.value : parsed.value;
 
-  const canonical = fromStroops(absValue, displayDigits, tokenDecimals);
+  const canonical = fromStroops(absValue, maxFractionDigits, tokenDecimals);
   const [, whole = "0", fraction] = /^(\d+)(?:\.(\d+))?$/.exec(canonical) ?? [];
 
-  const decimalSeparator = locale === "fr" || locale === "de" ? "," : ".";
+  const decimalSeparator =
+    new Intl.NumberFormat(locale).formatToParts(1.1).find((part) => part.type === "decimal")
+      ?.value ?? ".";
   const formattedNumber = `${formatNumber(BigInt(whole))}${fraction ? decimalSeparator + fraction : ""}`;
 
   // Sign resolution
@@ -208,7 +215,7 @@ export function Money({
       {isRefund && (
         <>
           <span
-            className="me-1.5 rounded bg-danger/15 px-1 py-0.2 text-[10px] font-semibold uppercase tracking-wider text-danger"
+            className="mr-1.5 rounded bg-danger/15 px-1 py-0.2 text-[10px] font-semibold uppercase tracking-wider text-danger"
             aria-hidden="true"
           >
             {tr("Refund")}
