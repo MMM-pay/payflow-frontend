@@ -287,9 +287,9 @@ describe("receipt charge fields (#388)", () => {
     expect(text).toContain("Subscription charge (Mandate #42)");
     expect(screen.getByText("Description")).toBeTruthy();
     expect(screen.getByText("Amount")).toBeTruthy();
-    expect(screen.getAllByText("12.5 XLM")).toHaveLength(2); // charge row and total
-    expect(screen.getByText("-0.125 XLM")).toBeTruthy();
-    expect(screen.getByText("12.375 XLM")).toBeTruthy();
+    expect(screen.getAllByLabelText("12.5 XLM")).toHaveLength(2); // charge row and total
+    expect(screen.getByLabelText("minus 0.125 XLM")).toBeTruthy();
+    expect(screen.getByLabelText("12.375 XLM")).toBeTruthy();
     expect(screen.getByText("Protocol fee")).toBeTruthy();
     expect(screen.getByText("Net payout to merchant")).toBeTruthy();
     expect(screen.getByText("Total Paid")).toBeTruthy();
@@ -330,7 +330,7 @@ describe("receipt charge fields (#388)", () => {
     expect(receiptCard.textContent).not.toContain("Ledger #");
     expect(receiptCard.textContent).not.toContain("Charge 0");
     // A zero protocol fee is still shown explicitly rather than omitted.
-    expect(screen.getByText("-0 XLM")).toBeTruthy();
+    expect(screen.getByLabelText("0 XLM")).toBeTruthy();
     // The receipt says why the history is estimated.
     expect(screen.getByText(/Contract-only mode:/i)).toBeTruthy();
   });

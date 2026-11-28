@@ -43,6 +43,12 @@ See [docs/testing.md](docs/testing.md) for full details on what belongs at each
 testing layer (unit, component, visual regression, and local network E2E) and
 how to run each suite locally.
 
+## Components and state
+
+[docs/component-state-management.md](docs/component-state-management.md)
+explains where route and shared UI belong, how to structure data loading and
+actions, and when to use existing hooks and app-wide context.
+
 ## Accessibility
 
 New components must pass the checklist in [docs/accessibility.md](docs/accessibility.md)

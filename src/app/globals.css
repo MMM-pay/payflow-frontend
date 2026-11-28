@@ -173,6 +173,10 @@ body {
   }
   .mono {
     @apply font-mono text-[13px];
+  }
+}
+
+/*
  * Tailwind 3 gave every border the theme's edge-like grey by default; Tailwind
  * 4 uses currentColor. Keep the v3 look for bare `border` classes.
  */

@@ -752,6 +752,7 @@
   "The discount has run out — you pay the full price now.": "The discount has run out — you pay the full price now.",
   "The grace period ends": "The grace period ends",
   "The indexer is unreachable, so historical activity counters require the indexer.": "The indexer is unreachable, so historical activity counters require the indexer.",
+  "The mandate could not be loaded from the indexer or contract state. Try again.": "The mandate could not be loaded from the indexer or contract state. Try again.",
   "The mandate is the authorization, so charging is permissionless. If our keeper stops, the merchant or the subscriber can still settle.": "The mandate is the authorization, so charging is permissionless. If our keeper stops, the merchant or the subscriber can still settle.",
   "The merchant publishes a plan": "The merchant publishes a plan",
   "The merchant set a discount on this subscription.": "The merchant set a discount on this subscription.",

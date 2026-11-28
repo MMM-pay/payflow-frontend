@@ -689,6 +689,7 @@
   "The discount has run out — you pay the full price now.": "Der Rabatt ist aufgebraucht — Sie zahlen jetzt den vollen Preis.",
   "The grace period ends": "Die Kulanzfrist endet",
   "The indexer is unreachable, so historical activity counters require the indexer.": "Der Indexer ist nicht erreichbar, daher benötigen historische Aktivitätszähler den Indexer.",
+  "The mandate could not be loaded from the indexer or contract state. Try again.": "Das Mandat konnte weder vom Indexer noch vom Vertragsstatus geladen werden. Bitte versuchen Sie es erneut.",
   "The mandate is the authorization, so charging is permissionless. If our keeper stops, the merchant or the subscriber can still settle.": "Das Mandat ist die Autorisierung, daher ist das Abbuchen genehmigungsfrei. Falls unser Keeper ausfällt, können Händler oder Abonnent die Zahlung weiterhin einziehen.",
   "The merchant publishes a plan": "Der Händler veröffentlicht ein Angebot",
   "The merchant set a discount on this subscription.": "Der Händler hat für dieses Abonnement einen Rabatt festgelegt.",

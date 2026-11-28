@@ -191,6 +191,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and the [testing guide](docs/testing.md).
 
 Adding a route? [docs/adding-a-page.md](docs/adding-a-page.md) covers the file
 layout, the metadata entry, the loader hook and the tests.
+[docs/component-state-management.md](docs/component-state-management.md)
+explains how components, hooks and state are organized.
 
 ## Security
 
