@@ -516,9 +516,6 @@ function MandateDetailsInner() {
                 <tr>
                   <th className="py-2 pe-4">{tr("Ledger")}</th>
                   <th className="py-2 px-4">{tr("Charge #")}</th>
-                  <th className="py-2 px-4">{tr("Amount")}</th>
-                  <th className="py-2 px-4">{tr("Fee")}</th>
-                  <th className="py-2 pl-4">{tr("Transaction")}</th>
                   <th className="py-2 px-4 text-right">{tr("Amount")}</th>
                   <th className="py-2 px-4 text-right">{tr("Fee")}</th>
                   <th className="py-2 ps-4">{tr("Transaction")}</th>
@@ -533,10 +530,10 @@ function MandateDetailsInner() {
                     <td className="py-3 px-4 tabular-nums">
                       #{formatNumber(c.charges_made)}
                     </td>
-                    <td className="py-3 px-4 font-medium tabular-nums">
+                    <td className="py-3 px-4 text-right text-end font-medium font-mono tabular-nums">
                       <Money amount={c.amount} meta={tokenMeta} digits={4} />
                     </td>
-                    <td className="py-3 px-4 text-muted tabular-nums">
+                    <td className="py-3 px-4 text-right text-end text-muted font-mono tabular-nums">
                       <Money amount={c.fee} meta={tokenMeta} digits={4} />
                     </td>
                     <td className="py-3 ps-4">

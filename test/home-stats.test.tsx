@@ -122,6 +122,6 @@ describe("Home page protocol stats (#14)", () => {
     await waitFor(() => {
       expect(tokenMock.loadTokenMeta).toHaveBeenCalledOnce();
     });
-    expect(await screen.findByText("2.5 USDC")).toBeTruthy();
+    expect(await screen.findByLabelText("2.5 USDC")).toBeTruthy();
   });
 });

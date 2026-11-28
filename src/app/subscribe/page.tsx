@@ -208,6 +208,9 @@ function SubscribeInner() {
 
   const { address, networkMismatch, signXdr, signing } = useWallet();
   const [plans, setPlans] = useState<ApiPlan[] | null>(null);
+  const [planStats, setPlanStats] = useState<
+    Record<number, { subscriber_count: number } | null>
+  >({});
   const [maxCharges, setMaxCharges] = useState<Record<number, string>>({});
   const [depositBusy, setDepositBusy] = useState<number | null>(null);
   const [vaultBalances, setVaultBalances] = useState<Record<string, bigint>>({});
@@ -324,6 +327,7 @@ function SubscribeInner() {
       // contract/backend is reported even when the contract fallback is idle.
       loaded.forEach((plan) => observeContractRecord("plan", plan));
       setPlans(loaded);
+      setPlanStats({});
       setDirect(!res);
       setLoadFailed(failed);
 
@@ -821,6 +825,7 @@ function SubscribeInner() {
                       ? formatUsdString(formatUsdcEstimate(plan.amount, meta.decimals))
                       : null;
                 const selectedForCompare = compareIds.includes(plan.id);
+                const subscriberStats = planStats[plan.id];
                 return (
                   <Panel
                     key={plan.id}
@@ -886,6 +891,19 @@ function SubscribeInner() {
                           {translateMessage(availability.reason ?? "")}
                         </p>
                       )}
+
+                      {subscriberStats === undefined ? (
+                        <p role="status" className="text-sm text-muted">
+                          {tr("Loading subscribers")}
+                        </p>
+                      ) : subscriberStats !== null ? (
+                        <div className="flex items-center justify-between gap-2 text-sm">
+                          <span className="text-muted">{tr("Subscribers")}</span>
+                          <span className="tabular-nums">
+                            {formatNumber(subscriberStats.subscriber_count)}
+                          </span>
+                        </div>
+                      ) : null}
 
                       <div className="flex items-center justify-between gap-2 text-sm">
                         <span className="text-muted">{tr("Merchant")}</span>

@@ -110,7 +110,7 @@ describe("PlanPageClient recent charges table", () => {
     expect(screen.getByText("Net").closest("th")?.className).toContain("text-right");
 
     // Non-monetary columns are not monospaced.
-    const mandateCell = screen.getByText("1").closest("td");
+    const mandateCell = screen.getByRole("table").querySelector("tbody tr")?.children[0];
     expect(mandateCell?.className).not.toContain("font-mono");
   });
 });
